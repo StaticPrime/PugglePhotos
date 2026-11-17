@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import PugglePhotosKit
 import SwiftUI
 
@@ -230,17 +231,103 @@ struct LabelEditorView: View {
 
 // MARK: Settings
 
+/// What Settings shows about opening at login, which lives with macOS rather than in PugglePhotos' settings.
+@Observable
+final class SettingsModel {
+    @ObservationIgnored let loginItem: LoginItemService
+    private(set) var opensAtLogin = false
+    private(set) var needsApproval = false
+    private(set) var problem: String?
+    var songName: String? = SlideshowMusic.songName
+
+    init(loginItem: LoginItemService) {
+        self.loginItem = loginItem
+        refresh()
+    }
+
+    func refresh() {
+        opensAtLogin = loginItem.isEnabled
+        needsApproval = loginItem.needsApproval
+        songName = SlideshowMusic.songName
+    }
+
+    func setOpensAtLogin(_ enabled: Bool) {
+        do {
+            try loginItem.setEnabled(enabled)
+            problem = nil
+        } catch {
+            problem = error.localizedDescription
+        }
+        refresh()
+    }
+
+    func chooseSong() {
+        SlideshowMusic.chooseSong { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+    }
+}
+
 struct SettingsView: View {
+    @Bindable var model: SettingsModel
     @AppStorage(Preferences.askBeforeChangingDatesKey) private var askBeforeChangingDates = true
     @AppStorage(Preferences.showsCalendarKey) private var showsCalendar = true
     @AppStorage(Preferences.showsBadgesKey) private var showsBadges = true
+    @AppStorage(MemoryPreferences.notifyKey) private var notifies = true
+    @AppStorage(MemoryPreferences.timeKey) private var minutes = 9 * 60
+    @AppStorage(MemoryPreferences.secondsPerPhotoKey) private var secondsPerPhoto = 4.5
+    @AppStorage(MemoryPreferences.musicKey) private var music = SlideshowMusic.Choice.tune.rawValue
+
+    private var time: Binding<Date> {
+        Binding(get: { Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date() },
+                set: { minutes = Calendar.current.component(.hour, from: $0) * 60 + Calendar.current.component(.minute, from: $0) })
+    }
 
     var body: some View {
         Form {
+            Section("Memories") {
+                Toggle("Tell me about photos from this day in earlier years", isOn: $notifies)
+                DatePicker("At", selection: time, displayedComponents: .hourAndMinute)
+                    .disabled(!notifies)
+                Toggle("Open PugglePhotos when I log in", isOn: Binding(get: { model.opensAtLogin }, set: { model.setOpensAtLogin($0) }))
+                if model.needsApproval {
+                    HStack {
+                        Text("Allow PugglePhotos in System Settings ▸ General ▸ Login Items.").foregroundStyle(.secondary)
+                        Button("Open Login Items") { model.loginItem.openLoginItemsSettings() }
+                    }
+                } else if let problem = model.problem {
+                    Text(problem).foregroundStyle(.red)
+                } else {
+                    Text("It opens quietly, as a paw in the menu bar, and keeps your memory notifications on time.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Section("Slideshows") {
+                Picker("Music", selection: $music) {
+                    ForEach(SlideshowMusic.Choice.allCases) { choice in
+                        Text(choice == .song ? (model.songName.map { "“\($0)”" } ?? choice.title) : choice.title).tag(choice.rawValue)
+                    }
+                }
+                if music == SlideshowMusic.Choice.song.rawValue || model.songName == nil {
+                    HStack {
+                        Text(model.songName.map { "Your song: \($0)" } ?? "Pick a song from your Mac to play under slideshows.")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Choose Song…") { model.chooseSong() }
+                    }
+                }
+                HStack {
+                    Text("Each photo shows for")
+                    Slider(value: $secondsPerPhoto, in: 2...8, step: 0.5)
+                    Text(String(format: "%.1f seconds", secondsPerPhoto)).monospacedDigit().frame(width: 84, alignment: .trailing)
+                }
+            }
             Section {
                 Toggle("Ask before changing dates when photos are dropped", isOn: $askBeforeChangingDates)
                 Toggle("Show the calendar in the sidebar", isOn: $showsCalendar)
                 Toggle("Show favorites, labels and notes on thumbnails", isOn: $showsBadges)
+            } header: {
+                Text("Photos")
             } footer: {
                 Text("Albums are kept in step with your Photos library, and dates and favorites are changed there too, so they’re right everywhere you see your photos. Labels, captions, notes and album stories are kept on this Mac.")
                     .font(.caption)
@@ -249,23 +336,25 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480)
+        .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
+        .onAppear { model.refresh() }
     }
 }
 
 final class SettingsWindowController: NSWindowController {
     private static var shared: SettingsWindowController?
 
-    static func show() {
-        let controller = shared ?? SettingsWindowController()
+    static func show(_ model: SettingsModel) {
+        let controller = shared ?? SettingsWindowController(model: model)
         shared = controller
+        model.refresh()
         if controller.window?.isVisible != true { controller.window?.center() }
         controller.showWindow(nil)
     }
 
-    private init() {
-        let host = NSHostingController(rootView: SettingsView())
+    private init(model: SettingsModel) {
+        let host = NSHostingController(rootView: SettingsView(model: model))
         let window = NSWindow(contentViewController: host)
         window.title = "PugglePhotos Settings"
         window.styleMask = [.titled, .closable]
@@ -293,7 +382,9 @@ struct ShortcutsView: View {
             ("Search", "⌘F"),
             ("Show or hide the sidebar", "⌃⌘S"),
             ("Show or hide the info panel", "⌘I"),
+            ("Memories", "⌥⌘0"),
             ("Library, Favorites, Videos, Recently Added", "⌥⌘1 … ⌥⌘4"),
+            ("Play a slideshow", "⌥⌘P"),
             ("Go to today", "⌘T"),
         ]),
         ("Organizing", [

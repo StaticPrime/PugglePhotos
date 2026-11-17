@@ -72,7 +72,7 @@ enum DebugLaunchOptions {
         }
     }
 
-    /// `-PHSource library|favorites|videos|recent|albums|album:N|label:N` picks the place;
+    /// `-PHSource memories|library|favorites|videos|recent|albums|album:N|label:N` picks the place;
     /// `-PHViewMode list`, `-PHGrouping month`, `-PHSort title`, `-PHDescending YES`, `-PHZoom 220` and
     /// `-PHSearch text` set how it shows; `-PHSelect 3` (or `3,4,5`) selects photos by position;
     /// `-PHViewer YES` opens the first selected; `-PHCalendar 2019-07` turns the calendar;
@@ -84,6 +84,7 @@ enum DebugLaunchOptions {
             let parts = source.split(separator: ":")
             let index = parts.count > 1 ? Int(parts[1]) ?? 1 : 1
             switch parts.first {
+            case "memories": controller.go(to: .memories)
             case "favorites": controller.go(to: .favorites)
             case "videos": controller.go(to: .videos)
             case "recent": controller.go(to: .recentlyAdded)
@@ -142,6 +143,34 @@ enum DebugLaunchOptions {
         }
         if defaults.bool(forKey: "PHShowAbout") { app.showAboutWindow(nil) }
         if defaults.bool(forKey: "PHSettings") { app.showSettings(nil) }
+        // `-PHSlideshow today|album:2|highlight:1|year:1` plays a slideshow; `-PHSlideshowAt 3` jumps to its fourth
+        // slide and `-PHSlideshowFreeze 0.5` stops all motion halfway through it.
+        if let which = defaults.string(forKey: "PHSlideshow") {
+            let memories = app.memories!
+            let parts = which.split(separator: ":")
+            let index = parts.count > 1 ? (Int(parts[1]) ?? 1) - 1 : 0
+            let memory: Memory? = switch parts.first {
+            case "album": library.catalog.albums.indices.contains(index) ? memories.finder.album(library.catalog.albums[index].id) : nil
+            case "highlight": memories.page.highlights.indices.contains(index) ? memories.page.highlights[index] : nil
+            case "year": memories.page.years.indices.contains(index) ? memories.page.years[index] : nil
+            default: memories.page.onThisDay.indices.contains(index) ? memories.page.onThisDay[index] : nil
+            }
+            if let memory {
+                controller.play(memory)
+                if let show = SlideshowController.current {
+                    let freeze = defaults.double(forKey: "PHSlideshowFreeze")
+                    if freeze > 0 { show.frozenProgress = freeze }
+                    for _ in 0..<defaults.integer(forKey: "PHSlideshowAt") { show.next() }
+                    if defaults.bool(forKey: "PHSlideshowPaused") { show.togglePause() }
+                }
+            } else {
+                print("PHSlideshow: no such memory")
+            }
+        }
+        // `-PHNotificationClick YES`: as if today's memory notification were clicked.
+        if defaults.bool(forKey: "PHNotificationClick"), let memory = app.memories.page.onThisDay.last {
+            app.memories.notifications.onOpen?(memory.id)
+        }
     }
 
     private static func snapshot(_ name: String, app: AppDelegate) {
@@ -151,7 +180,9 @@ enum DebugLaunchOptions {
         }
         let about = NSApp.windows.first { $0.windowController is AboutWindowController && $0.isVisible }
         let settings = NSApp.windows.first { $0.windowController is SettingsWindowController && $0.isVisible }
-        let window = about ?? settings ?? main.attachedSheet ?? main
+        let slideshow = SlideshowController.current.map(\.window)
+        if defaults.bool(forKey: "PHDebugLayout"), let show = SlideshowController.current { print("PHDebug:\n\(show.describeSlide())") }
+        let window = slideshow ?? about ?? settings ?? main.attachedSheet ?? main
         guard let view = window.contentView?.superview ?? window.contentView else { exit(1) }
         // The window server's picture of the window shows vibrant sidebars and every SwiftUI view as they really
         // look; drawing the views into a bitmap misses those, so it's only the fallback.
@@ -239,6 +270,10 @@ enum DebugLaunchOptions {
                 time("timeline content (group by day)") { _ = controller.makeContent() }
                 time("sort by title") { _ = library.arranger.sorted(library.snapshot.allIDs, by: .title, ascending: true) }
                 time("search \"june\"") { _ = PhotoSearch("june").filter(library.snapshot.allIDs, using: library.arranger) }
+                time("memories page") { _ = app.memories.finder.page() }
+                time("a month of memory notifications") {
+                    _ = MemoryNotifications.plan(finder: app.memories.finder, from: app.memories.today, days: 30, hour: 9, minute: 0)
+                }
                 time("refresh and lay out the grid") {
                     controller.refresh(keepPosition: false)
                     controller.grid.collectionView.layoutSubtreeIfNeeded()

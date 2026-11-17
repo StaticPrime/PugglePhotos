@@ -3,6 +3,8 @@ import PugglePhotosKit
 
 protocol SidebarDelegate: AnyObject {
     var library: LibraryController { get }
+    /// How many years today's memories come from, for the Memories row.
+    var memoriesToday: Int { get }
     var albumOrder: [UUID] { get }
     func sidebarSelect(_ source: LibrarySource)
     func sidebarNewAlbum()
@@ -45,6 +47,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var calendarContainer: NSView!
     private var roots: [SidebarNode] = []
     private var isReloading = false
+    /// Where the collapsed headings are remembered.
+    var defaults = UserDefaults.standard {
+        didSet { collapsed = Set(defaults.stringArray(forKey: "SidebarCollapsed") ?? []) }
+    }
     private var collapsed: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "SidebarCollapsed") ?? [])
     private var requests: [UUID: ImageRequest] = [:]
     private(set) var selectedSource: LibrarySource?
@@ -131,7 +137,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// Rebuilds the rows from the library and catalog, keeping the selection.
     func reload() {
         guard let library = delegate?.library else { return }
-        let libraryNodes: [SidebarNode] = [.library, .favorites, .videos, .recentlyAdded].map { SidebarNode(.source($0)) }
+        let libraryNodes: [SidebarNode] = [.memories, .library, .favorites, .videos, .recentlyAdded].map { SidebarNode(.source($0)) }
         var albumNodes = [SidebarNode(.source(.allAlbums))]
         albumNodes += (delegate?.albumOrder ?? library.catalog.albums.map(\.id)).map { SidebarNode(.source(.album($0))) }
         let labelNodes = library.catalog.labels.map { SidebarNode(.source(.label($0.id))) }
@@ -249,10 +255,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     func outlineViewItemDidCollapse(_ notification: Notification) { rememberExpansion(notification, collapsed: true) }
     func outlineViewItemDidExpand(_ notification: Notification) { rememberExpansion(notification, collapsed: false) }
 
+    /// Remembers a heading the person opened or closed with a click or a key, never one closed along the way.
     private func rememberExpansion(_ notification: Notification, collapsed isCollapsed: Bool) {
-        guard !isReloading, let node = notification.userInfo?["NSObject"] as? SidebarNode, case let .heading(title) = node.kind else { return }
+        guard !isReloading, let node = notification.userInfo?["NSObject"] as? SidebarNode, case let .heading(title) = node.kind,
+              let event = NSApp.currentEvent, [.leftMouseUp, .leftMouseDown, .keyDown].contains(event.type) else { return }
         if isCollapsed { collapsed.insert(title) } else { collapsed.remove(title) }
-        UserDefaults.standard.set(Array(collapsed), forKey: "SidebarCollapsed")
+        defaults.set(Array(collapsed), forKey: "SidebarCollapsed")
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -274,7 +282,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let arranger = library.arranger
         let count: Int
         switch source {
-        case .memories, .memory:
+        case .memories:
+            cell.configure(title: "Memories", symbol: "sparkles", count: delegate?.memoriesToday ?? 0)
+        case .memory:
             return
         case .library:
             cell.configure(title: "Library", symbol: "photo.on.rectangle", count: library.snapshot.count)

@@ -45,6 +45,8 @@ enum SelfTest {
     private static func runSteps(from index: Int = 0) {
         guard index < steps.count else {
             UserDefaults.standard.removeObject(forKey: Preferences.askBeforeChangingDatesKey)
+            UserDefaults.standard.removeObject(forKey: MemoryPreferences.timeKey)
+            UserDefaults.standard.removeObject(forKey: MemoryPreferences.notifyKey)
             print(failures == 0 ? "SELFTEST DONE: all passed" : "SELFTEST DONE: \(failures) failed")
             fflush(stdout)
             exit(failures == 0 ? 0 : 1)

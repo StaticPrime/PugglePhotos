@@ -3,13 +3,32 @@ import PugglePhotosKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var library: LibraryController!
+    private(set) var memories: MemoriesController!
+    private(set) var loginItem: LoginItemService!
+    private(set) var settings: SettingsModel!
     private(set) var windowController: LibraryWindowController?
+    /// Whether macOS opened PugglePhotos at login, so it waits quietly in the menu bar instead of opening a window.
+    private(set) var launchedAtLogin = false
+    private var statusItem: NSStatusItem?
     private var observer: NSObjectProtocol?
+    private var initialCatalog: Catalog?
+    /// A memory to play once the library has loaded (from a notification clicked before PugglePhotos was open).
+    private var pendingMemory: String?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         Preferences.registerDefaults()
+        MemoryPreferences.registerDefaults()
         UserDefaults.standard.register(defaults: ["NSFullScreenMenuItemEverywhere": false])
+        launchedAtLogin = LaunchReason.isLoginLaunch()
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "PHLaunchedAtLogin") { launchedAtLogin = true }
+        #endif
         library = makeLibrary()
+        let notifications = makeNotificationCenter()
+        memories = MemoriesController(library: library, notifications: notifications, defaults: Self.memoryDefaults)
+        notifications.onOpen = { [weak self] id in self?.openMemory(id) }
+        loginItem = makeLoginItem()
+        settings = SettingsModel(loginItem: loginItem)
         NSApp.mainMenu = MenuBuilder.makeMainMenu()
     }
 
@@ -18,16 +37,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if UserDefaults.standard.bool(forKey: "PHDark") { NSApp.appearance = NSAppearance(named: .darkAqua) }
         #endif
         library.start(catalog: initialCatalog)
-        showLibraryWindow(nil)
-        observer = NotificationCenter.default.addObserver(forName: .libraryDidChange, object: library, queue: .main) { note in
-            guard (note.userInfo?["change"] as? LibraryController.Change) == .catalog else { return }
-            MainActor.assumeIsolated { DynamicMenus.refresh() }
+        memories.start()
+        if launchedAtLogin {
+            waitInMenuBar()
+        } else {
+            showLibraryWindow(nil)
+        }
+        observer = NotificationCenter.default.addObserver(forName: .libraryDidChange, object: library, queue: .main) { [weak self] note in
+            let change = note.userInfo?["change"] as? LibraryController.Change
+            MainActor.assumeIsolated {
+                if change == .catalog { DynamicMenus.refresh() }
+                self?.playPendingMemory()
+            }
         }
         #if DEBUG
         DebugLaunchOptions.runIfRequested(self)
         SelfTest.runIfRequested(self)
         #endif
     }
+
+    // MARK: The library and its services
 
     /// The Photos library, or (in debug builds, with `-PHSampleLibrary YES`) the sample library.
     private func makeLibrary() -> LibraryController {
@@ -41,7 +70,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return LibraryController(source: SystemPhotoSource(), store: CatalogStore(folder: Self.catalogFolder))
     }
 
-    private var initialCatalog: Catalog?
+    /// The system's notifications; debug runs on the sample library only record them.
+    private func makeNotificationCenter() -> MemoryNotificationCenter {
+        #if DEBUG
+        if DebugLaunchOptions.usesSampleLibrary { return RecordingNotificationCenter() }
+        #endif
+        return SystemNotificationCenter()
+    }
+
+    private func makeLoginItem() -> LoginItemService {
+        #if DEBUG
+        if DebugLaunchOptions.usesSampleLibrary { return RecordingLoginItem() }
+        #endif
+        return SystemLoginItem()
+    }
+
+    private static var memoryDefaults: UserDefaults {
+        #if DEBUG
+        if DebugLaunchOptions.usesSampleLibrary { return DebugLaunchOptions.sampleDefaults }
+        #endif
+        return .standard
+    }
 
     /// Application Support/PugglePhotos in the app's container.
     static var catalogFolder: URL {
@@ -50,13 +99,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return support.appendingPathComponent("PugglePhotos", isDirectory: true)
     }
 
+    // MARK: Windows
+
     @objc func showLibraryWindow(_ sender: Any?) {
+        leaveMenuBar()
         if windowController == nil {
-            windowController = LibraryWindowController(library: library)
+            windowController = LibraryWindowController(library: library, memories: memories)
             windowController?.window?.center()
         }
         windowController?.showWindow(nil)
         windowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -75,5 +128,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showAboutWindow(_ sender: Any?) { AboutWindowController.show() }
 
-    @objc func showSettings(_ sender: Any?) { SettingsWindowController.show() }
+    @objc func showSettings(_ sender: Any?) { SettingsWindowController.show(settings) }
+
+    // MARK: Memories
+
+    /// Plays a memory, from a clicked notification or the menu bar: the window comes up behind the slideshow.
+    func openMemory(_ id: String) {
+        showLibraryWindow(nil)
+        guard library.hasLoaded else {
+            pendingMemory = id
+            return
+        }
+        guard let memory = memories.memory(id), let window = windowController else { return }
+        window.go(to: .memories)
+        window.play(memory)
+    }
+
+    private func playPendingMemory() {
+        guard let id = pendingMemory, library.hasLoaded else { return }
+        pendingMemory = nil
+        memories.refresh()
+        openMemory(id)
+    }
+
+    // MARK: Waiting in the menu bar
+
+    /// After a login launch: no window and no Dock icon, just a paw in the menu bar, while memory notifications
+    /// are kept up to date.
+    func waitInMenuBar() {
+        NSApp.setActivationPolicy(.accessory)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: "PugglePhotos")
+        item.button?.toolTip = "PugglePhotos"
+        let menu = NSMenu()
+        menu.delegate = self
+        item.menu = menu
+        statusItem = item
+    }
+
+    private func leaveMenuBar() {
+        guard NSApp.activationPolicy() != .regular || statusItem != nil else { return }
+        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
+        statusItem = nil
+        NSApp.setActivationPolicy(.regular)
+    }
+
+    var isWaitingInMenuBar: Bool { statusItem != nil }
+
+    @objc private func openFromMenuBar(_ sender: Any?) { showLibraryWindow(nil) }
+
+    @objc private func playFromMenuBar(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? String { openMemory(id) }
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    /// The menu bar paw's menu: open PugglePhotos, today's memories, quit.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let open = NSMenuItem(title: "Open PugglePhotos", action: #selector(openFromMenuBar(_:)), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+        let today = memories.page.onThisDay
+        if !today.isEmpty {
+            menu.addItem(.separator())
+            let heading = NSMenuItem(title: "On This Day", action: nil, keyEquivalent: "")
+            heading.isEnabled = false
+            menu.addItem(heading)
+            for memory in today {
+                let item = NSMenuItem(title: memory.title, action: #selector(playFromMenuBar(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = memory.id
+                item.image = NSImage(systemSymbolName: "play.circle", accessibilityDescription: nil)
+                menu.addItem(item)
+            }
+        }
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Quit PugglePhotos", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
 }

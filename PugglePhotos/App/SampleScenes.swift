@@ -183,7 +183,7 @@ nonisolated private struct Painter {
     mutating func beach() {
         gradient(0x58C4F0, 0xBDEBFF, to: height * 0.5)
         circle(random.range(100, 900), height * random.range(0.1, 0.25), 52, 0xFFD34E)
-        gradient(0x14B8C4, 0x0E8A9E, from: height * 0.5, to: height * 0.68)
+        gradient(0x14B8C4, 0x0E8A9E, from: height * 0.5, to: height * 0.78)
         for _ in 0..<10 {
             rect(CGRect(x: random.range(0, 950), y: random.range(height * 0.52, height * 0.66), width: random.range(30, 90),
                         height: 4), 0xFFFFFF, 0.5, radius: 2)

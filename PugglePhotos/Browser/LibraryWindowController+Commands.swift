@@ -61,7 +61,9 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(phRenameAlbum(_:)), #selector(phDeleteAlbum(_:)):
             return (menuItem.representedObject as? UUID ?? currentAlbum?.id ?? albums.selectedAlbum) != nil
         case #selector(phGroupBy(_:)), #selector(phSortBy(_:)), #selector(phOrder(_:)):
-            return state.source != .allAlbums && library.access == .authorized
+            return state.source != .allAlbums && state.source != .memories && library.access == .authorized
+        case #selector(phPlaySlideshow(_:)):
+            return library.hasLoaded && state.source != .allAlbums && SlideshowController.current == nil
         default:
             return true
         }
@@ -195,8 +197,17 @@ extension LibraryWindowController: NSMenuItemValidation {
 
     @objc func phBack(_ sender: Any?) { goBack() }
 
+    @objc func phPlaySlideshow(_ sender: Any?) {
+        guard let memory = slideshowForCurrentPlace() else {
+            NSSound.beep()
+            return
+        }
+        play(memory)
+    }
+
     @objc func phGo(_ sender: NSMenuItem) {
         switch sender.representedObject as? String {
+        case "memories": go(to: .memories)
         case "favorites": go(to: .favorites)
         case "videos": go(to: .videos)
         case "recent": go(to: .recentlyAdded)

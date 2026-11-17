@@ -120,6 +120,7 @@ enum MenuBuilder {
         return [
             item("Back", #selector(LibraryWindowController.phBack(_:)), "["),
             .separator(),
+            place("Memories", "memories", "sparkles", "0"),
             place("Library", "library", "photo.on.rectangle", "1"),
             place("Favorites", "favorites", "heart", "2"),
             place("Videos", "videos", "video", "3"),
@@ -138,6 +139,8 @@ enum MenuBuilder {
         var items = [
             item("as Gallery", #selector(LibraryWindowController.phShowGallery(_:)), "1"),
             item("as List", #selector(LibraryWindowController.phShowList(_:)), "2"),
+            .separator(),
+            item("Play Slideshow", #selector(LibraryWindowController.phPlaySlideshow(_:)), "p", [.command, .option], symbol: "play.rectangle"),
             .separator(),
         ]
         if let owner = (NSApp.mainWindow ?? NSApp.keyWindow)?.windowController as? LibraryWindowController

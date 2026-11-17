@@ -155,8 +155,10 @@ final class AlbumBannerView: NSView, NSCollectionViewElement, NSTextFieldDelegat
     private let titleField = NSTextField()
     private let subtitleField = NSTextField(labelWithString: "")
     private let noteField = NSTextField()
+    private let playButton = NSButton()
     var onRename: ((String) -> Void)?
     var onNote: ((String) -> Void)?
+    var onPlay: (() -> Void)?
     private var title = ""
     private var note = ""
 
@@ -184,13 +186,24 @@ final class AlbumBannerView: NSView, NSCollectionViewElement, NSTextFieldDelegat
         noteField.setAccessibilityLabel("Album description")
         subtitleField.font = .systemFont(ofSize: 13, weight: .medium)
         subtitleField.textColor = .secondaryLabelColor
-        for field in [titleField, subtitleField, noteField] {
+        playButton.title = "Play Slideshow"
+        playButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: nil)
+        playButton.imagePosition = .imageLeading
+        playButton.bezelStyle = .push
+        playButton.controlSize = .large
+        playButton.bezelColor = Theme.accent
+        playButton.target = self
+        playButton.action = #selector(play(_:))
+        playButton.toolTip = "Play the album as a slideshow (⌥⌘P)"
+        for field in [titleField, subtitleField, noteField, playButton] as [NSView] {
             field.translatesAutoresizingMaskIntoConstraints = false
             addSubview(field)
         }
         NSLayoutConstraint.activate([
+            playButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            playButton.centerYAnchor.constraint(equalTo: titleField.centerYAnchor),
             titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            titleField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
+            titleField.trailingAnchor.constraint(lessThanOrEqualTo: playButton.leadingAnchor, constant: -16),
             titleField.topAnchor.constraint(equalTo: topAnchor, constant: 18),
             subtitleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
             subtitleField.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 2),
@@ -219,6 +232,8 @@ final class AlbumBannerView: NSView, NSCollectionViewElement, NSTextFieldDelegat
                                                      attributes: [.font: NSFont.systemFont(ofSize: 14)])
         return 18 + 34 + 2 + 18 + 8 + min(ceil(bounds.height), 76) + 22
     }
+
+    @objc private func play(_ sender: Any?) { onPlay?() }
 
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }

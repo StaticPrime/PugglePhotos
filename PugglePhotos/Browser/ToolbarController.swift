@@ -109,10 +109,12 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
     /// Brings every control up to date with the window.
     func update() {
         let state = owner.state
+        let onMemories = state.source == .memories
         modeGroup?.selectedIndex = state.viewMode == .list ? 1 : 0
         modeGroup?.isEnabled = owner.library.access == .authorized
         zoomSlider?.doubleValue = Double(state.thumbnailSide)
-        zoomSlider?.isEnabled = state.viewMode == .gallery || state.source == .allAlbums
+        zoomSlider?.isEnabled = !onMemories && (state.viewMode == .gallery || state.source == .allAlbums)
+        arrangeItem?.isEnabled = !onMemories
         backItem?.isEnabled = owner.canGoBack
         let ids = owner.state.viewerID.map { [$0] } ?? state.selection
         let allFavorites = !ids.isEmpty && ids.allSatisfy { owner.library.snapshot.item($0)?.isFavorite == true }
@@ -156,6 +158,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
 /// The grouping and sorting choices, shared by the toolbar's Arrange menu and View in the menu bar.
 enum ArrangeMenu {
     static func items(for owner: LibraryWindowController) -> [NSMenuItem] {
+        if owner.state.source == .memories { return [] }
         if owner.state.source == .allAlbums {
             var items = [header("Sort Albums By")]
             for sort in AlbumSort.allCases {

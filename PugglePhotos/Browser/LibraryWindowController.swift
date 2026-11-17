@@ -6,6 +6,7 @@ import SwiftUI
 /// at a time) and the info panel on the right. It works out what the middle shows and handles every command.
 final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     let library: LibraryController
+    let memories: MemoriesController
     let state: BrowserState
     let sidebar = SidebarViewController()
     let grid = PhotoGridViewController()
@@ -21,6 +22,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     private var shownChild: NSViewController?
     private var welcomeHost: NSHostingController<WelcomeView>?
     private var emptyHost: NSHostingController<EmptyStateView>?
+    private(set) var memoriesHost: NSHostingController<MemoriesView>?
     /// Places visited before, for Back.
     private(set) var history: [LibrarySource] = []
     var toolbarController: ToolbarController!
@@ -28,8 +30,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     var activePopover: NSPopover?
     private var lastShowsBadges = UserDefaults.standard.bool(forKey: Preferences.showsBadgesKey)
 
-    init(library: LibraryController) {
+    init(library: LibraryController, memories: MemoriesController) {
         self.library = library
+        self.memories = memories
         state = BrowserState(defaults: Self.browserDefaults)
         inspectorModel = InspectorModel(library: library)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
@@ -52,6 +55,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         observers.append(NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.preferencesChanged() }
         })
+        observers.append(NotificationCenter.default.addObserver(forName: .memoriesDidChange, object: memories, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.memoriesChanged() }
+        })
         if window.frame.width < 800 { window.setContentSize(NSSize(width: 1280, height: 820)) }
         sidebar.reload()
         sidebar.select(.library)
@@ -71,6 +77,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     // MARK: Building the window
 
     private func build() {
+        sidebar.defaults = Self.browserDefaults
         grid.delegate = self
         list.delegate = self
         list.onSort = { [weak self] sort, ascending in self?.setSort(sort, ascending: ascending) }
@@ -129,10 +136,16 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     /// Album IDs in the order the sidebar and the album covers use.
     var albumOrder: [UUID] { library.sortedAlbumIDs(sort: state.albumSort, ascending: state.albumSortAscending) }
 
+    /// The memory whose photos are showing, if any.
+    var currentMemory: Memory? {
+        if case let .memory(id) = state.source { return memories.memory(id) }
+        return nil
+    }
+
     /// The photos the current place shows, before sorting and grouping.
     private func sourceIDs() -> [PhotoID] {
         let arranger = library.arranger
-        var ids = arranger.ids(for: state.source, recent: library.recentlyAdded)
+        var ids = arranger.ids(for: state.source, recent: library.recentlyAdded, memory: currentMemory?.items ?? [])
         let search = PhotoSearch(state.searchText, formatting: library.formatting)
         if !search.isEmpty { ids = search.filter(ids, using: arranger) }
         return ids
@@ -188,6 +201,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         state.viewerID = nil
+        if state.source == .memories {
+            showMemories()
+            setSelection([])
+            return
+        }
         if state.source == .allAlbums {
             albums.show(library.arranger.albumSummaries(sort: state.albumSort, ascending: state.albumSortAscending),
                         thumbnailSide: state.thumbnailSide)
@@ -231,6 +249,13 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         show(welcomeHost!)
     }
 
+    private func showMemories() {
+        if memoriesHost == nil {
+            memoriesHost = NSHostingController(rootView: MemoriesView(memories: memories, actions: { [weak self] in self }))
+        }
+        show(memoriesHost!)
+    }
+
     private func showEmptyState() {
         let view: EmptyStateView
         if !state.searchText.isEmpty {
@@ -258,7 +283,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         let formatting = library.formatting
         switch state.source {
         case .memories: window.title = "Memories"
-        case .memory: window.title = "Memory"
+        case .memory: window.title = currentMemory?.title ?? "Memory"
         case .library: window.title = "Library"
         case .favorites: window.title = "Favorites"
         case .videos: window.title = "Videos"
@@ -269,6 +294,10 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         }
         if state.source == .allAlbums {
             window.subtitle = library.catalog.albums.count == 1 ? "1 album" : "\(formatting.number(library.catalog.albums.count)) albums"
+            return
+        }
+        if state.source == .memories {
+            window.subtitle = formatting.weekdayAndDay(memories.today)
             return
         }
         guard library.hasLoaded else {
@@ -303,6 +332,12 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             refresh(keepPosition: true)
         }
         inspectorModel.ids = state.selection.filter { library.snapshot.contains($0) }
+    }
+
+    private func memoriesChanged() {
+        sidebar.refreshRows()
+        if case .memory = state.source { refresh(keepPosition: true) }
+        if state.source == .memories { updateTitle() }
     }
 
     private func preferencesChanged() {

@@ -67,6 +67,52 @@ extension LibraryWindowController: PhotoBrowserDelegate {
         guard let album = currentAlbum else { return }
         library.edit("Album Description") { $0.setAlbumNote(album.id, to: note) }
     }
+
+    func browserPlayAlbum() {
+        guard let album = currentAlbum, let memory = memories.finder.album(album.id) else { return }
+        play(memory)
+    }
+}
+
+// MARK: Memories and slideshows
+
+extension LibraryWindowController: MemoriesActions {
+    var memoriesToday: Int { memories.page.onThisDay.filter { if case .onThisDay = $0.kind { true } else { false } }.count }
+
+    /// Plays a memory full screen on this window's screen. Show Photos at the end opens its photos here.
+    func play(_ memory: Memory) {
+        guard !memory.items.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        closeViewer(refreshing: false)
+        SlideshowController.play(memory, library: library, on: window?.screen) { [weak self] wantsPhotos in
+            guard let self else { return }
+            window?.makeKeyAndOrderFront(nil)
+            if wantsPhotos { showPhotos(of: memory) }
+        }
+    }
+
+    func showPhotos(of memory: Memory) {
+        switch memory.kind {
+        case let .album(id): go(to: .album(id))
+        case let .label(id): go(to: .label(id))
+        default: go(to: .memory(memory.id))
+        }
+    }
+
+    /// The memory View ▸ Play Slideshow plays: the album, the memory or the selection showing, today's memory on
+    /// the Memories page, or else the photos showing, from the selected one on.
+    func slideshowForCurrentPlace() -> Memory? {
+        let finder = memories.finder
+        if state.source == .memories { return memories.page.onThisDay.first ?? memories.page.highlights.first ?? memories.page.years.first }
+        if state.selection.count > 1 { return finder.selection(state.selection, title: "Selected Photos") }
+        if let album = currentAlbum { return finder.album(album.id) }
+        if let memory = currentMemory { return memory }
+        var ids = viewerSequence
+        if let start = state.viewerID ?? state.selection.first, let index = ids.firstIndex(of: start) { ids = Array(ids[index...]) }
+        return finder.selection(Array(ids.prefix(200)), title: window?.title ?? "Slideshow")
+    }
 }
 
 // MARK: Moving photos in time
@@ -125,6 +171,8 @@ extension LibraryWindowController {
 // MARK: The sidebar
 
 extension LibraryWindowController: SidebarDelegate {
+    // MARK: Sidebar
+
     func sidebarSelect(_ source: LibrarySource) {
         guard source != state.source || state.viewerID != nil else { return }
         go(to: source)
