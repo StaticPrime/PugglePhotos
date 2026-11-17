@@ -291,6 +291,7 @@ extension LibraryWindowController: SidebarDelegate {
         closeViewer()
         guard let section = content.sections.firstIndex(where: { $0.key.days.map { $0.contains(day) } ?? false })
             ?? nearestSection(to: day) else { return }
+        stayAtChosenPlace()
         if state.viewMode == .gallery { grid.scroll(toSection: section) } else { list.select(content.sections[section].items) }
     }
 

@@ -266,7 +266,12 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             if opensAtEnd, selection.isEmpty, arrangement.sort == .dateTaken, arrangement.ascending, state.source == .library,
                state.searchText.isEmpty {
                 opensAtEnd = false
-                DispatchQueue.main.async { [weak self] in self?.grid.scrollToEnd() }
+                let chosen = placesChosen
+                DispatchQueue.main.async { [weak self] in
+                    // Unless a day was chosen meanwhile (from the calendar, say), which stays in view.
+                    guard let self, placesChosen == chosen else { return }
+                    grid.scrollToEnd()
+                }
             }
         }
         setSelection(selection, notify: false)
@@ -278,6 +283,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     var isShowingBook: Bool { shownChild === book && state.viewerID == nil }
     /// Set when the library is about to be shown afresh, so it opens on the newest photos.
     private var opensAtEnd = true
+    /// Counts the places chosen to scroll to, so opening on the newest photos gives way to one chosen since.
+    private var placesChosen = 0
+
+    /// Keeps the photos where they're about to be scrolled to, rather than on the newest ones.
+    func stayAtChosenPlace() { placesChosen += 1 }
 
     private func showWelcome(_ welcome: WelcomeView.State) {
         let view = WelcomeView(state: welcome, onAllow: { [weak self] in self?.library.requestAccess() },
