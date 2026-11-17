@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>PugglePhotos shows the photos and videos in your Photos library, keeps your favorites in step and changes dates when you ask it to. Your photos never leave your Mac.</string>
+	<string>PugglePhotos shows the photos and videos in your Photos library, keeps your albums and favorites in step, and changes dates when you ask it to. Your photos never leave your Mac.</string>
 </dict>
 </plist>
