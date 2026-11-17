@@ -473,6 +473,7 @@ enum SelfTest {
         }
 
         memoryAndSlideshowSteps(app, window: window)
+        bookSteps(app, window: window)
 
         // MARK: Saving
         step { wait(upTo: 3) { (try? DebugLaunchOptions.sampleStore?.load()) == catalog } }
