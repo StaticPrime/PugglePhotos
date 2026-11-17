@@ -28,8 +28,14 @@ public struct BookPlacement: Hashable, Sendable {
     /// Degrees, clockwise.
     public var angle: Double
     public var caption: String
+    /// The photo's note, and how it shows here.
+    public var note: String
+    public var noteStyle: BookNoteStyle
+    /// Its sticky note, when the note's on one.
+    public var sticky: BookSticky
 
-    public init(id: PhotoID, isVideo: Bool, aspect: Double, center: CGPoint, imageSize: CGSize, angle: Double, caption: String) {
+    public init(id: PhotoID, isVideo: Bool, aspect: Double, center: CGPoint, imageSize: CGSize, angle: Double, caption: String,
+                note: String = "", noteStyle: BookNoteStyle = .hidden, sticky: BookSticky? = nil) {
         self.id = id
         self.isVideo = isVideo
         self.aspect = aspect
@@ -37,7 +43,14 @@ public struct BookPlacement: Hashable, Sendable {
         self.imageSize = imageSize
         self.angle = angle
         self.caption = caption
+        self.note = note
+        self.noteStyle = noteStyle
+        self.sticky = sticky ?? BookSticky(center: .zero, size: CGSize(width: 140, height: 130), angle: 0)
     }
+
+    /// Whether the note shows, and how.
+    public var showsNote: Bool { !note.isEmpty && noteStyle != .hidden }
+    public var hasSticky: Bool { !note.isEmpty && noteStyle == .sticky }
 
     /// The white border around the picture: sides, top and bottom.
     public func border(_ frame: BookFrame) -> (side: CGFloat, top: CGFloat, bottom: CGFloat) {
@@ -70,14 +83,74 @@ public struct BookPlacement: Hashable, Sendable {
         return CGRect(x: outer.minX + border.side, y: outer.minY + border.top, width: imageSize.width, height: imageSize.height)
     }
 
-    /// Where the caption goes: in the instant frame's wide bottom border, or on the paper under the frame.
+    /// Where the caption goes: in the instant frame's wide bottom border (its top part, when the note's written
+    /// there too), or on the paper under the frame.
     public func captionRect(_ frame: BookFrame) -> CGRect {
         let outer = frameRect(frame)
         if frame == .instant {
             let border = border(frame)
-            return CGRect(x: outer.minX + border.side, y: outer.maxY - border.bottom, width: imageSize.width, height: border.bottom)
+            let height = showsNote && noteStyle == .onPhoto ? border.bottom * 0.45 : border.bottom
+            return CGRect(x: outer.minX + border.side, y: outer.maxY - border.bottom, width: imageSize.width, height: height)
         }
         return CGRect(x: outer.minX - 20, y: outer.maxY + 4, width: outer.width + 40, height: 28)
+    }
+
+    /// The room a note written under a photo takes on the page.
+    public static let noteRoom: CGFloat = 58
+
+    /// Where the note is written, for notes on or under the photo: in an instant frame's border (under the
+    /// caption), across the bottom of the picture, or on the paper under the frame (and its caption).
+    public func noteRect(_ frame: BookFrame) -> CGRect {
+        let outer = frameRect(frame)
+        switch noteStyle {
+        case .onPhoto where frame == .instant:
+            let border = border(frame)
+            let top = caption.isEmpty ? outer.maxY - border.bottom : outer.maxY - border.bottom * 0.55
+            return CGRect(x: outer.minX + border.side, y: top, width: imageSize.width, height: outer.maxY - top - border.bottom * 0.06)
+        case .onPhoto:
+            let picture = imageRect(frame)
+            let height = min(picture.height * 0.3, 80)
+            return CGRect(x: picture.minX + 10, y: picture.maxY - height - 4, width: picture.width - 20, height: height)
+        default:
+            let top = outer.maxY + 4 + (frame != .instant && !caption.isEmpty ? 26 : 0)
+            return CGRect(x: outer.minX - 6, y: top, width: outer.width + 12, height: Self.noteRoom - 6)
+        }
+    }
+
+    /// Where a sticky note goes when the person hasn't moved it: over the frame's top right corner, hanging off it a
+    /// little, leaning a little.
+    public static func defaultSticky(frameSize: CGSize, seed: UInt64) -> BookSticky {
+        let side = min(max(frameSize.width * 0.48, 120), 180)
+        var random = SplitMix(seed: seed)
+        let lean = Double(Int(random.next() % 81) - 40) / 10
+        return BookSticky(center: CGPoint(x: frameSize.width / 2 - side * 0.28, y: -frameSize.height / 2 + side * 0.22),
+                          size: CGSize(width: side, height: (side * 0.94).rounded()), angle: lean)
+    }
+
+    /// A point from the placement's own coordinates into its sticky note's (centered, unleaning) coordinates.
+    public func stickyLocal(_ point: CGPoint) -> CGPoint {
+        let own = local(point)
+        let radians = -sticky.angle * .pi / 180
+        let dx = own.x - sticky.center.x, dy = own.y - sticky.center.y
+        return CGPoint(x: dx * cos(radians) - dy * sin(radians), y: dx * sin(radians) + dy * cos(radians))
+    }
+
+    /// A point on the sticky note (in its own coordinates) onto the page.
+    public func stickyPage(_ point: CGPoint) -> CGPoint {
+        let radians = sticky.angle * .pi / 180
+        return page(CGPoint(x: sticky.center.x + point.x * cos(radians) - point.y * sin(radians),
+                            y: sticky.center.y + point.x * sin(radians) + point.y * cos(radians)))
+    }
+
+    public func stickyContains(_ point: CGPoint) -> Bool {
+        hasSticky && sticky.rect.insetBy(dx: -2, dy: -2).contains(stickyLocal(point))
+    }
+
+    /// The sticky note's four corners on the page.
+    public func stickyCorners() -> [CGPoint] {
+        let rect = sticky.rect
+        return [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+                CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)].map(stickyPage)
     }
 
     /// A point from page coordinates into the placement's own (centered, unleaning) coordinates.
@@ -114,7 +187,10 @@ public enum BookPageKind: Hashable, Sendable {
     /// The album's name, dates, story and cover photo.
     case title
     case photos
+    /// A page left blank so the last sheet has two sides.
     case blank
+    /// A page the person added, for writing on.
+    case added
     /// The outside of the back cover.
     case back
 }
@@ -122,55 +198,93 @@ public enum BookPageKind: Hashable, Sendable {
 public struct BookPage: Hashable, Sendable {
     public let kind: BookPageKind
     public var placements: [BookPlacement]
-    /// The page number printed at the bottom of photo pages.
+    /// The page number printed at the bottom of photo pages and added pages.
     public let number: Int?
+    /// How writing finds this page again; nil for a blank page, which comes and goes.
+    public let spot: BookSpot?
+    /// What's written on it.
+    public var writings: [BookWriting]
 
-    public init(kind: BookPageKind, placements: [BookPlacement] = [], number: Int? = nil) {
+    public init(kind: BookPageKind, placements: [BookPlacement] = [], number: Int? = nil, spot: BookSpot? = nil,
+                writings: [BookWriting] = []) {
         self.kind = kind
         self.placements = placements
         self.number = number
+        self.spot = spot
+        self.writings = writings
     }
 }
 
 /// A photo book laid out page by page: the cover, the inside cover, a title page, pages of photos (one, two or
-/// three to a page, each leaning a little and jostled from its spot), a blank page if needed to finish a sheet,
-/// the inside back cover and the back. The same photos and settings always give the same book; the person's own
-/// moves and turns are laid over the top.
+/// three to a page, each leaning a little and jostled from its spot) with any pages the person added among them,
+/// a blank page if needed to finish a sheet, the inside back cover and the back. The same photos and settings
+/// always give the same book; the person's own moves, sticky notes and writing are laid over the top.
 public struct BookLayout: Sendable {
     public static let pageSize = CGSize(width: 600, height: 780)
     public let pages: [BookPage]
     public let settings: BookSettings
 
-    public init(items: [BookItem], captions: [PhotoID: String], settings: BookSettings, coverPhoto: PhotoID?) {
+    public init(items: [BookItem], captions: [PhotoID: String], notes: [PhotoID: String] = [:], settings: BookSettings,
+                coverPhoto: PhotoID?) {
         self.settings = settings
         let hidden = Set(settings.hidden)
         let shown = items.filter { !hidden.contains($0.id) }
         var random = SplitMix(seed: settings.seed &* 0x9E37_79B9_7F4A_7C15 &+ 7)
-        var pages = [BookPage(kind: .cover), BookPage(kind: .insideCover)]
+        var pages = [BookPage(kind: .cover, spot: .cover), BookPage(kind: .insideCover, spot: .insideFront)]
         // The title page has the cover photo, a little turned.
-        var titlePage = BookPage(kind: .title)
+        var titlePage = BookPage(kind: .title, spot: .title)
         if let cover = coverPhoto, let item = items.first(where: { $0.id == cover }) {
-            titlePage.placements = [Self.place(item, in: CGRect(x: 150, y: 70, width: 300, height: 360), caption: "", settings: settings,
+            titlePage.placements = [Self.place(item, in: CGRect(x: 150, y: 70, width: 300, height: 360), caption: "", note: "", settings: settings,
                                                leanScale: 0.6, applyingOverrides: false)]
         }
         pages.append(titlePage)
-        var index = 0
         var number = 1
+        // An added page goes right after the page it was added after, so the newest of several added after the same
+        // page comes first; pages added after it follow it.
+        let extras = settings.extraPages
+        var placed = Set<UUID>()
+        func addExtras(after anchor: BookAnchor) {
+            for extra in extras.reversed() where extra.after == anchor && !placed.contains(extra.id) {
+                placed.insert(extra.id)
+                pages.append(BookPage(kind: .added, number: number, spot: .page(extra.id)))
+                number += 1
+                addExtras(after: .page(extra.id))
+            }
+        }
+        addExtras(after: .title)
+        var index = 0
         while index < shown.count {
             let count = min(Self.capacity(settings.perPage, random: &random), shown.count - index)
             let group = Array(shown[index..<(index + count)])
             let slots = Self.slots(for: group, frame: settings.frame)
             let placements = zip(group, slots).map { item, slot in
-                Self.place(item, in: slot, caption: captions[item.id] ?? "", settings: settings, leanScale: count == 1 ? 0.6 : 1)
+                Self.place(item, in: slot, caption: captions[item.id] ?? "", note: notes[item.id] ?? "", settings: settings,
+                           leanScale: count == 1 ? 0.6 : 1)
             }
-            pages.append(BookPage(kind: .photos, placements: placements, number: number))
+            pages.append(BookPage(kind: .photos, placements: placements, number: number, spot: group.first.map { .photo($0.id) }))
             number += 1
             index += count
+            for item in group { addExtras(after: .photo(item.id)) }
+        }
+        // Pages added after something no longer in the book go at the end of it.
+        for extra in extras where !placed.contains(extra.id) {
+            placed.insert(extra.id)
+            pages.append(BookPage(kind: .added, number: number, spot: .page(extra.id)))
+            number += 1
+            addExtras(after: .page(extra.id))
         }
         // Two cover pages follow, and every sheet has two sides, so the pages so far must come out even.
         if pages.count % 2 == 1 { pages.append(BookPage(kind: .blank)) }
-        pages.append(BookPage(kind: .insideCover))
-        pages.append(BookPage(kind: .back))
+        pages.append(BookPage(kind: .insideCover, spot: .insideBack))
+        pages.append(BookPage(kind: .back, spot: .back))
+        // Writing goes on its page: a page of photos is found by any photo on it.
+        for writing in settings.writings {
+            let target: Int? = switch writing.spot {
+            case let .photo(id): pages.firstIndex { $0.kind == .photos && $0.placements.contains { $0.id == id } }
+            default: pages.firstIndex { $0.spot == writing.spot }
+            }
+            if let target { pages[target].writings.append(writing) }
+        }
         self.pages = pages
     }
 
@@ -205,11 +319,13 @@ public struct BookLayout: Sendable {
     }
 
     /// Fits a photo's frame into its space, then nudges and turns it a little.
-    static func place(_ item: BookItem, in slot: CGRect, caption: String, settings: BookSettings, leanScale: Double,
+    static func place(_ item: BookItem, in slot: CGRect, caption: String, note: String, settings: BookSettings, leanScale: Double,
                       applyingOverrides: Bool = true) -> BookPlacement {
         let frame = settings.frame
-        // Room for a caption written on the paper under the frame.
-        let captionRoom: CGFloat = frame != .instant && !caption.isEmpty ? 30 : 0
+        let noteStyle = applyingOverrides ? settings.noteStyle(for: item.id) : .hidden
+        // Room for a caption, and a note, written on the paper under the frame.
+        let captionRoom: CGFloat = (frame != .instant && !caption.isEmpty ? 30 : 0)
+            + (!note.isEmpty && noteStyle == .underPhoto ? BookPlacement.noteRoom : 0)
         let space = CGSize(width: slot.width * 0.94, height: (slot.height - captionRoom) * 0.94)
         let imageAspect = frame == .instant ? 1.0 : item.aspect
         // The frame's shape follows from the picture's: instant frames are 1.12 wide by 1.33 tall per picture
@@ -232,14 +348,18 @@ public struct BookLayout: Sendable {
         let lean = settings.tilt.maxDegrees * leanScale * (Double(jitter.next() % 2001) / 1000 - 1)
         var placement = BookPlacement(id: item.id, isVideo: item.isVideo, aspect: item.aspect,
                                       center: CGPoint(x: slot.midX + dx, y: slot.midY - captionRoom / 2 + dy),
-                                      imageSize: size, angle: (lean * 10).rounded() / 10, caption: caption)
-        if applyingOverrides, let override = settings.overrides[item.id] {
+                                      imageSize: size, angle: (lean * 10).rounded() / 10, caption: caption,
+                                      note: note, noteStyle: noteStyle)
+        let override = applyingOverrides ? settings.overrides[item.id] : nil
+        if let override {
             if let center = override.center { placement.center = center }
             if let angle = override.angle { placement.angle = angle }
             if let scale = override.scale {
                 placement.imageSize = CGSize(width: placement.imageSize.width * scale, height: placement.imageSize.height * scale)
             }
         }
+        placement.sticky = override?.sticky
+            ?? BookPlacement.defaultSticky(frameSize: placement.frameSize(frame), seed: settings.seed ^ KenBurns.seed(item.id) ^ 0x5717)
         placement.center = clamp(placement.center)
         return placement
     }
@@ -287,5 +407,47 @@ public struct BookLayout: Sendable {
     public func placement(at point: CGPoint, onPage page: Int) -> BookPlacement? {
         guard pages.indices.contains(page) else { return nil }
         return pages[page].placements.reversed().first { $0.contains(point, frame: settings.frame) }
+    }
+
+    /// The photo whose sticky note is under a point on a page; sticky notes lie over every photo.
+    public func sticky(at point: CGPoint, onPage page: Int) -> BookPlacement? {
+        guard pages.indices.contains(page) else { return nil }
+        return pages[page].placements.reversed().first { $0.stickyContains(point) }
+    }
+
+    /// The page a spot is on.
+    public func page(of spot: BookSpot) -> Int? {
+        if case let .photo(id) = spot { return find(id)?.page }
+        return pages.firstIndex { $0.spot == spot }
+    }
+
+    /// Where writing put at a point on a page belongs: the page itself, or for a page of photos, the photo nearest
+    /// the point, so the writing stays with it if the book is laid out afresh. Nil for a blank page.
+    public func spot(forWritingAt point: CGPoint, onPage page: Int) -> BookSpot? {
+        guard pages.indices.contains(page) else { return nil }
+        let target = pages[page]
+        if target.kind == .photos {
+            let nearest = target.placements.min { hypot($0.center.x - point.x, $0.center.y - point.y) < hypot($1.center.x - point.x, $1.center.y - point.y) }
+            return nearest.map { .photo($0.id) } ?? target.spot
+        }
+        return target.spot
+    }
+
+    /// Where a page added now, next to a page, goes: after that page (or for the title page, before the photos).
+    /// Nil for the covers and the inside covers, which can't have pages after them.
+    public func anchor(after page: Int) -> BookAnchor? {
+        guard pages.indices.contains(page) else { return nil }
+        let target = pages[page]
+        switch target.kind {
+        case .title: return .title
+        case .photos: return target.placements.last.map { .photo($0.id) }
+        case .added:
+            if case let .page(id) = target.spot { return .page(id) }
+            return nil
+        case .blank:
+            // The blank page at the end: after the last page of photos or added page before it.
+            return (0..<page).reversed().lazy.compactMap { self.anchor(after: $0) }.first
+        default: return nil
+        }
     }
 }

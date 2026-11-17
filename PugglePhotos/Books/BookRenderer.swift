@@ -58,7 +58,7 @@ final class BookRenderer {
             drawPaper(in: context, bounds: bounds)
             for placement in page.placements { drawPlacement(placement, in: context) }
             drawTitleText(in: context, below: page.placements.first.map { $0.center.y + $0.frameSize(settings.frame).height / 2 } ?? 120)
-        case .photos, .blank:
+        case .photos, .blank, .added:
             drawPaper(in: context, bounds: bounds)
             for placement in page.placements { drawPlacement(placement, in: context) }
             if let number = page.number { drawPageNumber(number, in: bounds) }

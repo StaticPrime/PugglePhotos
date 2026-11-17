@@ -106,7 +106,7 @@ public enum BookCover: String, Codable, Sendable, CaseIterable {
     }
 }
 
-/// Where the person put one photo, or how they turned it, overriding the book's own layout.
+/// Where the person put one photo, or how they turned it, and how its note shows, overriding the book's own layout.
 public struct BookPlacementOverride: Codable, Hashable, Sendable {
     /// The middle of the photo's frame, in page coordinates.
     public var center: CGPoint?
@@ -114,14 +114,32 @@ public struct BookPlacementOverride: Codable, Hashable, Sendable {
     public var angle: Double?
     /// 1 is the size the layout chose.
     public var scale: Double?
+    /// How this photo's note shows, if not as the book's notes do.
+    public var noteStyle: BookNoteStyle?
+    /// Where its sticky note was moved to, how big it was made and its color.
+    public var sticky: BookSticky?
 
-    public init(center: CGPoint? = nil, angle: Double? = nil, scale: Double? = nil) {
+    public init(center: CGPoint? = nil, angle: Double? = nil, scale: Double? = nil, noteStyle: BookNoteStyle? = nil,
+                sticky: BookSticky? = nil) {
         self.center = center
         self.angle = angle
         self.scale = scale
+        self.noteStyle = noteStyle
+        self.sticky = sticky
     }
 
-    public var isEmpty: Bool { center == nil && angle == nil && scale == nil }
+    public var isEmpty: Bool { center == nil && angle == nil && scale == nil && noteStyle == nil && sticky == nil }
+
+    enum CodingKeys: String, CodingKey { case center, angle, scale, noteStyle, sticky }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        center = try? container.decodeIfPresent(CGPoint.self, forKey: .center)
+        angle = try? container.decodeIfPresent(Double.self, forKey: .angle)
+        scale = try? container.decodeIfPresent(Double.self, forKey: .scale)
+        noteStyle = try? container.decodeIfPresent(BookNoteStyle.self, forKey: .noteStyle)
+        sticky = try? container.decodeIfPresent(BookSticky.self, forKey: .sticky)
+    }
 }
 
 /// How an album looks as a photo book. Albums without settings use the defaults.
@@ -136,9 +154,19 @@ public struct BookSettings: Codable, Hashable, Sendable {
     public var overrides: [PhotoID: BookPlacementOverride]
     /// Photos left out of the book (they stay in the album).
     public var hidden: [PhotoID]
+    /// How the photos' notes show, unless a photo says otherwise; nil to write them in an instant photo's white
+    /// space, or on the page under other kinds of photos.
+    public var notes: BookNoteStyle?
+    /// The font family everything in the book is written in; nil for the one chosen in Settings.
+    public var handwriting: String?
+    /// Words written on the pages.
+    public var writings: [BookWriting]
+    /// Pages added for writing on.
+    public var extraPages: [BookExtraPage]
 
     public init(paper: BookPaper = .cream, frame: BookFrame = .instant, tilt: BookTilt = .gentle, perPage: BookPerPage = .mixed,
-                cover: BookCover = .rose, seed: UInt64 = 1, overrides: [PhotoID: BookPlacementOverride] = [:], hidden: [PhotoID] = []) {
+                cover: BookCover = .rose, seed: UInt64 = 1, overrides: [PhotoID: BookPlacementOverride] = [:], hidden: [PhotoID] = [],
+                notes: BookNoteStyle? = nil, handwriting: String? = nil, writings: [BookWriting] = [], extraPages: [BookExtraPage] = []) {
         self.paper = paper
         self.frame = frame
         self.tilt = tilt
@@ -147,9 +175,13 @@ public struct BookSettings: Codable, Hashable, Sendable {
         self.seed = seed
         self.overrides = overrides
         self.hidden = hidden
+        self.notes = notes
+        self.handwriting = handwriting
+        self.writings = writings
+        self.extraPages = extraPages
     }
 
-    enum CodingKeys: String, CodingKey { case paper, frame, tilt, perPage, cover, seed, overrides, hidden }
+    enum CodingKeys: String, CodingKey { case paper, frame, tilt, perPage, cover, seed, overrides, hidden, notes, handwriting, writings, extraPages }
 
     // Settings saved by a later version with choices this one doesn't know fall back to the defaults.
     public init(from decoder: Decoder) throws {
@@ -163,6 +195,23 @@ public struct BookSettings: Codable, Hashable, Sendable {
         seed = (try? container.decodeIfPresent(UInt64.self, forKey: .seed)) ?? defaults.seed
         overrides = (try? container.decodeIfPresent([PhotoID: BookPlacementOverride].self, forKey: .overrides)) ?? [:]
         hidden = (try? container.decodeIfPresent([PhotoID].self, forKey: .hidden)) ?? []
+        notes = try? container.decodeIfPresent(BookNoteStyle.self, forKey: .notes)
+        handwriting = try? container.decodeIfPresent(String.self, forKey: .handwriting)
+        writings = (try? container.decodeIfPresent([BookWriting].self, forKey: .writings)) ?? []
+        extraPages = (try? container.decodeIfPresent([BookExtraPage].self, forKey: .extraPages)) ?? []
+    }
+
+    /// How the book's notes show: as chosen, or else by the frames.
+    public var noteStyle: BookNoteStyle { notes ?? (frame == .instant ? .onPhoto : .underPhoto) }
+
+    /// How one photo's note shows.
+    public func noteStyle(for id: PhotoID) -> BookNoteStyle { overrides[id]?.noteStyle ?? noteStyle }
+
+    /// Changes one photo's override, dropping it when nothing's left in it.
+    public mutating func changeOverride(_ id: PhotoID, _ change: (inout BookPlacementOverride) -> Void) {
+        var override = overrides[id] ?? BookPlacementOverride()
+        change(&override)
+        overrides[id] = override.isEmpty ? nil : override
     }
 }
 
