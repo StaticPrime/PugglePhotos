@@ -68,6 +68,8 @@ public struct Album: Identifiable, Hashable, Codable, Sendable {
     public var order: AlbumOrder
     /// The Photos library's identifier for the album mirroring this one; nil until that album has been made.
     public var photosAlbumID: String?
+    /// How the album looks as a photo book; nil for the defaults.
+    public var book: BookSettings?
 
     public init(id: UUID = UUID(), title: String, note: String = "", created: Date = Date(), cover: PhotoID? = nil,
                 items: [PhotoID] = [], order: AlbumOrder = .oldestFirst, photosAlbumID: String? = nil) {
