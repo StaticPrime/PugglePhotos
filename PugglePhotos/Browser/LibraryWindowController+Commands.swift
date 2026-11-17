@@ -58,8 +58,14 @@ extension LibraryWindowController: NSMenuItemValidation {
             return isShowingBook && book.bookView.selected != nil
         case #selector(phPutBackInBook(_:)):
             return isShowingBook && book.layout.settings.hidden.count > 0
-        case #selector(phShuffleBook(_:)), #selector(phResetBookLayout(_:)), #selector(phExportBookPDF(_:)), #selector(phPrintBook(_:)):
+        case #selector(phShuffleBook(_:)), #selector(phResetBookLayout(_:)), #selector(phExportBookPDF(_:)), #selector(phPrintBook(_:)),
+             #selector(phAddBookPage(_:)):
             return isShowingBook
+        case #selector(phToggleBookWriting(_:)):
+            menuItem.state = isShowingBook && book.bookView.isWriting ? .on : .off
+            return isShowingBook
+        case #selector(phRemoveBookPage(_:)):
+            return isShowingBook && book.openAddedPage != nil
         case #selector(phBookStyle(_:)):
             if let (key, value) = menuItem.representedObject as? (String, String) {
                 let settings = book.layout.settings
@@ -231,6 +237,9 @@ extension LibraryWindowController: NSMenuItemValidation {
     @objc func phLeaveOutOfBook(_ sender: Any?) { book.leaveOutSelected() }
     @objc func phPutBackInBook(_ sender: Any?) { book.putBackLeftOut() }
     @objc func phShuffleBook(_ sender: Any?) { book.shuffle() }
+    @objc func phToggleBookWriting(_ sender: Any?) { book.setWriting(!book.bookView.isWriting) }
+    @objc func phAddBookPage(_ sender: Any?) { book.addPage() }
+    @objc func phRemoveBookPage(_ sender: Any?) { book.openAddedPage.map(book.removePage) }
     @objc func phResetBookLayout(_ sender: Any?) { book.resetLayout() }
     @objc func phExportBookPDF(_ sender: Any?) { book.exportPDF() }
     @objc func phPrintBook(_ sender: Any?) { book.printBook() }

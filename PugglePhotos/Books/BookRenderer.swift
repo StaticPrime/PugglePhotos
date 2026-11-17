@@ -17,6 +17,8 @@ final class BookRenderer {
     var hiding: PhotoID?
     /// The day a photo was taken, as written on its back.
     var day: (PhotoID) -> String = { _ in "" }
+    /// Writing left off its page while it's being written, in place above it.
+    var editing: UUID?
 
     init(settings: BookSettings, title: String, subtitle: String, story: String, image: @escaping (PhotoID) -> CGImage?) {
         self.settings = settings
@@ -73,7 +75,47 @@ final class BookRenderer {
             }
             if let number = page.number { drawPageNumber(number, in: bounds) }
         }
+        // Words written on the page lie over everything on it.
+        for writing in page.writings where writing.id != editing { drawWriting(writing, onCloth: page.kind == .cover || page.kind == .back, in: context) }
         if page.kind != .cover, page.kind != .back { drawGutter(in: context, bounds: bounds, isLeft: isLeft) }
+    }
+
+    // MARK: Writing
+
+    /// The color writing shows in on a page: its ink, and for automatic ink, dark on light paper and light on dark
+    /// paper and on the cloth covers.
+    func inkColor(_ ink: BookInk, onCloth: Bool) -> NSColor {
+        let hex = ink.color(onDark: onCloth || settings.paper.isDark)
+        return NSColor(cgColor: Self.color(hex)) ?? .black
+    }
+
+    /// The font writing is in, at its size.
+    func writingFont(_ writing: BookWriting) -> NSFont { handwriting(writing.size) }
+
+    /// How much room writing takes: its width, and as tall as its lines (one line at least).
+    func writingSize(_ writing: BookWriting) -> CGSize {
+        let font = writingFont(writing)
+        let text = writing.text.isEmpty ? " " : writing.text
+        return CGSize(width: writing.width, height: max(textHeight(text, font: font, width: writing.width), ceil(font.ascender - font.descender + font.leading)))
+    }
+
+    /// Words written on a page, around their middle, at their angle, in the book's handwriting.
+    private func drawWriting(_ writing: BookWriting, onCloth: Bool, in context: CGContext) {
+        guard !writing.text.isEmpty else { return }
+        let size = writingSize(writing)
+        context.saveGState()
+        context.translateBy(x: writing.center.x, y: writing.center.y)
+        context.rotate(by: writing.angle * .pi / 180)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        var color = inkColor(writing.ink, onCloth: onCloth)
+        if onCloth {
+            // Ink on cloth sinks in a little.
+            color = color.withAlphaComponent(0.9)
+        }
+        NSAttributedString(string: writing.text, attributes: [.font: writingFont(writing), .foregroundColor: color, .paragraphStyle: paragraph])
+            .draw(with: CGRect(x: -size.width / 2, y: -size.height / 2, width: size.width, height: size.height), options: [.usesLineFragmentOrigin])
+        context.restoreGState()
     }
 
     // MARK: Paper

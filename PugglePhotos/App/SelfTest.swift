@@ -481,6 +481,7 @@ enum SelfTest {
         filmstripSteps(app, window: window)
         backSteps(app, window: window)
         bookNoteSteps(app, window: window)
+        writingSteps(app, window: window)
 
         // MARK: Saving
         step { wait(upTo: 3) { (try? DebugLaunchOptions.sampleStore?.load()) == catalog } }

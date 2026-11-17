@@ -16,6 +16,10 @@ final class BookControlsModel {
     var hasSelection = false
     var isBusy = false
     var choosingHandwriting = false
+    /// Whether a click on a page writes there.
+    var isWriting = false
+    /// Whether the open pages include one the person added.
+    var showsAddedPage = false
     @ObservationIgnored weak var controller: BookViewController?
 }
 
@@ -47,6 +51,11 @@ final class BookViewController: NSViewController, BookViewDelegate {
     /// The photo showing its back, and the one left off its page while it turns over.
     private var turnedOver: PhotoID?
     private var hiding: PhotoID?
+    /// Writing being moved, widened or turned; writing being written in place; and a page to add with new writing on
+    /// the blank page at the end.
+    private var writingDraft: BookWriting?
+    private var editingWriting: UUID?
+    private var pendingPage: BookExtraPage?
     /// Where each album's book was left open.
     private var places: [UUID: Int] = [:]
     /// Called to open a photo in the viewer.
@@ -85,12 +94,21 @@ final class BookViewController: NSViewController, BookViewDelegate {
         view = root
     }
 
+    /// Leaving the book finishes any writing and puts the pen down.
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        bookView.endEditing()
+        setWriting(false)
+    }
+
     // MARK: The book
 
     /// Opens an album as a book, where it was left (or closed, the first time).
     func show(album id: UUID) {
         loadViewIfNeeded()
         if album != id {
+            bookView.endEditing()
+            setWriting(false)
             if let album { places[album] = bookView.state }
             album = id
             bookView.forgetTurnedOver()
@@ -125,6 +143,9 @@ final class BookViewController: NSViewController, BookViewDelegate {
         }
         var settings = library.catalog.book(album)
         if let draft { settings.overrides[draft.id] = draft.override }
+        if let writingDraft {
+            if let index = settings.writings.firstIndex(where: { $0.id == writingDraft.id }) { settings.writings[index] = writingDraft } else { settings.writings.append(writingDraft) }
+        }
         let cover = arranger.cover(of: albumValue)
         layout = BookLayout(items: items, captions: captions, notes: notes, settings: settings, coverPhoto: cover)
         let summary = arranger.summary(of: albumValue)
@@ -136,6 +157,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
         renderer.coverPhoto = cover
         renderer.turnedOver = turnedOver
         renderer.hiding = hiding
+        renderer.editing = editingWriting
         let library = library
         renderer.day = { id in library.snapshot.day(of: id).map(library.formatting.writtenDay) ?? "" }
         self.renderer = renderer
@@ -268,6 +290,200 @@ final class BookViewController: NSViewController, BookViewDelegate {
     /// Writes on the back of a photo in the book: beside it, if it's on the open pages.
     func writeNote(_ id: PhotoID) {
         if let rect = bookView.rect(of: id) { onWriteNote?(id, rect, layout.settings.handwriting) }
+    }
+
+    // MARK: Writing on pages
+
+    /// Turns writing on the pages on or off.
+    func setWriting(_ on: Bool) {
+        bookView.isWriting = on
+        controls.isWriting = on
+        if on { view.window?.makeFirstResponder(bookView) }
+    }
+
+    func bookWritingSize(_ writing: BookWriting) -> CGSize {
+        renderer?.writingSize(writing) ?? CGSize(width: writing.width, height: writing.size * 1.3)
+    }
+
+    func bookWritingLook(_ writing: BookWriting, onPage page: Int) -> (font: NSFont, color: NSColor) {
+        let onCloth = layout.pages.indices.contains(page) && [.cover, .back].contains(layout.pages[page].kind)
+        guard let renderer else { return (Handwriting.font(nil, size: writing.size), .black) }
+        return (renderer.writingFont(writing), renderer.inkColor(writing.ink, onCloth: onCloth))
+    }
+
+    /// New writing begins where the page was clicked, its lines running to the right (no further than the page's
+    /// edge allows). On the blank page at the end, a page is added to keep it.
+    func bookNewWriting(at point: CGPoint, onPage page: Int) -> BookWriting? {
+        pendingPage = nil
+        var spot = layout.spot(forWritingAt: point, onPage: page)
+        if spot == nil, layout.pages[page].kind == .blank, let anchor = layout.anchor(after: page) {
+            let added = BookExtraPage(after: anchor)
+            pendingPage = added
+            spot = .page(added.id)
+        }
+        guard let spot else { return nil }
+        let size: CGFloat = 26
+        let room = BookLayout.pageSize.width - 24 - point.x
+        let width = min(max(room, 140), 340)
+        let left = min(point.x, BookLayout.pageSize.width - 24 - width)
+        // The first line runs through the point clicked.
+        return BookWriting(spot: spot, center: CGPoint(x: left + width / 2, y: point.y), width: width, size: size)
+    }
+
+    func bookPreviewWriting(_ writing: BookWriting?, editing: UUID?) {
+        writingDraft = writing
+        editingWriting = editing
+        rebuildKeepingImages()
+    }
+
+    func bookCommitWriting(_ writing: BookWriting, actionName: String) {
+        writingDraft = nil
+        let added = pendingPage.flatMap { writing.spot == .page($0.id) ? $0 : nil }
+        pendingPage = nil
+        change(actionName) { settings in
+            if let added, !settings.extraPages.contains(where: { $0.id == added.id }) { settings.extraPages.append(added) }
+            if let index = settings.writings.firstIndex(where: { $0.id == writing.id }) {
+                settings.writings[index] = writing
+            } else {
+                settings.writings.append(writing)
+            }
+        }
+    }
+
+    func bookEraseWriting(_ id: UUID) {
+        writingDraft = nil
+        change("Erase Writing") { $0.writings.removeAll { $0.id == id } }
+    }
+
+    /// Changes one piece of writing as an undoable step.
+    func changeWriting(_ id: UUID, _ actionName: String, _ change: (inout BookWriting) -> Void) {
+        guard var writing = layout.settings.writings.first(where: { $0.id == id }) else { return }
+        change(&writing)
+        bookCommitWriting(writing, actionName: actionName)
+    }
+
+    /// Right-click on writing: write on it, its ink, its size, or erase it.
+    func bookWritingMenu(_ id: UUID) -> NSMenu? {
+        guard let writing = layout.settings.writings.first(where: { $0.id == id }) else { return nil }
+        let menu = NSMenu()
+        let edit = NSMenuItem(title: "Change Writing", action: #selector(menuEditWriting(_:)), keyEquivalent: "")
+        edit.target = self
+        edit.representedObject = id
+        menu.addItem(edit)
+        let inks = NSMenu()
+        for ink in BookInk.allCases {
+            let item = NSMenuItem(title: ink.displayName, action: #selector(menuInk(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = WritingChoice(id: id, value: ink.rawValue)
+            item.state = writing.ink == ink ? .on : .off
+            if ink != .automatic { item.image = MenuBuilder.labelImage(NSColor(cgColor: BookRenderer.color(ink.color(onDark: false))) ?? .black) }
+            inks.addItem(item)
+        }
+        let inkItem = NSMenuItem(title: "Ink", action: nil, keyEquivalent: "")
+        inkItem.submenu = inks
+        menu.addItem(inkItem)
+        let sizes = NSMenu()
+        for (name, size) in Self.writingSizes {
+            let item = NSMenuItem(title: name, action: #selector(menuWritingSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = WritingChoice(id: id, value: "\(size)")
+            item.state = abs(writing.size - size) < 0.5 ? .on : .off
+            sizes.addItem(item)
+        }
+        let sizeItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
+        sizeItem.submenu = sizes
+        menu.addItem(sizeItem)
+        if writing.angle != 0 {
+            let straighten = NSMenuItem(title: "Straighten", action: #selector(menuStraightenWriting(_:)), keyEquivalent: "")
+            straighten.target = self
+            straighten.representedObject = id
+            menu.addItem(straighten)
+        }
+        menu.addItem(.separator())
+        let erase = NSMenuItem(title: "Erase", action: #selector(menuEraseWriting(_:)), keyEquivalent: "")
+        erase.target = self
+        erase.representedObject = id
+        menu.addItem(erase)
+        return menu
+    }
+
+    static let writingSizes: [(String, CGFloat)] = [("Small", 18), ("Medium", 26), ("Large", 38), ("Huge", 56)]
+
+    private final class WritingChoice: NSObject {
+        let id: UUID, value: String
+        init(id: UUID, value: String) { self.id = id; self.value = value }
+    }
+
+    @objc private func menuEditWriting(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID, let writing = layout.settings.writings.first(where: { $0.id == id }),
+              let page = layout.page(of: writing.spot) else { return }
+        bookView.beginEditing(writing, onPage: page, isNew: false)
+    }
+
+    @objc private func menuInk(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? WritingChoice, let ink = BookInk(rawValue: choice.value) else { return }
+        changeWriting(choice.id, "Ink") { $0.ink = ink }
+    }
+
+    @objc private func menuWritingSize(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? WritingChoice, let size = Double(choice.value) else { return }
+        changeWriting(choice.id, "Writing Size") { $0.size = CGFloat(size) }
+    }
+
+    @objc private func menuStraightenWriting(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        changeWriting(id, "Straighten") { $0.angle = 0 }
+    }
+
+    @objc private func menuEraseWriting(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        bookView.pick(nil)
+        bookEraseWriting(id)
+    }
+
+    /// Right-click on a page's paper: an added page can be taken out again.
+    func bookPageMenu(_ page: Int) -> NSMenu? {
+        guard layout.pages.indices.contains(page), case let .page(id)? = layout.pages[page].spot else { return nil }
+        let menu = NSMenu()
+        let remove = NSMenuItem(title: "Remove This Page", action: #selector(menuRemovePage(_:)), keyEquivalent: "")
+        remove.target = self
+        remove.representedObject = id
+        menu.addItem(remove)
+        return menu
+    }
+
+    @objc private func menuRemovePage(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? UUID { removePage(id) }
+    }
+
+    /// Adds a blank page to write on, on the right of the open pages (or after the title page, from the cover).
+    func addPage() {
+        let left = layout.state(bookView.state).left
+        let anchor = left.flatMap { layout.anchor(after: $0) } ?? .title
+        let added = BookExtraPage(after: anchor)
+        change("Add Page") { $0.extraPages.append(added) }
+        if let page = layout.page(of: .page(added.id)) { bookView.go(to: layout.state(showing: page), animated: false) }
+    }
+
+    /// The added page among the open pages, the right one first.
+    var openAddedPage: UUID? {
+        let showing = layout.state(bookView.state)
+        for page in [showing.right, showing.left].compactMap({ $0 }) {
+            if case let .page(id)? = layout.pages[page].spot { return id }
+        }
+        return nil
+    }
+
+    /// Takes out a page that was added, with its writing. Pages added after it go where it was.
+    func removePage(_ id: UUID) {
+        change("Remove Page") { settings in
+            guard let removed = settings.extraPages.first(where: { $0.id == id }) else { return }
+            settings.extraPages.removeAll { $0.id == id }
+            for index in settings.extraPages.indices where settings.extraPages[index].after == .page(id) {
+                settings.extraPages[index].after = removed.after
+            }
+            settings.writings.removeAll { $0.spot == .page(id) }
+        }
     }
 
     func bookSetTurnedOver(_ id: PhotoID?, hiding: PhotoID?) {
@@ -467,6 +683,8 @@ final class BookViewController: NSViewController, BookViewDelegate {
         controls.settings = layout.settings
         controls.hiddenCount = layout.settings.hidden.count
         controls.hasSelection = bookView.selected != nil
+        controls.isWriting = bookView.isWriting
+        controls.showsAddedPage = openAddedPage != nil
     }
 
     // MARK: PDF and printing
@@ -523,13 +741,15 @@ final class BookViewController: NSViewController, BookViewDelegate {
     /// Draws one place in the book with its pages side by side, from the top left of a page `height` tall.
     func drawSpread(_ state: Int, in context: CGContext, height: CGFloat) {
         guard let renderer else { return }
-        // On paper, every photo shows its front.
-        let turned = renderer.turnedOver, hidden = renderer.hiding
+        // On paper, every photo shows its front, and everything written shows.
+        let turned = renderer.turnedOver, hidden = renderer.hiding, writing = renderer.editing
         renderer.turnedOver = nil
         renderer.hiding = nil
+        renderer.editing = nil
         defer {
             renderer.turnedOver = turned
             renderer.hiding = hidden
+            renderer.editing = writing
         }
         let pages = layout.state(state)
         var x: CGFloat = 0
@@ -661,6 +881,14 @@ struct BookControlsView: View {
                 }
             Button { model.controller?.shuffle() } label: { Label("Shuffle", systemImage: "dice") }
                 .help("Lay the book out afresh")
+            Divider().frame(height: 20)
+            Toggle(isOn: Binding(get: { model.isWriting }, set: { model.controller?.setWriting($0) })) {
+                Label("Write", systemImage: "pencil.line")
+            }
+            .toggleStyle(.button)
+            .help("Click anywhere on a page to write there")
+            Button { model.controller?.addPage() } label: { Label("Add Page", systemImage: "doc.badge.plus") }
+                .help("Add a blank page to write on")
             if model.hiddenCount > 0 {
                 Button("Put Back \(model.hiddenCount)") { model.controller?.putBackLeftOut() }
                     .help("Put back the photos left out of the book")

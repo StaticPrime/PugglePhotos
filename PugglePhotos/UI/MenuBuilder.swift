@@ -195,6 +195,9 @@ enum MenuBuilder {
                 menuItem.representedObject = ("handwriting", family)
                 return menuItem
             }),
+            item("Write on Pages", #selector(LibraryWindowController.phToggleBookWriting(_:)), symbol: "pencil.line"),
+            item("Add a Blank Page", #selector(LibraryWindowController.phAddBookPage(_:)), symbol: "doc.badge.plus"),
+            item("Remove This Page", #selector(LibraryWindowController.phRemoveBookPage(_:))),
             item("Shuffle Book Layout", #selector(LibraryWindowController.phShuffleBook(_:)), symbol: "dice"),
             item("Reset Book Layout", #selector(LibraryWindowController.phResetBookLayout(_:))),
             item("Put Back Left-Out Photos", #selector(LibraryWindowController.phPutBackInBook(_:))),

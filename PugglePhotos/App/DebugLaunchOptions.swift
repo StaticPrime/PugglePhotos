@@ -130,6 +130,19 @@ enum DebugLaunchOptions {
                 book.bookView.setTurnedOver(first.id)
             }
             if defaults.bool(forKey: "PHBookSticky"), let noted = photos.first(where: \.hasSticky) { book.bookView.pick(.sticky(noted.id)) }
+            // `-PHBookWriting YES` writes a few words on each open page, and `-PHBookWriteMode YES` turns writing on.
+            if defaults.bool(forKey: "PHBookWriting") {
+                let samples = ["Summer at the shore, all of us together.", "Best day ever!", "We’ll come back next year. Promise."]
+                for (number, page) in [showing.left, showing.right].compactMap({ $0 }).enumerated() {
+                    if var writing = book.bookNewWriting(at: CGPoint(x: 70, y: number == 0 ? 720 : 60), onPage: page) {
+                        writing.text = samples[number % samples.count]
+                        writing.angle = number == 0 ? -4 : 3
+                        writing.size = number == 0 ? 30 : 26
+                        book.bookCommitWriting(writing, actionName: "Write on Page")
+                    }
+                }
+            }
+            if defaults.bool(forKey: "PHBookWriteMode") { book.setWriting(true) }
             let turn = defaults.double(forKey: "PHBookTurn")
             if turn > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { book.bookView.holdTurn(at: turn) } }
         }

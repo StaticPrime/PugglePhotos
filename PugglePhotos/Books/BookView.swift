@@ -30,6 +30,21 @@ protocol BookViewDelegate: AnyObject {
     func bookSetTurnedOver(_ id: PhotoID?, hiding: PhotoID?)
     /// A photo alone, front or back, for turning it over above the page.
     func bookPhotoSide(_ id: PhotoID, back: Bool, scale: CGFloat) -> (image: CGImage, size: CGSize)?
+    /// How much room writing takes on its page.
+    func bookWritingSize(_ writing: BookWriting) -> CGSize
+    /// The font writing is in on a page, and its ink's color there.
+    func bookWritingLook(_ writing: BookWriting, onPage page: Int) -> (font: NSFont, color: NSColor)
+    /// New writing starting at a point on a page, not kept until something's written; nil where nothing can be.
+    func bookNewWriting(at point: CGPoint, onPage page: Int) -> BookWriting?
+    /// While writing is moved, widened or turned: draw its page with it so. `editing` is left off its page while
+    /// it's being written in place above it.
+    func bookPreviewWriting(_ writing: BookWriting?, editing: UUID?)
+    /// Keeps writing that changed; nothing written erases it.
+    func bookCommitWriting(_ writing: BookWriting, actionName: String)
+    func bookEraseWriting(_ id: UUID)
+    /// The menus for writing, and for an added page.
+    func bookWritingMenu(_ id: UUID) -> NSMenu?
+    func bookPageMenu(_ page: Int) -> NSMenu?
     func bookPlayer(for id: PhotoID, completion: @escaping @MainActor (AVPlayer?) -> Void)
     var alwaysPlaysVideos: Bool { get }
     var playsVideoSound: Bool { get }
@@ -39,7 +54,7 @@ protocol BookViewDelegate: AnyObject {
 /// Click the paper to turn a page, or drag it over; click a photo to pick it, then drag it or its round handle to
 /// move or turn it, or click it again to turn it over and read its back. Sticky notes move, stretch and turn the
 /// same way, and a double-click writes on one. Videos play while the pointer is over them.
-final class BookView: NSView {
+final class BookView: NSView, NSTextViewDelegate {
     weak var delegate: BookViewDelegate?
     private(set) var state = 0
 
@@ -47,7 +62,29 @@ final class BookView: NSView {
     enum Pick: Equatable {
         case photo(PhotoID)
         case sticky(PhotoID)
+        case writing(UUID)
     }
+
+    /// The writing picked.
+    var selectedWriting: UUID? {
+        if case let .writing(id) = pick { return id }
+        return nil
+    }
+
+    /// While on, a click on a page starts writing there; a click on writing writes on it.
+    var isWriting = false {
+        didSet {
+            guard isWriting != oldValue else { return }
+            if !isWriting { endEditing() }
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+
+    /// The writing being written in place, above its page.
+    private var editor: WritingTextView?
+    private var editing: (writing: BookWriting, page: Int, isNew: Bool)?
+    /// The writing being written, if any.
+    var editingWriting: UUID? { editing?.writing.id }
 
     private(set) var pick: Pick?
     /// The photo picked, if it's a photo.
@@ -92,6 +129,9 @@ final class BookView: NSView {
         case sticky(id: PhotoID, page: Int, start: NSPoint, sticky: BookSticky, moved: Bool)
         case stretchSticky(id: PhotoID, page: Int, sticky: BookSticky)
         case turnSticky(id: PhotoID, page: Int, sticky: BookSticky, startPointerAngle: Double)
+        case writing(page: Int, start: NSPoint, writing: BookWriting, moved: Bool)
+        case widenWriting(page: Int, writing: BookWriting)
+        case turnWriting(page: Int, writing: BookWriting, startPointerAngle: Double)
     }
 
     override init(frame frameRect: NSRect) {
@@ -271,6 +311,7 @@ final class BookView: NSView {
     }
 
     func go(to newState: Int, animated: Bool = true) {
+        endEditing()
         guard let layout = delegate?.layout, newState != state, (0..<layout.stateCount).contains(newState) else { return }
         if animated, abs(newState - state) == 1 {
             turn(forward: newState > state)
@@ -323,6 +364,7 @@ final class BookView: NSView {
 
     /// Turns one leaf, from wherever it is now (for a drag let go partway) to the end.
     func turn(forward: Bool, from progress: CGFloat = 0, duration: CFTimeInterval = 0.8) {
+        endEditing()
         guard let delegate, !isTurning || leaf != nil && progress > 0 else { return }
         let layout = delegate.layout
         let target = forward ? state + 1 : state - 1
@@ -541,6 +583,35 @@ final class BookView: NSView {
 
     private func updateSelection() {
         stickyHandle.isHidden = true
+        if let (writing, _, left) = writingPlace(), editing == nil, let size = delegate?.bookWritingSize(writing) {
+            let rect = CGRect(x: -size.width / 2 - 4, y: -size.height / 2 - 4, width: size.width + 8, height: size.height + 8)
+            let corners = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY),
+                           CGPoint(x: rect.minX, y: rect.maxY)].map { viewPoint(writing.page($0), onLeft: left) }
+            let outline = CGMutablePath()
+            outline.addLines(between: corners)
+            outline.closeSubpath()
+            let handles = writingHandles(writing, size: size, left: left)
+            let knob = CGMutablePath()
+            knob.move(to: handles.top)
+            knob.addLine(to: handles.turn)
+            knob.addEllipse(in: CGRect(x: handles.turn.x - 7, y: handles.turn.y - 7, width: 14, height: 14))
+            let widen = CGMutablePath()
+            widen.addRoundedRect(in: CGRect(x: handles.widen.x - 4, y: handles.widen.y - 9, width: 8, height: 18), cornerWidth: 3, cornerHeight: 3)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            let offset = offset(for: state)
+            for layer in [selection, handle, stickyHandle] { layer.frame = book.bounds.offsetBy(dx: -offset, dy: 0) }
+            selection.path = outline
+            selection.lineDashPattern = [5, 4]
+            handle.path = knob
+            stickyHandle.path = widen
+            selection.isHidden = false
+            handle.isHidden = false
+            stickyHandle.isHidden = false
+            CATransaction.commit()
+            return
+        }
+        selection.lineDashPattern = nil
         if let (placement, _, left) = stickyPlacement() {
             let corners = placement.stickyCorners().map { viewPoint($0, onLeft: left) }
             let outline = CGMutablePath()
@@ -753,7 +824,12 @@ final class BookView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        guard let delegate, !isTurning, let hit = pagePoint(point), delegate.layout.pages[hit.page].kind == .photos else { return nil }
+        guard let delegate, !isTurning, let hit = pagePoint(point) else { return nil }
+        if let writing = writing(at: hit.point, onPage: hit.page) {
+            pick(.writing(writing.id))
+            return delegate.bookWritingMenu(writing.id)
+        }
+        guard delegate.layout.pages[hit.page].kind == .photos else { return delegate.bookPageMenu(hit.page) }
         if let placement = delegate.layout.sticky(at: hit.point, onPage: hit.page), placement.id != turnedOver {
             pick(.sticky(placement.id))
             return delegate.bookMenu(for: placement.id, sticky: true)
@@ -762,16 +838,163 @@ final class BookView: NSView {
             select(placement.id)
             return delegate.bookMenu(for: placement.id, sticky: false)
         }
+        return delegate.bookPageMenu(hit.page)
+    }
+
+    // MARK: Writing on pages
+
+    override func resetCursorRects() {
+        if isWriting { addCursorRect(bounds, cursor: .iBeam) }
+    }
+
+    /// The writing on a page under a point, the topmost first.
+    func writing(at point: CGPoint, onPage page: Int) -> BookWriting? {
+        guard let delegate, delegate.layout.pages.indices.contains(page) else { return nil }
+        return delegate.layout.pages[page].writings.reversed().first { writing in
+            let size = delegate.bookWritingSize(writing)
+            return CGRect(x: -size.width / 2 - 6, y: -size.height / 2 - 6, width: size.width + 12, height: size.height + 12)
+                .contains(writing.local(point))
+        }
+    }
+
+    /// The picked writing, its page, and whether that's the left one; nil unless it's on the open pages.
+    private func writingPlace() -> (writing: BookWriting, page: Int, left: Bool)? {
+        guard let id = selectedWriting, let layout = delegate?.layout else { return nil }
+        let pages = layout.state(state)
+        for page in [pages.left, pages.right].compactMap({ $0 }) {
+            if let writing = layout.pages[page].writings.first(where: { $0.id == id }) { return (writing, page, page == pages.left) }
+        }
         return nil
+    }
+
+    /// Where writing's handles are: the bar on its right side, and the knob above it.
+    private func writingHandles(_ writing: BookWriting, size: CGSize, left: Bool) -> (widen: CGPoint, turn: CGPoint, top: CGPoint) {
+        (viewPoint(writing.page(CGPoint(x: size.width / 2 + 4, y: 0)), onLeft: left),
+         viewPoint(writing.page(CGPoint(x: 0, y: -size.height / 2 - 26)), onLeft: left),
+         viewPoint(writing.page(CGPoint(x: 0, y: -size.height / 2 - 4)), onLeft: left))
+    }
+
+    static func moved(_ writing: BookWriting, by delta: CGPoint) -> BookWriting {
+        var moved = writing
+        moved.center = CGPoint(x: writing.center.x + delta.x, y: writing.center.y + delta.y)
+        return moved
+    }
+
+    /// Writing whose lines run as far as a point on the page, its left side staying put.
+    static func widened(_ writing: BookWriting, to point: CGPoint) -> BookWriting {
+        let local = writing.local(point)
+        let width = min(max(local.x + writing.width / 2, BookWriting.widths.lowerBound), BookWriting.widths.upperBound).rounded()
+        var widened = writing
+        widened.width = width
+        let shift = (width - writing.width) / 2
+        let radians = writing.angle * .pi / 180
+        widened.center = CGPoint(x: writing.center.x + shift * cos(radians), y: writing.center.y + shift * sin(radians))
+        return widened
+    }
+
+    static func turned(_ writing: BookWriting, pointer: CGPoint, startPointerAngle: Double, snapping: Bool) -> BookWriting {
+        var angle = writing.angle + (atan2(pointer.y - writing.center.y, pointer.x - writing.center.x) - startPointerAngle) * 180 / .pi
+        if snapping { angle = (angle / 15).rounded() * 15 }
+        var turned = writing
+        turned.angle = normalized(angle)
+        return turned
+    }
+
+    /// Writes in place above the page, in the book's handwriting at the page's scale: straight while it's written,
+    /// at its angle again once it's done. The page leaves it off meanwhile.
+    func beginEditing(_ writing: BookWriting, onPage page: Int, isNew: Bool) {
+        endEditing()
+        guard let delegate, delegate.layout.pages.indices.contains(page) else { return }
+        let left = delegate.layout.state(state).left == page
+        let scale = pageRect(left: left).width / BookLayout.pageSize.width
+        let look = delegate.bookWritingLook(writing, onPage: page)
+        let size = delegate.bookWritingSize(writing)
+        let font = NSFont(descriptor: look.font.fontDescriptor, size: look.font.pointSize * scale) ?? look.font
+        let origin = viewPoint(CGPoint(x: writing.center.x - size.width / 2, y: writing.center.y - size.height / 2), onLeft: left)
+        let lineHeight = ceil(font.ascender - font.descender + font.leading)
+        let textView = WritingTextView(frame: NSRect(x: origin.x, y: origin.y, width: size.width * scale, height: max(size.height * scale, lineHeight)))
+        textView.font = font
+        textView.textColor = look.color
+        textView.insertionPointColor = look.color
+        textView.typingAttributes = [.font: font, .foregroundColor: look.color]
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.minSize = NSSize(width: size.width * scale, height: lineHeight)
+        textView.maxSize = NSSize(width: size.width * scale, height: 10_000)
+        textView.string = writing.text
+        textView.delegate = self
+        textView.onDone = { [weak self] in self?.endEditing() }
+        textView.setAccessibilityLabel("Writing on the page")
+        addSubview(textView)
+        editor = textView
+        editing = (writing, page, isNew)
+        delegate.bookPreviewWriting(nil, editing: writing.id)
+        reloadPage(page)
+        updateSelection()
+        window?.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: (writing.text as NSString).length, length: 0))
+    }
+
+    /// Finishes the writing written in place: keeps it (where it was begun, however much it grew), or with
+    /// nothing written, erases it.
+    func endEditing() {
+        guard let textView = editor, let draft = editing, let delegate else { return }
+        editor = nil
+        editing = nil
+        var writing = draft.writing
+        writing.text = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        textView.removeFromSuperview()
+        // Its top stays where it was while it was written; the middle moves by half of any growth, along its lean.
+        let grown = delegate.bookWritingSize(writing).height - delegate.bookWritingSize(draft.writing).height
+        let radians = writing.angle * .pi / 180
+        writing.center = CGPoint(x: writing.center.x - grown / 2 * sin(radians), y: writing.center.y + grown / 2 * cos(radians))
+        delegate.bookPreviewWriting(nil, editing: nil)
+        if writing.text.isEmpty {
+            if draft.isNew { reloadPage(draft.page) } else { delegate.bookEraseWriting(writing.id) }
+        } else if draft.isNew || writing.text != draft.writing.text {
+            delegate.bookCommitWriting(writing, actionName: draft.isNew ? "Write on Page" : "Change Writing")
+            pick(.writing(writing.id))
+        } else {
+            reloadPage(draft.page)
+            pick(.writing(writing.id))
+        }
+        if window?.firstResponder == nil || window?.firstResponder === textView { window?.makeFirstResponder(self) }
+        updateSelection()
+    }
+
+    func textDidEndEditing(_ notification: Notification) {
+        if (notification.object as? NSTextView) === editor { endEditing() }
     }
 
     // MARK: Mouse and keys
 
     override func mouseDown(with event: NSEvent) {
+        // A click anywhere else finishes the writing being written.
+        if editor != nil { endEditing() }
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         guard let delegate, !isTurning, turnLayer == nil else { return }
         let layout = delegate.layout
+        // Picked writing's handles: the knob turns it, the bar on its side changes how wide its lines run.
+        if let (writing, page, left) = writingPlace() {
+            let handles = writingHandles(writing, size: delegate.bookWritingSize(writing), left: left)
+            if hypot(point.x - handles.widen.x, point.y - handles.widen.y) < 11 {
+                drag = .widenWriting(page: page, writing: writing)
+                return
+            }
+            if hypot(point.x - handles.turn.x, point.y - handles.turn.y) < 13 {
+                let pagePoint = pageCoordinates(point, onPage: page)
+                drag = .turnWriting(page: page, writing: writing,
+                                    startPointerAngle: atan2(pagePoint.y - writing.center.y, pagePoint.x - writing.center.x))
+                return
+            }
+        }
         // A picked sticky note's handles: the corner stretches it, the knob turns it.
         if let (placement, page, left) = stickyPlacement() {
             let handles = stickyHandles(placement, left: left)
@@ -795,6 +1018,22 @@ final class BookView: NSView {
         }
         guard let hit = pagePoint(point) else {
             select(nil)
+            return
+        }
+        // Writing lies over everything on the page.
+        if let writing = writing(at: hit.point, onPage: hit.page) {
+            if isWriting || event.clickCount == 2 {
+                beginEditing(writing, onPage: hit.page, isNew: false)
+                return
+            }
+            pick(.writing(writing.id))
+            drag = .writing(page: hit.page, start: point, writing: writing, moved: false)
+            return
+        }
+        // While writing: a click anywhere on a page starts writing there.
+        if isWriting {
+            pick(nil)
+            if let new = delegate.bookNewWriting(at: hit.point, onPage: hit.page) { beginEditing(new, onPage: hit.page, isNew: true) }
             return
         }
         // Sticky notes lie over the photos.
@@ -835,6 +1074,21 @@ final class BookView: NSView {
             if turnedOver == id { setTurnedOver(nil) }
             delegate?.bookPreview(id, center: BookLayout.clamp(to), angle: nil)
             reloadPage(page)
+        case let .writing(page, start, writing, moved):
+            guard moved || hypot(point.x - start.x, point.y - start.y) > 3 else { return }
+            drag = .writing(page: page, start: start, writing: writing, moved: true)
+            delegate?.bookPreviewWriting(Self.moved(writing, by: CGPoint(x: (point.x - start.x) * scale, y: (point.y - start.y) * scale)), editing: nil)
+            reloadPage(page)
+            updateSelection()
+        case let .widenWriting(page, writing):
+            delegate?.bookPreviewWriting(Self.widened(writing, to: pageCoordinates(point, onPage: page)), editing: nil)
+            reloadPage(page)
+            updateSelection()
+        case let .turnWriting(page, writing, startPointerAngle):
+            delegate?.bookPreviewWriting(Self.turned(writing, pointer: pageCoordinates(point, onPage: page), startPointerAngle: startPointerAngle,
+                                                     snapping: event.modifierFlags.contains(.shift)), editing: nil)
+            reloadPage(page)
+            updateSelection()
         case let .sticky(id, page, start, sticky, moved):
             guard moved || hypot(point.x - start.x, point.y - start.y) > 3, let placement = delegate?.layout.find(id)?.placement else { return }
             drag = .sticky(id: id, page: page, start: start, sticky: sticky, moved: true)
@@ -883,6 +1137,15 @@ final class BookView: NSView {
             }
             let final = CGPoint(x: center.x + (point.x - start.x) * scale, y: center.y + (point.y - start.y) * scale)
             delegate?.bookCommit(id, center: BookLayout.clamp(final), angle: nil)
+        case let .writing(_, start, writing, moved):
+            guard moved else { return }
+            delegate?.bookCommitWriting(Self.moved(writing, by: CGPoint(x: (point.x - start.x) * scale, y: (point.y - start.y) * scale)),
+                                        actionName: "Move Writing")
+        case let .widenWriting(page, writing):
+            delegate?.bookCommitWriting(Self.widened(writing, to: pageCoordinates(point, onPage: page)), actionName: "Change Writing Width")
+        case let .turnWriting(page, writing, startPointerAngle):
+            delegate?.bookCommitWriting(Self.turned(writing, pointer: pageCoordinates(point, onPage: page), startPointerAngle: startPointerAngle,
+                                                    snapping: event.modifierFlags.contains(.shift)), actionName: "Turn Writing")
         case let .sticky(id, _, start, sticky, moved):
             guard moved, let placement = delegate?.layout.find(id)?.placement else { return }
             delegate?.bookCommitSticky(id, Self.moved(sticky, by: CGPoint(x: (point.x - start.x) * scale, y: (point.y - start.y) * scale),
@@ -923,7 +1186,14 @@ final class BookView: NSView {
         case 123: previous()
         case 124: next()
         case 53:
-            if turnedOver != nil { turnOver(turnedOver!) } else { pick(nil) }
+            if turnedOver != nil { turnOver(turnedOver!) } else if isWriting { isWriting = false; delegate?.bookSelectionDidChange(selected) } else { pick(nil) }
+        case 51, 117:
+            if let id = selectedWriting {
+                pick(nil)
+                delegate?.bookEraseWriting(id)
+            } else {
+                super.keyDown(with: event)
+            }
         default:
             super.keyDown(with: event)
         }
@@ -1040,5 +1310,20 @@ final class BookView: NSView {
     func stopVideos() {
         for id in Array(videos.keys) { stopVideo(id) }
         hovered = nil
+    }
+}
+
+/// The writing written in place on a page: Esc or ⌘Return finishes it, as does a click anywhere else.
+final class WritingTextView: NSTextView {
+    var onDone: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) { onDone?() }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 36 || event.keyCode == 76, event.modifierFlags.contains(.command) {
+            onDone?()
+            return
+        }
+        super.keyDown(with: event)
     }
 }
