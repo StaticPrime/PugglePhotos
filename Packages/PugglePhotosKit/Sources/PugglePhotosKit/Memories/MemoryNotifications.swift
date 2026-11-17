@@ -54,7 +54,8 @@ public enum MemoryNotifications {
             let photoDay = ids.first.flatMap(snapshot.day(of:)) ?? CivilDay(year: year, month: day.month, day: day.day)
             let what = finder.formatting.count(photos: counts.photos, videos: counts.videos)
             let them = ids.count == 1 ? "it" : "them"
-            return "\(what) from \(finder.formatting.longDay(photoDay)). Click to watch \(them) as a slideshow."
+            let wrote = finder.arranger.catalog.entry(for: photoDay) != nil ? ", and what you wrote that day" : ""
+            return "\(what) from \(finder.formatting.longDay(photoDay))\(wrote). Click to watch \(them) as a slideshow."
         }
         let list = ListFormatter.localizedString(byJoining: years.keys.sorted().map(String.init))
         return "Photos from this day in \(list). Click to watch them as a slideshow."

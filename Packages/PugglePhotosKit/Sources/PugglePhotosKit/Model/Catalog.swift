@@ -133,8 +133,8 @@ public struct PhotoDetails: Hashable, Codable, Sendable {
     }
 }
 
-/// Everything the user has made in PugglePhotos: albums, labels, captions and notes. The photos themselves stay
-/// in the Photos library; the catalog refers to them by `PhotoID`.
+/// Everything the user has made in PugglePhotos: albums, labels, captions, notes and the journal. The photos
+/// themselves stay in the Photos library; the catalog refers to them by `PhotoID`.
 public struct Catalog: Hashable, Codable, Sendable {
     public static let currentVersion = 1
 
@@ -142,15 +142,19 @@ public struct Catalog: Hashable, Codable, Sendable {
     public var albums: [Album]
     public var labels: [PhotoLabel]
     public var photos: [PhotoID: PhotoDetails]
+    /// Journal entries by day ("2025-06-14").
+    public var journal: [String: JournalEntry]
 
-    public init(albums: [Album] = [], labels: [PhotoLabel] = [], photos: [PhotoID: PhotoDetails] = [:]) {
+    public init(albums: [Album] = [], labels: [PhotoLabel] = [], photos: [PhotoID: PhotoDetails] = [:],
+                journal: [String: JournalEntry] = [:]) {
         version = Self.currentVersion
         self.albums = albums
         self.labels = labels
         self.photos = photos
+        self.journal = journal
     }
 
-    enum CodingKeys: String, CodingKey { case version, albums, labels, photos }
+    enum CodingKeys: String, CodingKey { case version, albums, labels, photos, journal }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -158,6 +162,7 @@ public struct Catalog: Hashable, Codable, Sendable {
         albums = try container.decodeIfPresent([Album].self, forKey: .albums) ?? []
         labels = try container.decodeIfPresent([PhotoLabel].self, forKey: .labels) ?? []
         photos = try container.decodeIfPresent([PhotoID: PhotoDetails].self, forKey: .photos) ?? [:]
+        journal = try container.decodeIfPresent([String: JournalEntry].self, forKey: .journal) ?? [:]
     }
 
     // MARK: Looking things up

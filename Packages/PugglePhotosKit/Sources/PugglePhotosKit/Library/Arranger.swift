@@ -6,6 +6,8 @@ public enum LibrarySource: Hashable, Codable, Sendable {
     case memories
     /// One memory's photos.
     case memory(String)
+    /// The journal, rather than photos.
+    case journal
     case library
     case favorites
     case videos
@@ -151,7 +153,7 @@ public struct Arranger: Sendable {
     /// library when it keeps that list itself; `memory` is the photos of the memory shown.
     public func ids(for source: LibrarySource, recent: [PhotoID] = [], memory: [PhotoID] = []) -> [PhotoID] {
         switch source {
-        case .memories:
+        case .memories, .journal:
             return []
         case .memory:
             return memory.filter(snapshot.contains)

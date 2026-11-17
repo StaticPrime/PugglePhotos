@@ -39,6 +39,22 @@ public struct LibrarySnapshot: Sendable {
         indexByID[id].map { CivilDay(number: dayNumbers[$0]) }
     }
 
+    /// The items taken on a day, oldest first. The days run in order with the items, so halving finds them.
+    public func ids(on day: CivilDay) -> [PhotoID] {
+        let target = day.number
+        var low = 0, high = dayNumbers.count
+        while low < high {
+            let middle = (low + high) / 2
+            if dayNumbers[middle] < target { low = middle + 1 } else { high = middle }
+        }
+        var ids: [PhotoID] = []
+        while low < dayNumbers.count, dayNumbers[low] == target {
+            ids.append(items[low].id)
+            low += 1
+        }
+        return ids
+    }
+
     /// How many items were taken on each day, for the calendar's dots.
     public func countsByDay() -> [CivilDay: Int] {
         var counts: [CivilDay: Int] = [:]

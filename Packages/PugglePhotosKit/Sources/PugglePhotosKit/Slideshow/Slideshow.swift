@@ -46,9 +46,12 @@ public enum SlideshowPlan {
     /// The longest a video plays before the slideshow moves on.
     public static let longestVideo: TimeInterval = 15
 
-    /// A title card, every photo and video, and the end card.
+    /// A title card (held longer when it quotes the journal, to give time to read), every photo and video, and the
+    /// end card.
     public static func make(_ memory: Memory, items: (PhotoID) -> MediaItem?, secondsPerPhoto: TimeInterval) -> [Slide] {
-        var slides = [Slide(.title(title: memory.title, subtitle: memory.subtitle, photo: memory.keyPhoto), duration: titleDuration)]
+        let reading = min(Double(quote(memory.note).split(whereSeparator: \.isWhitespace).count) * 0.25, 6)
+        var slides = [Slide(.title(title: memory.title, subtitle: memory.subtitle, photo: memory.keyPhoto),
+                            duration: titleDuration + reading)]
         for id in memory.items {
             guard let item = items(id) else { continue }
             if item.kind.isVideo {
@@ -60,6 +63,17 @@ public enum SlideshowPlan {
         }
         slides.append(Slide(.end(title: memory.title), duration: 0))
         return slides
+    }
+
+    /// What the title card quotes from the journal: the entry on one line, cut at a word with an ellipsis when it
+    /// runs past `limit` characters. Empty when there's no entry.
+    public static func quote(_ note: String, limit: Int = 180) -> String {
+        let line = note.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        guard line.count > limit else { return line }
+        let cut = line.prefix(limit)
+        let end = cut.lastIndex(where: \.isWhitespace) ?? cut.endIndex
+        return String(cut[..<end]).trimmingCharacters(in: .punctuationCharacters.union(.whitespaces)) + "…"
     }
 
     /// How long the whole slideshow runs, up to the end card.

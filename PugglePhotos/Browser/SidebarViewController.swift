@@ -286,6 +286,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             cell.configure(title: "Memories", symbol: "sparkles", count: delegate?.memoriesToday ?? 0)
         case .memory:
             return
+        case .journal:
+            cell.configure(title: "Journal", symbol: "book.closed", count: library.catalog.journal.count)
         case .library:
             cell.configure(title: "Library", symbol: "photo.on.rectangle", count: library.snapshot.count)
         case .favorites:

@@ -299,6 +299,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         switch state.source {
         case .memories: window.title = "Memories"
         case .memory: window.title = currentMemory?.title ?? "Memory"
+        case .journal: window.title = "Journal"
         case .library: window.title = "Library"
         case .favorites: window.title = "Favorites"
         case .videos: window.title = "Videos"

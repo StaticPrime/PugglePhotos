@@ -8,6 +8,12 @@ public struct Memory: Identifiable, Hashable, Sendable {
         case onThisDay(yearsAgo: Int)
         /// Photos from this calendar day in every earlier year.
         case onThisDayEveryYear
+        /// Photos from the days around this one, `yearsAgo` years back, when that year has none on the day itself.
+        case thisWeek(yearsAgo: Int)
+        /// The person's favorites.
+        case favorites
+        /// Photos from the days the person wrote about in the journal.
+        case journal
         /// A day, or a few days in a row, with lots of photos.
         case event
         case year(Int)
@@ -28,9 +34,11 @@ public struct Memory: Identifiable, Hashable, Sendable {
     public let keyPhoto: PhotoID?
     public let firstDate: Date
     public let lastDate: Date
+    /// What the journal says about the memory's day, for memories of a single day.
+    public let note: String
 
     public init(id: String, kind: Kind, title: String, subtitle: String, items: [PhotoID], keyPhoto: PhotoID?,
-                firstDate: Date, lastDate: Date) {
+                firstDate: Date, lastDate: Date, note: String = "") {
         self.id = id
         self.kind = kind
         self.title = title
@@ -39,6 +47,7 @@ public struct Memory: Identifiable, Hashable, Sendable {
         self.keyPhoto = keyPhoto
         self.firstDate = firstDate
         self.lastDate = lastDate
+        self.note = note
     }
 }
 
@@ -48,19 +57,23 @@ public struct MemoriesPage: Sendable {
     public var onThisDay: [Memory] = []
     /// Big days and trips, the most recent first.
     public var highlights: [Memory] = []
+    /// Favorites, and the days written about in the journal.
+    public var collections: [Memory] = []
     /// A memory for each year with enough photos, the most recent first.
     public var years: [Memory] = []
     /// The best photos with each label that has enough of them.
     public var labels: [Memory] = []
 
-    public init(onThisDay: [Memory] = [], highlights: [Memory] = [], years: [Memory] = [], labels: [Memory] = []) {
+    public init(onThisDay: [Memory] = [], highlights: [Memory] = [], collections: [Memory] = [], years: [Memory] = [],
+                labels: [Memory] = []) {
         self.onThisDay = onThisDay
         self.highlights = highlights
+        self.collections = collections
         self.years = years
         self.labels = labels
     }
 
-    public var all: [Memory] { onThisDay + highlights + years + labels }
+    public var all: [Memory] { onThisDay + highlights + collections + years + labels }
     public var isEmpty: Bool { all.isEmpty }
     public func memory(_ id: String) -> Memory? { all.first { $0.id == id } }
 }
@@ -95,16 +108,20 @@ public struct MemoryFinder: Sendable {
     private var catalog: Catalog { arranger.catalog }
 
     public func page() -> MemoriesPage {
-        MemoriesPage(onThisDay: onThisDay(), highlights: highlights(), years: years(), labels: labels())
+        MemoriesPage(onThisDay: onThisDay() + thisWeek(), highlights: highlights(), collections: [favorites(), journal()].compactMap { $0 },
+                     years: years(), labels: labels())
     }
 
     /// A memory by its ID, found again (for a notification that was clicked, or a card).
     public func memory(_ id: String) -> Memory? {
-        if id.hasPrefix("onthisday-") {
-            let parts = id.dropFirst("onthisday-".count).split(separator: "-").compactMap { Int($0) }
+        if id.hasPrefix("day-") {
+            return CivilDay(String(id.dropFirst(4))).flatMap(day)
+        }
+        for prefix in ["onthisday-", "thisweek-"] where id.hasPrefix(prefix) {
+            let parts = id.dropFirst(prefix.count).split(separator: "-").compactMap { Int($0) }
             guard parts.count >= 3 else { return nil }
             let day = CivilDay(year: parts[0], month: parts[1], day: parts[2])
-            return onThisDay(day).first { $0.id == id }
+            return (prefix == "onthisday-" ? onThisDay(day) : thisWeek(day)).first { $0.id == id }
         }
         return page().memory(id)
     }
@@ -135,7 +152,7 @@ public struct MemoryFinder: Sendable {
             let photoDay = CivilDay(year: year, month: day.month, day: min(day.day, CivilDay.daysIn(year: year, month: day.month)))
             let originalDay = ids.first.flatMap(snapshot.day(of:)) ?? photoDay
             if let memory = make("onthisday-\(day)-\(yearsAgo)", .onThisDay(yearsAgo: yearsAgo), title: title,
-                                 subtitle: formatting.longDay(originalDay), ids: ids) {
+                                 subtitle: formatting.longDay(originalDay), ids: ids, note: catalog.entry(for: originalDay)?.text ?? "") {
                 memories.append(memory)
             }
         }
@@ -148,6 +165,51 @@ public struct MemoryFinder: Sendable {
             }
         }
         return memories
+    }
+
+    /// For earlier years with no photos on this very day, the photos from the three days either side of it, when
+    /// there are at least four. The most recent year first.
+    public func thisWeek(_ day: CivilDay? = nil, minimum: Int = 4) -> [Memory] {
+        let day = day ?? today
+        let exact = Set(photosOnThisDay(day).keys)
+        let years = Set(byDay.keys.map(\.year)).filter { $0 < day.year && !exact.contains($0) }.sorted(by: >)
+        return years.compactMap { year in
+            let middle = CivilDay(year: year, month: day.month, day: min(day.day, CivilDay.daysIn(year: year, month: day.month)))
+            let days = (-3...3).map { middle.adding(days: $0) }.filter { byDay[$0] != nil }
+            let ids = days.flatMap { byDay[$0] ?? [] }
+            guard ids.count >= minimum, let first = days.first, let last = days.last else { return nil }
+            let yearsAgo = day.year - year
+            let title = yearsAgo == 1 ? "This Week, 1 Year Ago" : "This Week, \(yearsAgo) Years Ago"
+            let dates = first == last ? formatting.longDay(first)
+                : (formatting.dateRange(from: first.start(in: formatting.calendar), to: last.start(in: formatting.calendar)) ?? "")
+            return make("thisweek-\(day)-\(yearsAgo)", .thisWeek(yearsAgo: yearsAgo), title: title, subtitle: dates, ids: ids)
+        }
+    }
+
+    // MARK: Favorites and the journal
+
+    /// The person's favorite photos, when there are at least `minimum`.
+    public func favorites(minimum: Int = 6) -> Memory? {
+        let ids = snapshot.items.filter { $0.isFavorite && $0.kind != .screenshot }.map(\.id)
+        guard ids.count >= minimum else { return nil }
+        let counts = snapshot.counts(of: ids)
+        return make("favorites", .favorites, title: "Your Favorites", subtitle: formatting.count(photos: counts.photos, videos: counts.videos), ids: ids)
+    }
+
+    /// Photos from the days the journal talks about, when there are at least two such days.
+    public func journal(minimum: Int = 2) -> Memory? {
+        let days = catalog.journalDays.filter { byDay[$0] != nil }
+        guard days.count >= minimum else { return nil }
+        let ids = days.sorted().flatMap { byDay[$0] ?? [] }
+        return make("journal", .journal, title: "Days You Wrote About", subtitle: days.count == 1 ? "1 day" : "\(days.count) days", ids: ids)
+    }
+
+    /// One day's photos, with what the journal says about it: a day played from the journal.
+    public func day(_ day: CivilDay) -> Memory? {
+        let ids = byDay[day] ?? []
+        let counts = snapshot.counts(of: ids)
+        return make("day-\(day)", .event, title: formatting.longDay(day), subtitle: formatting.count(photos: counts.photos, videos: counts.videos),
+                    ids: ids, note: catalog.entry(for: day)?.text ?? "")
     }
 
     // MARK: Big days and trips
@@ -174,7 +236,8 @@ public struct MemoryFinder: Sendable {
                 : (formatting.dateRange(from: first.start(in: formatting.calendar), to: last.start(in: formatting.calendar)) ?? "")
             let counts = snapshot.counts(of: ids)
             let subtitle = title.dated ? formatting.count(photos: counts.photos, videos: counts.videos) : dates
-            if let memory = make("event-\(first)", .event, title: title.text, subtitle: subtitle, ids: ids) {
+            if let memory = make("event-\(first)", .event, title: title.text, subtitle: subtitle, ids: ids,
+                                 note: first == last ? catalog.entry(for: first)?.text ?? "" : "") {
                 memories.append(memory)
             }
             if memories.count == count { break }
@@ -275,13 +338,13 @@ public struct MemoryFinder: Sendable {
     // MARK: Making memories
 
     private func make(_ id: String, _ kind: Memory.Kind, title: String, subtitle: String, ids: [PhotoID],
-                      curate: Bool = true, key: PhotoID? = nil) -> Memory? {
+                      curate: Bool = true, key: PhotoID? = nil, note: String = "") -> Memory? {
         let items = curate ? Curator(arranger: arranger).pick(ids, limit: limit) : ids
         guard !items.isEmpty else { return nil }
         let dates = items.compactMap { snapshot.item($0)?.date }
         return Memory(id: id, kind: kind, title: title, subtitle: subtitle, items: items,
                       keyPhoto: key ?? Curator(arranger: arranger).keyPhoto(items),
-                      firstDate: dates.min() ?? .distantPast, lastDate: dates.max() ?? .distantPast)
+                      firstDate: dates.min() ?? .distantPast, lastDate: dates.max() ?? .distantPast, note: note)
     }
 }
 

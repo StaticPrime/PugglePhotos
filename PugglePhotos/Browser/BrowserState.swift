@@ -43,6 +43,7 @@ final class BrowserState {
         switch source {
         case .memories: "memories"
         case .memory: "memory"
+        case .journal: "journal"
         case .library: "library"
         case .favorites: "favorites"
         case .videos: "videos"

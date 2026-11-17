@@ -1,7 +1,8 @@
 import Foundation
 
 /// The search field: every word typed must match something about a photo — its caption, note or file name, a
-/// label or album it's in, its kind ("video"), "favorite", a year ("2019") or a month ("june").
+/// label or album it's in, what was written in the journal on its day, its kind ("video"), "favorite", a year
+/// ("2019") or a month ("june").
 public struct PhotoSearch: Sendable {
     public let words: [String]
     private let formatting: Formatting
@@ -37,6 +38,8 @@ public struct PhotoSearch: Sendable {
         let meansFavorite: Bool
         let year: Int?
         let months: Set<Int>
+        /// Days whose journal entry has the word.
+        let journalDays: Set<CivilDay>
 
         init(word: String, arranger: Arranger, formatting: Formatting) {
             self.word = word
@@ -59,6 +62,9 @@ public struct PhotoSearch: Sendable {
                 }
             }
             self.months = months
+            journalDays = Set(catalog.journal.compactMap { key, entry in
+                PhotoSearch.fold(entry.text).contains(word) || entry.mood == word ? CivilDay(key) : nil
+            })
         }
 
         func matches(_ item: MediaItem, details: PhotoDetails?, day: CivilDay?) -> Bool {
@@ -71,6 +77,7 @@ public struct PhotoSearch: Sendable {
             if kinds.contains(item.kind) { return true }
             if meansFavorite, item.isFavorite { return true }
             if let day {
+                if journalDays.contains(day) { return true }
                 if let year, day.year == year { return true }
                 if months.contains(day.month) { return true }
             }
