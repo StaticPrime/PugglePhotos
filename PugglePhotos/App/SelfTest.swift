@@ -71,7 +71,8 @@ enum SelfTest {
     /// A menu item from the menu bar, found by its menu's title and its own.
     static func menuItem(_ menu: String, _ title: String) -> NSMenuItem? {
         guard let submenu = NSApp.mainMenu?.item(withTitle: menu)?.submenu else { return nil }
-        DynamicMenus.shared.menuNeedsUpdate(submenu)
+        // View and Photo are filled in as they open; the others are fixed.
+        if submenu.delegate === DynamicMenus.shared { DynamicMenus.shared.menuNeedsUpdate(submenu) }
         func find(_ menu: NSMenu) -> NSMenuItem? {
             for item in menu.items {
                 if item.title == title { return item }
@@ -474,6 +475,10 @@ enum SelfTest {
 
         memoryAndSlideshowSteps(app, window: window)
         bookSteps(app, window: window)
+        journalSteps(app, window: window)
+        accessibilitySteps(app, window: window)
+        speedSteps(app, window: window)
+        filmstripSteps(app, window: window)
 
         // MARK: Saving
         step { wait(upTo: 3) { (try? DebugLaunchOptions.sampleStore?.load()) == catalog } }

@@ -72,12 +72,12 @@ enum DebugLaunchOptions {
         }
     }
 
-    /// `-PHSource memories|library|favorites|videos|recent|albums|album:N|label:N` picks the place;
+    /// `-PHSource memories|journal|library|favorites|videos|recent|albums|album:N|label:N` picks the place;
     /// `-PHViewMode list`, `-PHGrouping month`, `-PHSort title`, `-PHDescending YES`, `-PHZoom 220` and
     /// `-PHSearch text` set how it shows; `-PHSelect 3` (or `3,4,5`) selects photos by position;
     /// `-PHViewer YES` opens the first selected; `-PHCalendar 2019-07` turns the calendar;
     /// `-PHRedate day|between` shows the question asked when photos are dropped; `-PHOpenSheet
-    /// changeDate|shortcuts|newLabel` opens a sheet; `-PHShowAbout YES` and `-PHSettings YES` open those windows.
+    /// changeDate|shortcuts|newLabel|journal` opens a sheet; `-PHShowAbout YES` and `-PHSettings YES` open those windows.
     private static func setUp(_ controller: LibraryWindowController, app: AppDelegate) {
         let library = app.library!
         if let source = defaults.string(forKey: "PHSource") {
@@ -85,6 +85,7 @@ enum DebugLaunchOptions {
             let index = parts.count > 1 ? Int(parts[1]) ?? 1 : 1
             switch parts.first {
             case "memories": controller.go(to: .memories)
+            case "journal": controller.go(to: .journal)
             case "favorites": controller.go(to: .favorites)
             case "videos": controller.go(to: .videos)
             case "recent": controller.go(to: .recentlyAdded)
@@ -158,7 +159,19 @@ enum DebugLaunchOptions {
         case "changeDate": controller.showChangeDate(for: controller.state.selection)
         case "shortcuts": controller.phShowShortcuts(nil)
         case "newLabel": controller.newLabel(for: [])
+        case "journal": controller.phWriteJournal(nil)
         default: break
+        }
+        // `-PHJournalDay 2026-02-08` opens the journal popover from that day's heading in the library.
+        if let text = defaults.string(forKey: "PHJournalDay"), let day = CivilDay(text) {
+            controller.calendarSelect(day)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                if let section = controller.content.sections.firstIndex(where: { $0.key == .day(day) }),
+                   let header = controller.grid.collectionView.supplementaryView(forElementKind: PhotoGridLayout.headerKind,
+                                                                                 at: IndexPath(item: 0, section: section)) as? SectionHeaderView {
+                    header.writeButton.performClick(nil)
+                }
+            }
         }
         if defaults.bool(forKey: "PHShowAbout") { app.showAboutWindow(nil) }
         if defaults.bool(forKey: "PHSettings") { app.showSettings(nil) }

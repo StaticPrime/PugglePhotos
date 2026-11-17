@@ -83,6 +83,17 @@ final class SamplePhotoSource: PhotoSource {
         return ImageRequest { cancelled.set() }
     }
 
+    /// The photos whose thumbnails the grid asked to have ready, for the self-test. Sample pictures are drawn
+    /// quickly, so nothing is made ahead.
+    private(set) var prefetching: Set<PhotoID> = []
+
+    func prefetchThumbnails(start: [PhotoID], stop: [PhotoID], pixels: CGSize) {
+        prefetching.subtract(stop)
+        prefetching.formUnion(start)
+    }
+
+    func stopPrefetching() { prefetching = [] }
+
     func requestPlayerItem(_ id: PhotoID, completion: @escaping @MainActor (AVPlayerItem?) -> Void) {
         guard let spec = scenes[id], items[id]?.kind == .video else {
             completion(nil)
@@ -307,6 +318,11 @@ enum SampleLibrary {
         }
         albums.append(LibraryAlbum(id: "sample-album-imported", title: "Imported Photos", items: (byEvent["pug26"] ?? []) + (byEvent["food26"] ?? [])))
         albums.append(LibraryAlbum(id: "sample-album-scans", title: "Scanned Prints", items: byEvent["scans"] ?? []))
+        // A journal entry for the day a year ago, so today's memory has words to go with it.
+        if let yearAgo = calendar.date(byAdding: .year, value: -1, to: today) {
+            catalog.setEntry("Waffles discovered the leaf pile and would not come inside. We gave up and had cocoa on the porch.",
+                             mood: "😂", for: CivilDay(yearAgo, in: calendar.timeZone), edited: yearAgo)
+        }
         return Contents(entries: entries, albums: albums, recent: recent, catalog: catalog)
     }
 
@@ -349,6 +365,16 @@ enum SampleLibrary {
         if let cake = byEvent["birthday23"]?[1] { catalog.setCaption("Cake first, presents later", for: [cake]) }
         if let waffles = byEvent["pug26"]?.first { catalog.setCaption("Waffles meets the ball", for: [waffles]) }
         if let snowman = byEvent["snow19"]?[2] { catalog.setCaption("Mr. Carrot Nose", for: [snowman]) }
+
+        let journal: [(Int, Int, Int, String, String)] = [
+            (2023, 7, 21, "😌", "Lake day. The water was freezing and nobody cared. Mia finally swam out to the raft on her own, then made everyone watch her do it twice more."),
+            (2025, 6, 14, "🤩", "The sky went pink, then orange, then a purple we didn’t have a name for. We stayed on the sand until the stars came out."),
+            (2026, 2, 8, "🥰", "Waffles came home today! He snored the whole drive back and has already claimed the good chair."),
+            (2026, 9, 27, "", "Tried the new bakery’s lemon cake. Worth the line. Waffles tried to steal a slice twice."),
+        ]
+        for (year, month, day, mood, text) in journal {
+            catalog.setEntry(text, mood: mood, for: CivilDay(year: year, month: month, day: day), edited: made(year, month, day).addingTimeInterval(20 * 3600))
+        }
         return catalog
     }
 }
