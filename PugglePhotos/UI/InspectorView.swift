@@ -15,6 +15,7 @@ protocol InspectorActions: AnyObject {
     func inspectorNewAlbum(with ids: [PhotoID])
     func inspectorOpenAlbum(_ album: UUID)
     func inspectorChangeDate(_ ids: [PhotoID])
+    func inspectorWriteJournal(_ day: CivilDay)
 }
 
 /// The selection the inspector describes.
@@ -160,6 +161,13 @@ private struct SingleInspector: View {
                 }
 
                 if let item {
+                    let day = CivilDay(item.date, in: library.formatting.timeZone)
+                    InspectorSection("Journal") {
+                        JournalPeek(entry: library.catalog.entry(for: day)) { model.actions?.inspectorWriteJournal(day) }
+                    }
+                }
+
+                if let item {
                     InspectorSection("Details") {
                         VStack(alignment: .leading, spacing: 4) {
                             DetailRow("Kind", item.kind.isVideo ? "Video, \(Formatting.duration(item.duration))" : item.kind.displayName)
@@ -263,6 +271,30 @@ private struct MultipleInspector: View {
                 }
             }
             .padding(16)
+        }
+    }
+}
+
+/// What the journal says about the photo's day, with a way to write it.
+private struct JournalPeek: View {
+    let entry: JournalEntry?
+    let onWrite: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let entry {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if !entry.mood.isEmpty { Text(entry.mood).accessibilityLabel("Mood \(entry.mood)") }
+                    Text(entry.text)
+                        .font(.system(size: 13, design: .serif).italic())
+                        .lineLimit(6)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+            }
+            Button(entry == nil ? "Write About This Day…" : "Edit…", action: onWrite)
+                .buttonStyle(.link)
+                .help("Write in the journal about the day this was taken (⌘J)")
         }
     }
 }

@@ -104,4 +104,12 @@ extension LibrarySource {
         if case let .label(id) = self { return id }
         return nil
     }
+
+    /// False for the places with a page of their own (Memories, the Journal and the album covers) instead of photos.
+    var showsPhotos: Bool {
+        switch self {
+        case .memories, .journal, .allAlbums: false
+        default: true
+        }
+    }
 }

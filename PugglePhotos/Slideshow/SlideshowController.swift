@@ -213,7 +213,7 @@ final class SlideshowController: NSObject {
         switch slide.content {
         case let .title(title, subtitle, photo):
             if let photo { addPhoto(photo, to: layer, duration: slide.duration, dimmed: 0.45) }
-            layer.addText(title, subtitle: subtitle, in: stage.bounds, large: true)
+            layer.addText(title, subtitle: subtitle, note: SlideshowPlan.quote(memory.note), in: stage.bounds, large: true)
         case let .photo(id):
             addPhoto(id, to: layer, duration: slide.duration, dimmed: 0)
             addLabels(for: id, to: layer)
@@ -567,10 +567,13 @@ nonisolated final class SlideLayer: CALayer {
         playerLayer = layer
     }
 
-    private func text(_ string: String, size: CGFloat, weight: NSFont.Weight, in bounds: CGRect, y: CGFloat) -> CATextLayer {
+    private func text(_ string: String, size: CGFloat, weight: NSFont.Weight, design: NSFontDescriptor.SystemDesign = .rounded,
+                      italic: Bool = false, maxWidth: CGFloat = 1100, in bounds: CGRect, y: CGFloat) -> CATextLayer {
         let layer = CATextLayer()
         let base = NSFont.systemFont(ofSize: size, weight: weight)
-        let font = base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: size) } ?? base
+        var descriptor = base.fontDescriptor.withDesign(design) ?? base.fontDescriptor
+        if italic { descriptor = descriptor.withSymbolicTraits(.italic) }
+        let font = NSFont(descriptor: descriptor, size: size) ?? base
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         layer.string = NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: NSColor.white, .paragraphStyle: paragraph])
@@ -580,23 +583,30 @@ nonisolated final class SlideLayer: CALayer {
         layer.shadowOpacity = 0.55
         layer.shadowRadius = 10
         layer.shadowOffset = .zero
-        let width = min(bounds.width - 120, 1100)
+        let width = min(bounds.width - 120, maxWidth)
         let height = ceil((string as NSString).boundingRect(with: CGSize(width: width, height: 600), options: [.usesLineFragmentOrigin],
                                                             attributes: [.font: font]).height) + 8
         layer.frame = CGRect(x: bounds.midX - width / 2, y: y, width: width, height: height)
         return layer
     }
 
-    /// A big title and its subtitle in the middle of the screen.
-    func addText(_ title: String, subtitle: String, in bounds: CGRect, large: Bool) {
+    /// A big title and its subtitle in the middle of the screen, and under them what the journal says, if anything.
+    func addText(_ title: String, subtitle: String, note: String = "", in bounds: CGRect, large: Bool) {
         let titleLayer = text(title, size: large ? min(76, bounds.width / 16) : 54, weight: .heavy, in: bounds, y: 0)
         let subtitleLayer = text(subtitle, size: large ? 26 : 22, weight: .medium, in: bounds, y: 0)
-        let total = titleLayer.frame.height + 10 + subtitleLayer.frame.height
+        let noteLayer = note.isEmpty ? nil
+            : text("“\(note)”", size: min(28, max(20, bounds.width / 48)), weight: .regular, design: .serif, italic: true,
+                   maxWidth: 900, in: bounds, y: 0)
+        let total = titleLayer.frame.height + 10 + subtitleLayer.frame.height + (noteLayer.map { 34 + $0.frame.height } ?? 0)
         titleLayer.frame.origin.y = bounds.midY - total / 2 - (large ? 0 : 60)
         subtitleLayer.frame.origin.y = titleLayer.frame.maxY + 10
         subtitleLayer.opacity = 0.9
         addSublayer(titleLayer)
         addSublayer(subtitleLayer)
+        if let noteLayer {
+            noteLayer.frame.origin.y = subtitleLayer.frame.maxY + 34
+            addSublayer(noteLayer)
+        }
     }
 
     /// The photo's caption near the bottom, and its date in the corner.

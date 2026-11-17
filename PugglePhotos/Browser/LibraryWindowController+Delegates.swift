@@ -74,6 +74,66 @@ extension LibraryWindowController: PhotoBrowserDelegate {
         guard let album = currentAlbum, let memory = memories.finder.album(album.id) else { return }
         play(memory)
     }
+
+    /// The pencil on a day's heading: a popover under it to write in. A click elsewhere keeps what was written;
+    /// only Cancel (or Esc) throws it away.
+    func browserWriteJournal(for day: CivilDay, anchor: NSView) {
+        let draft = JournalDraft(library.catalog.entry(for: day))
+        let title = library.formatting.longDay(day), count = photoCountLine(for: day)
+        presentPopover(at: anchor.bounds, of: anchor, edge: anchor.isFlipped ? .maxY : .minY, onClose: { [weak self] in
+            guard !draft.isCancelled else { return }
+            self?.journalSave(draft.text, mood: draft.mood, for: day)
+        }) { close in
+            JournalEditorView(draft: draft, dayTitle: title, photoCount: count, onCancel: close, onSave: close)
+        }
+    }
+}
+
+// MARK: The journal
+
+extension LibraryWindowController: JournalActions {
+    /// Saves what was written about a day, if it changed; writing nothing deletes the entry. Undo puts it back.
+    func journalSave(_ text: String, mood: String, for day: CivilDay) {
+        let entry = library.catalog.entry(for: day)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != (entry?.text ?? "") || mood != (entry?.mood ?? "") else { return }
+        let deleting = trimmed.isEmpty && mood.isEmpty
+        library.edit(deleting ? "Delete Journal Entry" : "Journal Entry") { $0.setEntry(trimmed, mood: mood, for: day) }
+    }
+
+    func journalShowDay(_ day: CivilDay) {
+        sidebar.calendar.show(day)
+        sidebar.calendar.selectedDay = day
+        calendarSelect(day)
+    }
+
+    func journalPlayDay(_ day: CivilDay) {
+        guard let memory = memories.finder.day(day) else {
+            NSSound.beep()
+            return
+        }
+        play(memory)
+    }
+
+    /// Write in the journal about a day, in a sheet: File ▸ Write in Journal and the info panel.
+    func writeJournal(about day: CivilDay) {
+        let draft = JournalDraft(library.catalog.entry(for: day))
+        let title = library.formatting.longDay(day), count = photoCountLine(for: day)
+        presentSheet { [weak self] dismiss in
+            JournalEditorView(draft: draft, dayTitle: title, photoCount: count, onCancel: dismiss) {
+                dismiss()
+                self?.journalSave(draft.text, mood: draft.mood, for: day)
+            }
+        }
+    }
+
+    /// "12 photos and 2 videos", or "No photos" for a day.
+    func photoCountLine(for day: CivilDay) -> String {
+        let ids = library.snapshot.ids(on: day)
+        guard !ids.isEmpty else { return "No photos from this day" }
+        let counts = library.snapshot.counts(of: ids)
+        return library.formatting.count(photos: counts.photos, videos: counts.videos)
+    }
 }
 
 // MARK: Memories and slideshows
@@ -108,6 +168,9 @@ extension LibraryWindowController: MemoriesActions {
     func slideshowForCurrentPlace() -> Memory? {
         let finder = memories.finder
         if state.source == .memories { return memories.page.onThisDay.first ?? memories.page.highlights.first ?? memories.page.years.first }
+        if state.source == .journal {
+            return finder.day(journalComposer.day ?? CivilDay(Date(), in: library.formatting.timeZone)) ?? finder.journal(minimum: 1)
+        }
         if state.selection.count > 1 { return finder.selection(state.selection, title: "Selected Photos") }
         if let album = currentAlbum { return finder.album(album.id) }
         if let memory = currentMemory { return memory }
@@ -306,6 +369,8 @@ extension LibraryWindowController: InspectorActions {
     func inspectorOpenAlbum(_ album: UUID) { go(to: .album(album)) }
 
     func inspectorChangeDate(_ ids: [PhotoID]) { showChangeDate(for: ids) }
+
+    func inspectorWriteJournal(_ day: CivilDay) { writeJournal(about: day) }
 }
 
 // MARK: Shared actions

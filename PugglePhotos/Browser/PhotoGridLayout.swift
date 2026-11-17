@@ -12,6 +12,15 @@ final class PhotoGridLayout: NSCollectionViewLayout {
     var spacing: CGFloat = 4 { didSet { if spacing != oldValue { invalidateGeometry() } } }
     /// Zero for a grid without headings.
     var headerHeight: CGFloat = 46 { didSet { if headerHeight != oldValue { invalidateGeometry() } } }
+    /// What the journal says under some headings, by section: each makes its heading taller by the line or two
+    /// it takes at the current width.
+    var notes: [Int: String] = [:] { didSet { if notes != oldValue { invalidateGeometry() } } }
+    private var noteHeights: [Int: CGFloat] = [:]
+
+    /// A section's heading height, with its journal line.
+    func headerHeight(_ section: Int) -> CGFloat {
+        headerHeight == 0 ? 0 : headerHeight + (noteHeights[section] ?? 0)
+    }
     /// The album banner above everything, or zero.
     var bannerHeight: CGFloat = 0 { didSet { if bannerHeight != oldValue { invalidateGeometry() } } }
     var sideInset: CGFloat = 16 { didSet { if sideInset != oldValue { invalidateGeometry() } } }
@@ -48,6 +57,7 @@ final class PhotoGridLayout: NSCollectionViewLayout {
         let usable = max(width - sideInset * 2, 40)
         columns = max(1, Int((usable + spacing) / (targetSide + spacing)))
         side = max(20, ((usable - CGFloat(columns - 1) * spacing) / CGFloat(columns)).rounded(.down))
+        noteHeights = headerHeight == 0 ? [:] : notes.mapValues { SectionHeaderView.noteHeight($0, width: width) }
         sectionTops.removeAll(keepingCapacity: true)
         sectionBottoms.removeAll(keepingCapacity: true)
         counts.removeAll(keepingCapacity: true)
@@ -57,7 +67,7 @@ final class PhotoGridLayout: NSCollectionViewLayout {
             counts.append(count)
             sectionTops.append(y)
             let rows = (count + columns - 1) / columns
-            y += headerHeight + CGFloat(rows) * side + CGFloat(max(rows - 1, 0)) * spacing
+            y += headerHeight(section) + CGFloat(rows) * side + CGFloat(max(rows - 1, 0)) * spacing
             sectionBottoms.append(y)
             y += sectionGap
         }
@@ -80,20 +90,21 @@ final class PhotoGridLayout: NSCollectionViewLayout {
         guard sectionTops.indices.contains(section) else { return .zero }
         let row = item / columns, column = item % columns
         return NSRect(x: sideInset + CGFloat(column) * (side + spacing),
-                      y: sectionTops[section] + headerHeight + CGFloat(row) * (side + spacing), width: side, height: side)
+                      y: sectionTops[section] + headerHeight(section) + CGFloat(row) * (side + spacing), width: side, height: side)
     }
 
     /// The heading's place: at the top of its section, or pinned to the top of the view while the section is
     /// partly scrolled off, pushed up by the next section's heading.
     func frameForHeader(_ section: Int) -> NSRect {
         guard headerHeight > 0, sectionTops.indices.contains(section) else { return .zero }
+        let height = headerHeight(section)
         var y = sectionTops[section]
         if let visible = collectionView?.visibleRect {
             let pinned = max(y, visible.minY)
-            y = min(pinned, sectionBottoms[section] - headerHeight)
+            y = min(pinned, sectionBottoms[section] - height)
             y = max(y, sectionTops[section])
         }
-        return NSRect(x: 0, y: y, width: width, height: headerHeight)
+        return NSRect(x: 0, y: y, width: width, height: height)
     }
 
     /// The sections that overlap a band of the view.
@@ -120,7 +131,7 @@ final class PhotoGridLayout: NSCollectionViewLayout {
                let header = layoutAttributesForSupplementaryView(ofKind: Self.headerKind, at: IndexPath(item: 0, section: section)) {
                 result.append(header)
             }
-            let top = sectionTops[section] + headerHeight
+            let top = sectionTops[section] + headerHeight(section)
             let rowHeight = side + spacing
             let firstRow = max(0, Int(((rect.minY - top) / rowHeight).rounded(.down)))
             let lastRow = Int(((rect.maxY - top) / rowHeight).rounded(.down))
@@ -178,7 +189,7 @@ final class PhotoGridLayout: NSCollectionViewLayout {
         let section = sections(in: NSRect(x: 0, y: point.y, width: 1, height: 1)).first ?? (point.y < sectionTops[0] ? 0 : sectionTops.count - 1)
         guard counts.indices.contains(section) else { return nil }
         let count = counts[section]
-        let top = sectionTops[section] + headerHeight
+        let top = sectionTops[section] + headerHeight(section)
         let row = max(0, Int(((point.y - top) / (side + spacing)).rounded(.down)))
         let column = max(0, min(columns, Int(((point.x - sideInset + side / 2 + spacing) / (side + spacing)).rounded(.down))))
         return IndexPath(item: min(count, row * columns + column), section: section)
@@ -192,7 +203,7 @@ final class PhotoGridLayout: NSCollectionViewLayout {
         let reference: NSRect
         let x: CGFloat
         if count == 0 {
-            reference = NSRect(x: sideInset, y: sectionTops[indexPath.section] + headerHeight, width: side, height: side)
+            reference = NSRect(x: sideInset, y: sectionTops[indexPath.section] + headerHeight(indexPath.section), width: side, height: side)
             x = reference.minX - 3
         } else if item == count || (item % columns == 0 && item > 0 && indexPath.item == count) {
             reference = frameForItem(at: IndexPath(item: count - 1, section: indexPath.section))

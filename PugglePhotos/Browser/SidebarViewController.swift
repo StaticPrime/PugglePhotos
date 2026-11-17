@@ -137,7 +137,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// Rebuilds the rows from the library and catalog, keeping the selection.
     func reload() {
         guard let library = delegate?.library else { return }
-        let libraryNodes: [SidebarNode] = [.memories, .library, .favorites, .videos, .recentlyAdded].map { SidebarNode(.source($0)) }
+        let libraryNodes: [SidebarNode] = [.memories, .journal, .library, .favorites, .videos, .recentlyAdded].map { SidebarNode(.source($0)) }
         var albumNodes = [SidebarNode(.source(.allAlbums))]
         albumNodes += (delegate?.albumOrder ?? library.catalog.albums.map(\.id)).map { SidebarNode(.source(.album($0))) }
         let labelNodes = library.catalog.labels.map { SidebarNode(.source(.label($0.id))) }

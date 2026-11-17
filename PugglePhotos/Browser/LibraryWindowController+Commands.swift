@@ -40,11 +40,13 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(phBack(_:)):
             return canGoBack
         case #selector(phShowGallery(_:)):
-            menuItem.state = state.viewMode == .gallery && state.source != .allAlbums ? .on : .off
+            menuItem.state = state.viewMode == .gallery && state.source.showsPhotos ? .on : .off
             return library.access == .authorized
         case #selector(phShowList(_:)):
-            menuItem.state = state.viewMode == .list && state.source != .allAlbums ? .on : .off
+            menuItem.state = state.viewMode == .list && state.source.showsPhotos ? .on : .off
             return library.access == .authorized
+        case #selector(phWriteJournal(_:)):
+            return library.hasLoaded
         case #selector(phShowBook(_:)):
             menuItem.state = isShowingBook ? .on : .off
             return currentAlbum != nil
@@ -84,7 +86,7 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(phRenameAlbum(_:)), #selector(phDeleteAlbum(_:)):
             return (menuItem.representedObject as? UUID ?? currentAlbum?.id ?? albums.selectedAlbum) != nil
         case #selector(phGroupBy(_:)), #selector(phSortBy(_:)), #selector(phOrder(_:)):
-            return state.source != .allAlbums && state.source != .memories && library.access == .authorized
+            return state.source.showsPhotos && library.access == .authorized
         case #selector(phPlaySlideshow(_:)):
             return library.hasLoaded && state.source != .allAlbums && SlideshowController.current == nil
         default:
@@ -99,6 +101,17 @@ extension LibraryWindowController: NSMenuItemValidation {
     @objc func phNewAlbumWithSelection(_ sender: Any?) { newAlbum(with: targetIDs) }
 
     @objc func phNewLabel(_ sender: Any?) { newLabel(for: targetIDs) }
+
+    /// Writes about a day: on the Journal page, in its writing box; elsewhere, about the day of the photo chosen,
+    /// or today.
+    @objc func phWriteJournal(_ sender: Any?) {
+        if state.source == .journal, state.viewerID == nil {
+            journalComposer.focusRequests += 1
+            return
+        }
+        let today = CivilDay(Date(), in: library.formatting.timeZone)
+        writeJournal(about: targetIDs.first.flatMap(library.snapshot.day(of:)) ?? today)
+    }
 
     // MARK: Photo
 
@@ -264,6 +277,7 @@ extension LibraryWindowController: NSMenuItemValidation {
     @objc func phGo(_ sender: NSMenuItem) {
         switch sender.representedObject as? String {
         case "memories": go(to: .memories)
+        case "journal": go(to: .journal)
         case "favorites": go(to: .favorites)
         case "videos": go(to: .videos)
         case "recent": go(to: .recentlyAdded)

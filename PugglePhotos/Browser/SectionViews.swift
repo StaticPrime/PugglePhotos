@@ -38,17 +38,33 @@ enum HeaderDrop: Equatable {
 /// section's photos; drop photos on it to move them to that day, or add them to that album or label.
 final class SectionHeaderView: NSView, NSCollectionViewElement {
     static let identifier = NSUserInterfaceItemIdentifier("SectionHeader")
+    static let noteFont = NSFontManager.shared.convert(.systemFont(ofSize: 13), toHaveTrait: .italicFontMask)
+    private static let noteLeading: CGFloat = 19, noteTrailing: CGFloat = 60
+
+    /// How much a journal line makes a heading of this width taller: one line, or two for a longer entry.
+    static func noteHeight(_ note: String, width: CGFloat) -> CGFloat {
+        let line = ceil(noteFont.ascender - noteFont.descender + noteFont.leading)
+        // Labels keep two points clear at each end of a line.
+        let available = max(width - noteLeading - noteTrailing - 4, 60)
+        let height = (note as NSString).boundingRect(with: NSSize(width: available, height: 1000), options: [.usesLineFragmentOrigin],
+                                                     attributes: [.font: noteFont]).height
+        return (height > line * 1.5 ? 2 : 1) * line + 2
+    }
 
     private let background = NSVisualEffectView()
     private let titleField = NSTextField(labelWithString: "")
     private let subtitleField = NSTextField(labelWithString: "")
     private let hintField = NSTextField(labelWithString: "")
+    private let journalField = NSTextField(wrappingLabelWithString: "")
+    let writeButton = NSButton()
     private let highlight = NSView()
 
     var section = 0
     var drop: HeaderDrop?
     var onSelect: ((_ section: Int, _ extend: Bool) -> Void)?
     var onDrop: ((_ ids: [PhotoID], _ drop: HeaderDrop, _ header: NSView) -> Bool)?
+    /// Write in the journal about this heading's day.
+    var onWrite: ((_ day: CivilDay, _ button: NSView) -> Void)?
     private var isTargeted = false { didSet { updateHighlight() } }
 
     override init(frame frameRect: NSRect) {
@@ -70,7 +86,21 @@ final class SectionHeaderView: NSView, NSCollectionViewElement {
         hintField.font = .systemFont(ofSize: 12, weight: .semibold)
         hintField.textColor = Theme.accent
         hintField.isHidden = true
-        for field in [titleField, subtitleField, hintField] {
+        journalField.font = Self.noteFont
+        journalField.textColor = .secondaryLabelColor
+        journalField.maximumNumberOfLines = 2
+        journalField.lineBreakMode = .byWordWrapping
+        journalField.cell?.truncatesLastVisibleLine = true
+        journalField.isHidden = true
+        writeButton.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: "Write about this day")
+        writeButton.isBordered = false
+        writeButton.bezelStyle = .regularSquare
+        writeButton.contentTintColor = .secondaryLabelColor
+        writeButton.toolTip = "Write about this day in the journal"
+        writeButton.target = self
+        writeButton.action = #selector(write(_:))
+        writeButton.setAccessibilityLabel("Write about this day")
+        for field in [titleField, subtitleField, hintField, journalField, writeButton] as [NSView] {
             field.translatesAutoresizingMaskIntoConstraints = false
             addSubview(field)
         }
@@ -84,11 +114,16 @@ final class SectionHeaderView: NSView, NSCollectionViewElement {
             highlight.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             highlight.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
             titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
-            titleField.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 1),
+            titleField.topAnchor.constraint(equalTo: topAnchor, constant: 13),
+            journalField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.noteLeading),
+            journalField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.noteTrailing),
+            journalField.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 3),
+            writeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
+            writeButton.centerYAnchor.constraint(equalTo: titleField.centerYAnchor),
             subtitleField.leadingAnchor.constraint(equalTo: titleField.trailingAnchor, constant: 10),
             subtitleField.firstBaselineAnchor.constraint(equalTo: titleField.firstBaselineAnchor),
             subtitleField.trailingAnchor.constraint(lessThanOrEqualTo: hintField.leadingAnchor, constant: -10),
-            hintField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            hintField.trailingAnchor.constraint(equalTo: writeButton.leadingAnchor, constant: -14),
             hintField.firstBaselineAnchor.constraint(equalTo: titleField.firstBaselineAnchor),
         ])
         titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -98,13 +133,24 @@ final class SectionHeaderView: NSView, NSCollectionViewElement {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func configure(title: String, subtitle: String, section: Int, drop: HeaderDrop?) {
+    func configure(title: String, subtitle: String, section: Int, drop: HeaderDrop?, journal: String? = nil) {
         titleField.stringValue = title
         subtitleField.stringValue = subtitle
         self.section = section
         self.drop = drop
         hintField.stringValue = drop?.hint ?? ""
-        setAccessibilityLabel("\(title), \(subtitle)")
+        let entry = journal ?? ""
+        journalField.stringValue = entry
+        journalField.toolTip = entry.isEmpty ? nil : entry
+        journalField.isHidden = entry.isEmpty
+        if case .day = drop { writeButton.isHidden = false } else { writeButton.isHidden = true }
+        writeButton.image = NSImage(systemSymbolName: entry.isEmpty ? "square.and.pencil" : "pencil.line",
+                                    accessibilityDescription: entry.isEmpty ? "Write about this day" : "Edit what you wrote")
+        setAccessibilityLabel(entry.isEmpty ? "\(title), \(subtitle)" : "\(title), \(subtitle), journal: \(entry)")
+    }
+
+    @objc private func write(_ sender: NSButton) {
+        if case let .day(day) = drop { onWrite?(day, sender) }
     }
 
     override func prepareForReuse() {

@@ -29,6 +29,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     private var welcomeHost: NSHostingController<WelcomeView>?
     private var emptyHost: NSHostingController<EmptyStateView>?
     private(set) var memoriesHost: NSHostingController<MemoriesView>?
+    private(set) var journalHost: NSHostingController<JournalView>?
+    /// What's being written at the top of the Journal page.
+    let journalComposer = JournalComposer()
+    /// The journal as the headings last showed it, to tell when they need redrawing.
+    private var shownJournal: [String: JournalEntry] = [:]
     /// Places visited before, for Back.
     private(set) var history: [LibrarySource] = []
     var toolbarController: ToolbarController!
@@ -165,6 +170,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         content.sections = arranger.sections(ids, arrangement: arrangement, albumOrder: albumOrder)
         content.showsHeaders = arrangement.grouping != .none
         let today = CivilDay(Date(), in: library.formatting.timeZone)
+        let journal = library.catalog.journal
+        shownJournal = journal
         for section in content.sections {
             content.titles.append(arranger.title(of: section.key, formatting: library.formatting, today: today))
             let counts = library.snapshot.counts(of: section.items)
@@ -174,6 +181,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             case let .album(id): content.drops.append(.album(id))
             case let .label(id): content.drops.append(.label(id))
             default: content.drops.append(nil)
+            }
+            if case let .day(day) = section.key, let entry = journal[day.description] {
+                content.journal.append(Self.journalLine(entry))
+            } else {
+                content.journal.append("")
             }
         }
         if let album = currentAlbum {
@@ -185,6 +197,13 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         }
         content.dropsBetween = arrangement.isDateOrdered || (currentAlbum != nil && arrangement.sort == .custom)
         return content
+    }
+
+    /// A journal entry as a heading shows it: the mood, then the words on one line.
+    static func journalLine(_ entry: JournalEntry) -> String {
+        let words = entry.text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        return [entry.mood, words].filter { !$0.isEmpty }.joined(separator: "  ")
     }
 
     /// Works out the middle again and shows it.
@@ -209,6 +228,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         state.viewerID = nil
         if state.source == .memories {
             showMemories()
+            setSelection([])
+            return
+        }
+        if state.source == .journal {
+            showJournal()
             setSelection([])
             return
         }
@@ -271,6 +295,13 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         show(memoriesHost!)
     }
 
+    private func showJournal() {
+        if journalHost == nil {
+            journalHost = NSHostingController(rootView: JournalView(library: library, composer: journalComposer, actions: { [weak self] in self }))
+        }
+        show(journalHost!)
+    }
+
     private func showEmptyState() {
         let view: EmptyStateView
         if !state.searchText.isEmpty {
@@ -316,6 +347,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             window.subtitle = formatting.weekdayAndDay(memories.today)
             return
         }
+        if state.source == .journal {
+            let entries = library.catalog.journal.count
+            window.subtitle = entries == 1 ? "1 entry" : "\(formatting.number(entries)) entries"
+            return
+        }
         guard library.hasLoaded else {
             window.subtitle = ""
             return
@@ -341,7 +377,10 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             // Captions and labels change badges; albums and labels can change what's shown.
             let dependsOnCatalog = state.source.album != nil || state.source.label != nil || !state.searchText.isEmpty
                 || arrangement.grouping == .album || arrangement.grouping == .label || arrangement.sort == .title
-            if dependsOnCatalog || state.source == .allAlbums || shownChild === emptyHost {
+                || (arrangement.grouping == .day && library.catalog.journal != shownJournal)
+            if state.source == .journal {
+                updateTitle()
+            } else if dependsOnCatalog || state.source == .allAlbums || shownChild === emptyHost {
                 refresh(keepPosition: true)
             } else {
                 grid.refreshVisible()
@@ -484,7 +523,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             NSSound.beep()
             return
         }
-        if state.source == .allAlbums { go(to: .library) }
+        if !state.source.showsPhotos { go(to: .library) }
         closeViewer(refreshing: false)
         state.viewMode = mode
         refresh(keepPosition: false)
@@ -510,7 +549,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     func search(_ text: String) {
         guard text != state.searchText else { return }
         state.searchText = text
-        if state.source == .allAlbums { state.source = .library; sidebar.select(.library) }
+        if !state.source.showsPhotos { state.source = .library; sidebar.select(.library) }
         closeViewer(refreshing: false)
         refresh(keepPosition: false)
     }
@@ -556,15 +595,35 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         window.beginSheet(sheet!)
     }
 
-    /// Shows SwiftUI content in a popover next to a rectangle of a view.
-    func presentPopover<Content: View>(at rect: NSRect, of view: NSView, edge: NSRectEdge = .maxY,
+    /// Shows SwiftUI content in a popover next to a rectangle of a view. `onClose` runs when it closes, whether by
+    /// its own buttons or a click elsewhere.
+    func presentPopover<Content: View>(at rect: NSRect, of view: NSView, edge: NSRectEdge = .maxY, onClose: (() -> Void)? = nil,
                                        _ make: (@escaping () -> Void) -> Content) {
         activePopover?.close()
-        let popover = NSPopover()
+        let popover = ClosingPopover()
         popover.behavior = .transient
+        popover.onClose = onClose
         let close: () -> Void = { [weak popover] in popover?.close() }
         popover.contentViewController = NSHostingController(rootView: make(close))
         popover.show(relativeTo: rect, of: view, preferredEdge: edge)
         activePopover = popover
+    }
+}
+
+/// A popover that runs a closure once when it closes, however it closes.
+final class ClosingPopover: NSPopover, NSPopoverDelegate {
+    var onClose: (() -> Void)?
+
+    override init() {
+        super.init()
+        delegate = self
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func popoverDidClose(_ notification: Notification) {
+        let action = onClose
+        onClose = nil
+        action?()
     }
 }

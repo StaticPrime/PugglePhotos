@@ -36,6 +36,7 @@ struct MemoriesView: View {
                     }
                 }
                 section("Highlights", page.highlights)
+                section("Collections", page.collections)
                 section("Years", page.years)
                 section("Labels", page.labels)
             }
@@ -95,6 +96,12 @@ struct MemoryCard: View {
                         .font(.system(size: 13, weight: .medium))
                         .opacity(0.9)
                         .lineLimit(1)
+                    if !memory.note.isEmpty {
+                        Text("“\(SlideshowPlan.quote(memory.note, limit: height > 240 ? 150 : 80))”")
+                            .font(.system(size: height > 240 ? 15 : 13, design: .serif).italic())
+                            .lineLimit(2)
+                            .padding(.top, 4)
+                    }
                 }
                 Spacer(minLength: 12)
                 Image(systemName: "play.fill")
@@ -119,7 +126,8 @@ struct MemoryCard: View {
             Button("Show Photos") { actions()?.showPhotos(of: memory) }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(memory.title), \(memory.subtitle)")
+        .accessibilityLabel(memory.note.isEmpty ? "\(memory.title), \(memory.subtitle)"
+                            : "\(memory.title), \(memory.subtitle). You wrote: \(memory.note)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(named: "Show Photos") { actions()?.showPhotos(of: memory) }
         .onAppear(perform: load)

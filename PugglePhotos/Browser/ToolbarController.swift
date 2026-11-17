@@ -110,14 +110,15 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
     /// Brings every control up to date with the window.
     func update() {
         let state = owner.state
-        let onMemories = state.source == .memories
+        // Memories and the Journal are pages of their own: no way of showing photos is chosen there.
+        let onPage = state.source == .memories || state.source == .journal
         let isBook = state.viewMode == .book && owner.currentAlbum != nil
-        modeGroup?.selectedIndex = isBook ? 2 : (state.viewMode == .list ? 1 : 0)
+        modeGroup?.selectedIndex = onPage ? -1 : (isBook ? 2 : (state.viewMode == .list ? 1 : 0))
         modeGroup?.isEnabled = owner.library.access == .authorized
         if let modeGroup, modeGroup.subitems.count == 3 { modeGroup.subitems[2].isEnabled = owner.currentAlbum != nil }
         zoomSlider?.doubleValue = Double(state.thumbnailSide)
-        zoomSlider?.isEnabled = !onMemories && (state.viewMode == .gallery || state.source == .allAlbums)
-        arrangeItem?.isEnabled = !onMemories
+        zoomSlider?.isEnabled = !onPage && (state.viewMode == .gallery || state.source == .allAlbums)
+        arrangeItem?.isEnabled = !onPage
         backItem?.isEnabled = owner.canGoBack
         let ids = owner.state.viewerID.map { [$0] } ?? state.selection
         let allFavorites = !ids.isEmpty && ids.allSatisfy { owner.library.snapshot.item($0)?.isFavorite == true }

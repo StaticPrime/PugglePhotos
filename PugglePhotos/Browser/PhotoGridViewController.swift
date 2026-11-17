@@ -7,6 +7,8 @@ struct BrowserContent {
     var titles: [String] = []
     var subtitles: [String] = []
     var drops: [HeaderDrop?] = []
+    /// What the journal says about each section's day ("" for none), with its mood.
+    var journal: [String] = []
     var showsHeaders = false
     /// The album shown, for its banner.
     var album: Album?
@@ -49,6 +51,8 @@ protocol PhotoBrowserDelegate: AnyObject {
     func browserSetAlbumNote(_ note: String)
     func browserPlayAlbum()
     func browserOpenBook()
+    /// Write in the journal about a day, from its heading.
+    func browserWriteJournal(for day: CivilDay, anchor: NSView)
 }
 
 /// The photo grid: thumbnails in sections, chosen, opened, dragged and dropped like files in a folder.
@@ -102,6 +106,9 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
         let anchor = keepPosition ? firstVisibleID() : nil
         self.content = content
         layout.headerHeight = content.showsHeaders ? 46 : 0
+        var notes: [Int: String] = [:]
+        for (section, note) in content.journal.enumerated() where !note.isEmpty { notes[section] = note }
+        layout.notes = notes
         let width = scrollView.contentSize.width
         layout.bannerHeight = content.album.map { AlbumBannerView.height(note: $0.note, width: width) } ?? 0
         isUpdatingSelection = true
@@ -136,8 +143,9 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
         guard let indexPath = content.indexPaths(of: [id]).min() else { return }
         collectionView.layoutSubtreeIfNeeded()
         var frame = layout.frameForItem(at: indexPath)
-        frame.origin.y -= layout.headerHeight + 8
-        frame.size.height += layout.headerHeight + 16
+        let heading = layout.headerHeight(indexPath.section)
+        frame.origin.y -= heading + 8
+        frame.size.height += heading + 16
         if animated { collectionView.animator().scrollToVisible(frame) } else { collectionView.scrollToVisible(frame) }
     }
 
@@ -146,7 +154,7 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
         guard content.sections.indices.contains(section) else { return }
         collectionView.layoutSubtreeIfNeeded()
         let frame = layout.frameForItem(at: IndexPath(item: 0, section: section))
-        collectionView.scroll(NSPoint(x: 0, y: max(0, frame.minY - layout.headerHeight - layout.sectionGap / 2)))
+        collectionView.scroll(NSPoint(x: 0, y: max(0, frame.minY - layout.headerHeight(section) - layout.sectionGap / 2)))
     }
 
     /// The first photo fully below the pinned heading, worked out from the layout (the collection view's own list
@@ -156,7 +164,7 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
         guard visible.height > 0 else { return nil }
         let paths = layout.layoutAttributesForElements(in: visible)
             .filter { $0.representedElementCategory == .item }.compactMap(\.indexPath).sorted()
-        return paths.first { layout.frameForItem(at: $0).minY >= visible.minY + layout.headerHeight - 4 }.flatMap(content.id(at:))
+        return paths.first { layout.frameForItem(at: $0).minY >= visible.minY + layout.headerHeight($0.section) - 4 }.flatMap(content.id(at:))
             ?? paths.first.flatMap(content.id(at:))
     }
 
@@ -230,9 +238,11 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
         let section = indexPath.section
         if content.titles.indices.contains(section) {
             header.configure(title: content.titles[section], subtitle: content.subtitles[section], section: section,
-                             drop: content.drops.indices.contains(section) ? content.drops[section] : nil)
+                             drop: content.drops.indices.contains(section) ? content.drops[section] : nil,
+                             journal: content.journal.indices.contains(section) ? content.journal[section] : nil)
         }
         header.onSelect = { [weak self] section, extend in self?.selectSection(section, extend: extend) }
+        header.onWrite = { [weak self] day, view in self?.delegate?.browserWriteJournal(for: day, anchor: view) }
         header.onDrop = { [weak self] ids, drop, view in self?.delegate?.browserHeaderDrop(ids, drop, anchor: view) ?? false }
         return header
     }
