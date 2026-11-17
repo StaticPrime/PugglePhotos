@@ -274,6 +274,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let arranger = library.arranger
         let count: Int
         switch source {
+        case .memories, .memory:
+            return
         case .library:
             cell.configure(title: "Library", symbol: "photo.on.rectangle", count: library.snapshot.count)
         case .favorites:

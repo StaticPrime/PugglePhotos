@@ -2,6 +2,10 @@ import Foundation
 
 /// The places in the sidebar that show photos.
 public enum LibrarySource: Hashable, Codable, Sendable {
+    /// The Memories page, rather than photos.
+    case memories
+    /// One memory's photos.
+    case memory(String)
     case library
     case favorites
     case videos
@@ -144,9 +148,13 @@ public struct Arranger: Sendable {
     // MARK: Which photos
 
     /// The photos a place in the sidebar holds, in date order (an album in its own order). `recent` comes from the
-    /// library when it keeps that list itself.
-    public func ids(for source: LibrarySource, recent: [PhotoID] = []) -> [PhotoID] {
+    /// library when it keeps that list itself; `memory` is the photos of the memory shown.
+    public func ids(for source: LibrarySource, recent: [PhotoID] = [], memory: [PhotoID] = []) -> [PhotoID] {
         switch source {
+        case .memories:
+            return []
+        case .memory:
+            return memory.filter(snapshot.contains)
         case .library:
             return snapshot.allIDs
         case .favorites:

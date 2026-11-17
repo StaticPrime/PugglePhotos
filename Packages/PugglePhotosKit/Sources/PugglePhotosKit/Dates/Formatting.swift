@@ -23,6 +23,9 @@ public struct Formatting: Sendable {
         return format(day, template)
     }
 
+    /// "Tuesday, November 17", without the year.
+    public func weekdayAndDay(_ day: CivilDay) -> String { format(day, "EEEEMMMMd") }
+
     /// "June 2025".
     public func monthTitle(year: Int, month: Int) -> String {
         format(CivilDay(year: year, month: month, day: 1), "MMMMy")

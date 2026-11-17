@@ -257,6 +257,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         guard let window else { return }
         let formatting = library.formatting
         switch state.source {
+        case .memories: window.title = "Memories"
+        case .memory: window.title = "Memory"
         case .library: window.title = "Library"
         case .favorites: window.title = "Favorites"
         case .videos: window.title = "Videos"

@@ -39,6 +39,8 @@ final class BrowserState {
     /// every label.
     static func key(_ source: LibrarySource) -> String {
         switch source {
+        case .memories: "memories"
+        case .memory: "memory"
         case .library: "library"
         case .favorites: "favorites"
         case .videos: "videos"
