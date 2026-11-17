@@ -62,6 +62,9 @@ private struct SingleInspector: View {
     @State private var caption = ""
     @State private var note = ""
     @FocusState private var focus: Field?
+    /// The fields typed in here, which are the only ones saved from here: a note written on the back of the photo
+    /// meanwhile mustn't be overwritten by what this panel showed before.
+    @State private var edited: Set<Field> = []
 
     enum Field { case caption, note }
 
@@ -77,6 +80,7 @@ private struct SingleInspector: View {
                     .font(.system(size: 17, weight: .semibold))
                     .lineLimit(1...3)
                     .focused($focus, equals: .caption)
+                    .onChange(of: caption) { if focus == .caption { edited.insert(.caption) } }
                     .onSubmit(commitCaption)
                     .accessibilityLabel("Caption")
 
@@ -146,6 +150,7 @@ private struct SingleInspector: View {
                             .font(.system(size: 13))
                             .scrollContentBackground(.hidden)
                             .focused($focus, equals: .note)
+                            .onChange(of: note) { if focus == .note { edited.insert(.note) } }
                             .frame(minHeight: 90)
                             .accessibilityLabel("Note")
                         if note.isEmpty {
@@ -202,11 +207,13 @@ private struct SingleInspector: View {
     }
 
     private func commitCaption() {
+        guard edited.remove(.caption) != nil else { return }
         let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed != library.catalog.details(id).caption { model.actions?.inspectorSetCaption(trimmed, for: [id]) }
     }
 
     private func commitNote() {
+        guard edited.remove(.note) != nil else { return }
         if note != library.catalog.details(id).note { model.actions?.inspectorSetNote(note, for: id) }
     }
 }

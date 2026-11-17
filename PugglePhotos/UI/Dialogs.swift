@@ -8,12 +8,16 @@ enum Preferences {
     static let askBeforeChangingDatesKey = "AskBeforeChangingDates"
     static let showsCalendarKey = "ShowsCalendar"
     static let showsBadgesKey = "ShowsBadges"
+    /// Whether a click on a photo turns it over to show its back.
+    static let flipsOnClickKey = "FlipsPhotosOnClick"
 
     static func registerDefaults() {
-        UserDefaults.standard.register(defaults: [askBeforeChangingDatesKey: true, showsCalendarKey: true, showsBadgesKey: true])
+        UserDefaults.standard.register(defaults: [askBeforeChangingDatesKey: true, showsCalendarKey: true, showsBadgesKey: true,
+                                                  flipsOnClickKey: true, Handwriting.key: Handwriting.defaultFamily])
     }
 
     static var askBeforeChangingDates: Bool { UserDefaults.standard.bool(forKey: askBeforeChangingDatesKey) }
+    static var flipsOnClick: Bool { UserDefaults.standard.bool(forKey: flipsOnClickKey) }
 }
 
 // MARK: Moving photos in time
@@ -279,6 +283,8 @@ struct SettingsView: View {
     @AppStorage(MemoryPreferences.musicKey) private var music = SlideshowMusic.Choice.tune.rawValue
     @AppStorage(BookPreferences.alwaysPlayKey) private var booksAlwaysPlay = false
     @AppStorage(BookPreferences.soundKey) private var booksPlaySound = true
+    @AppStorage(Handwriting.key) private var handwriting = Handwriting.defaultFamily
+    @AppStorage(Preferences.flipsOnClickKey) private var flipsOnClick = true
 
     private var time: Binding<Date> {
         Binding(get: { Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date() },
@@ -323,6 +329,17 @@ struct SettingsView: View {
                     Slider(value: $secondsPerPhoto, in: 2...8, step: 0.5)
                     Text(String(format: "%.1f seconds", secondsPerPhoto)).monospacedDigit().frame(width: 84, alignment: .trailing)
                 }
+            }
+            Section {
+                HandwritingPicker(family: $handwriting)
+                Toggle("Turn a photo over to read its back when it’s clicked", isOn: $flipsOnClick)
+            } header: {
+                Text("Handwriting")
+            } footer: {
+                Text("Notes on the backs of photos, and everything written in photo books, are in this handwriting. Each book can have its own.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Section("Photo Books") {
                 Toggle("Play videos with sound when the pointer is over them", isOn: $booksPlaySound)
@@ -380,6 +397,7 @@ struct ShortcutsView: View {
     private let groups: [(String, [(String, String)])] = [
         ("Browsing", [
             ("Open the selected photo", "Return or Space"),
+            ("Turn a photo over, or back", "Click it again, or Esc"),
             ("Back to the photos", "Esc or ⌘["),
             ("Previous or next photo in the viewer", "← or →"),
             ("Gallery, list or book", "⌘1, ⌘2 or ⌘3"),
@@ -403,6 +421,7 @@ struct ShortcutsView: View {
             ("Put on or take off the first nine labels", "⌃1 … ⌃9"),
             ("Remove from the album", "Delete"),
             ("Change date and time", "⇧⌘D"),
+            ("Write on the back of a photo", "⌥⌘B"),
             ("Write in the journal about the day", "⌘J"),
             ("Save what you wrote", "⌘Return"),
             ("Tilt a photo in a book", "[ or ]"),

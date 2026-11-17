@@ -203,6 +203,7 @@ enum MenuBuilder {
             .separator(),
             item("Favorite", #selector(LibraryWindowController.phToggleFavorite(_:)), ".", [], symbol: "heart"),
             item("Change Date and Time…", #selector(LibraryWindowController.phChangeDate(_:)), "d", [.command, .shift], symbol: "calendar"),
+            item("Write on the Back…", #selector(LibraryWindowController.phWriteNote(_:)), "b", [.command, .option], symbol: "square.and.pencil"),
             .separator(),
             submenu("Add to Album", symbol: "rectangle.stack.badge.plus", library.map(addToAlbumItems) ?? []),
             submenu("Labels", symbol: "tag", library.map { labelItems($0, selection: []) } ?? []),

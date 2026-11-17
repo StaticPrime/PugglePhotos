@@ -53,6 +53,8 @@ protocol PhotoBrowserDelegate: AnyObject {
     func browserOpenBook()
     /// Write in the journal about a day, from its heading.
     func browserWriteJournal(for day: CivilDay, anchor: NSView)
+    /// Write on the back of a photo turned over in the grid.
+    func browserWriteNote(for id: PhotoID, anchor: NSView)
 }
 
 /// The photo grid: thumbnails in sections, chosen, opened, dragged and dropped like files in a folder.
@@ -118,6 +120,7 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
         collectionView.reloadData()
         collectionView.selectionIndexPaths = content.indexPaths(of: Set(selection))
         isUpdatingSelection = false
+        if let turned = turnedOver, content.indexPaths(of: [turned]).isEmpty { turnedOver = nil }
         if let anchor { scroll(to: anchor, animated: false) } else if !keepPosition { scrollToStart() }
         resetPrefetch()
         DispatchQueue.main.async { [weak self] in self?.updatePrefetch() }
@@ -244,6 +247,64 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
         guard let id = content.id(at: indexPath), let library = delegate?.library else { return }
         cell.configure(id, badges: Self.badges(id, library), title: library.title(of: id), spoken: library.spokenDescription(of: id),
                        thumbnails: library.thumbnails, side: layout.side, scale: view.window?.backingScaleFactor ?? 2)
+        let over = turnedOver == id
+        cell.turnOver(over, back: over ? backImage(id) : nil, animated: false)
+    }
+
+    // MARK: Turning photos over
+
+    /// The photo turned over to show its back, if any: one at a time.
+    private(set) var turnedOver: PhotoID?
+
+    /// Turns a photo over (and the one turned over before, back), or with nil, turns it back.
+    func turnOver(_ id: PhotoID?, animated: Bool = true) {
+        let previous = turnedOver
+        turnedOver = id
+        for changed in Set([previous, id].compactMap { $0 }) {
+            for indexPath in content.indexPaths(of: [changed]) {
+                guard let cell = collectionView.item(at: indexPath) as? PhotoCell else { continue }
+                cell.turnOver(changed == id, back: changed == id ? backImage(changed) : nil, animated: animated)
+            }
+        }
+    }
+
+    /// A photo's back at the size the grid shows it.
+    private func backImage(_ id: PhotoID) -> CGImage? {
+        guard let library = delegate?.library else { return nil }
+        return PhotoBack.image(PhotoBack.content(of: id, library: library), size: CGSize(width: layout.side, height: layout.side),
+                               scale: view.window?.backingScaleFactor ?? 2)
+    }
+
+    /// The thumbnail showing a photo, if it's on screen.
+    func cellView(for id: PhotoID) -> NSView? {
+        content.indexPaths(of: [id]).sorted().lazy.compactMap { self.collectionView.item(at: $0)?.view }.first
+    }
+
+    /// Whether the photo at a point is the one photo chosen, so a click on it turns it over rather than choosing it.
+    fileprivate func isOnlyChoice(at point: NSPoint) -> Bool {
+        guard let indexPath = collectionView.indexPathForItem(at: point), let id = content.id(at: indexPath) else { return false }
+        return selectedIDs == [id]
+    }
+
+    /// A plain click: the first on a photo chooses it; one on the photo already chosen turns it over, or back. A
+    /// click anywhere else turns any photo back.
+    fileprivate func clicked(at point: NSPoint, wasChosen: Bool) {
+        guard let indexPath = collectionView.indexPathForItem(at: point), let id = content.id(at: indexPath) else {
+            turnOver(nil)
+            return
+        }
+        guard wasChosen, Preferences.flipsOnClick else { return }
+        turnOver(turnedOver == id ? nil : id)
+    }
+
+    /// A click on the pencil on a turned-over photo's back writes on it.
+    fileprivate func pencil(at point: NSPoint) -> Bool {
+        guard let id = turnedOver, let indexPath = collectionView.indexPathForItem(at: point), content.id(at: indexPath) == id,
+              let cell = collectionView.item(at: indexPath) else { return false }
+        let local = cell.view.convert(point, from: collectionView)
+        guard PhotoBack.pencilRect(in: cell.view.bounds.size).contains(local) else { return false }
+        delegate?.browserWriteNote(for: id, anchor: cell.view)
+        return true
     }
 
     /// What a thumbnail shows over the photo. With badges turned off in Settings, only a video's length stays.
@@ -289,10 +350,17 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
 
     func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
         if !isUpdatingSelection { delegate?.browserSelectionDidChange(selectedIDs) }
+        turnBackUnlessSelected()
     }
 
     func collectionView(_ collectionView: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) {
         if !isUpdatingSelection { delegate?.browserSelectionDidChange(selectedIDs) }
+        turnBackUnlessSelected()
+    }
+
+    /// A photo turned over goes back once it's no longer the one chosen.
+    private func turnBackUnlessSelected() {
+        if let turned = turnedOver, !selectedIDs.contains(turned) { turnOver(nil) }
     }
 
     // MARK: Dragging
@@ -308,6 +376,7 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
     func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint,
                         forItemsAt indexPaths: Set<IndexPath>) {
         draggedIDs = indexPaths.sorted().compactMap(content.id(at:))
+        (collectionView as? PhotoCollectionView)?.pendingClick = nil
     }
 
     func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint,
@@ -340,6 +409,7 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
 
     fileprivate func openItem(at point: NSPoint) {
         guard let indexPath = collectionView.indexPathForItem(at: point), let id = content.id(at: indexPath) else { return }
+        turnOver(nil, animated: false)
         delegate?.browserOpen(id)
     }
 
@@ -360,12 +430,37 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
 final class PhotoCollectionView: NSCollectionView {
     fileprivate weak var owner: PhotoGridViewController?
 
+    /// Where a plain click began, and whether its photo was already the one chosen, until it ends as a click (or
+    /// turns into a drag).
+    fileprivate var pendingClick: (point: NSPoint, wasChosen: Bool)?
+
     override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
         if event.clickCount == 2 {
-            owner?.openItem(at: convert(event.locationInWindow, from: nil))
+            pendingClick = nil
+            owner?.openItem(at: point)
             return
         }
+        if owner?.pencil(at: point) == true { return }
+        let plain = event.modifierFlags.intersection([.shift, .command, .control, .option]).isEmpty
+        pendingClick = plain && event.clickCount == 1 ? (point, owner?.isOnlyChoice(at: point) ?? false) : nil
         super.mouseDown(with: event)
+        // The collection view may follow the mouse until it's let go, in which case that was the click.
+        if let current = NSApp.currentEvent, current.type == .leftMouseUp { finishClick(current) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        finishClick(event)
+    }
+
+    /// A plain click that didn't move: on the photo already chosen, it turns it over (or back).
+    private func finishClick(_ event: NSEvent) {
+        guard let start = pendingClick else { return }
+        pendingClick = nil
+        let point = convert(event.locationInWindow, from: nil)
+        guard hypot(point.x - start.point.x, point.y - start.point.y) < 5 else { return }
+        owner?.clicked(at: point, wasChosen: start.wasChosen)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -374,6 +469,8 @@ final class PhotoCollectionView: NSCollectionView {
             owner?.openSelection()
         case 51, 117: // Delete, Forward Delete
             owner?.deleteSelection()
+        case 53 where owner?.turnedOver != nil: // Esc turns a photo back
+            owner?.turnOver(nil)
         default:
             super.keyDown(with: event)
         }

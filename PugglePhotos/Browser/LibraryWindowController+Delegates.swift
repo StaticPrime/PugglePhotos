@@ -75,6 +75,8 @@ extension LibraryWindowController: PhotoBrowserDelegate {
         play(memory)
     }
 
+    func browserWriteNote(for id: PhotoID, anchor: NSView) { writeNote(for: id, anchor: anchor) }
+
     /// The pencil on a day's heading: a popover under it to write in. A click elsewhere keeps what was written;
     /// only Cancel (or Esc) throws it away.
     func browserWriteJournal(for day: CivilDay, anchor: NSView) {
@@ -419,6 +421,31 @@ extension LibraryWindowController {
         }
     }
 
+    /// Writing on the back of a photo: in a popover beside it, or a sheet when it isn't on screen. A click elsewhere
+    /// keeps what was written; only Cancel throws it away.
+    func writeNote(for id: PhotoID, anchor: NSView?) {
+        let draft = NoteDraft(library.catalog.details(id).note)
+        let title = library.snapshot.day(of: id).map(library.formatting.longDay) ?? ""
+        let save: () -> Void = { [weak self] in
+            guard let self, !draft.isCancelled else { return }
+            let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard text != library.catalog.details(id).note else { return }
+            library.edit(text.isEmpty ? "Erase Note" : "Note") { $0.setNote(text, for: id) }
+        }
+        if let anchor {
+            presentPopover(at: anchor.bounds, of: anchor, edge: .maxX, onClose: save) { close in
+                NoteEditorView(draft: draft, title: title, family: nil, onCancel: close, onSave: close)
+            }
+        } else {
+            presentSheet { dismiss in
+                NoteEditorView(draft: draft, title: title, family: nil, onCancel: dismiss) {
+                    dismiss()
+                    save()
+                }
+            }
+        }
+    }
+
     func showChangeDate(for ids: [PhotoID]) {
         let items = ids.compactMap { library.snapshot.item($0) }.map { (id: $0.id, date: $0.date) }
         guard !items.isEmpty else { return }
@@ -441,6 +468,7 @@ extension LibraryWindowController {
         menu.addItem(MenuBuilder.submenu("Add to Album", symbol: "rectangle.stack.badge.plus", MenuBuilder.addToAlbumItems(library)))
         menu.addItem(MenuBuilder.submenu("Labels", symbol: "tag", MenuBuilder.labelItems(library, selection: ids)))
         menu.addItem(MenuBuilder.item("Change Date and Time…", #selector(phChangeDate(_:)), symbol: "calendar"))
+        if ids.count == 1 { menu.addItem(MenuBuilder.item("Write on the Back…", #selector(phWriteNote(_:)), symbol: "square.and.pencil")) }
         if currentAlbum != nil {
             menu.addItem(.separator())
             if ids.count == 1 { menu.addItem(MenuBuilder.item("Make Album Cover", #selector(phMakeCover(_:)))) }

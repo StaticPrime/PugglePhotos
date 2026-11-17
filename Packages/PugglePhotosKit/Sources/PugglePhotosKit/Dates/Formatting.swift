@@ -39,6 +39,9 @@ public struct Formatting: Sendable {
     /// "Saturday, June 14, 2025".
     public func longDay(_ day: CivilDay) -> String { format(day, "EEEEMMMMdy") }
 
+    /// "June 14, 2025": a day as it's written on the back of a photo.
+    public func writtenDay(_ day: CivilDay) -> String { format(day, "MMMMdy") }
+
     /// "Jun 14, 2025 at 3:42 PM".
     public func dateAndTime(_ date: Date) -> String {
         let formatter = Self.cache.formatter(locale: locale, calendar: calendar, key: "medium+short") { formatter in

@@ -281,6 +281,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
 
     /// Whether an album is open as a photo book.
     var isShowingBook: Bool { shownChild === book && state.viewerID == nil }
+    /// Whether the photo grid is what's showing.
+    var shownGrid: Bool { shownChild === grid }
     /// Set when the library is about to be shown afresh, so it opens on the newest photos.
     private var opensAtEnd = true
     /// Counts the places chosen to scroll to, so opening on the newest photos gives way to one chosen since.

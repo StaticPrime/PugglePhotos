@@ -47,6 +47,8 @@ extension LibraryWindowController: NSMenuItemValidation {
             return library.access == .authorized
         case #selector(phWriteJournal(_:)):
             return library.hasLoaded
+        case #selector(phWriteNote(_:)):
+            return targetIDs.count == 1 && library.access == .authorized
         case #selector(phShowBook(_:)):
             menuItem.state = isShowingBook ? .on : .off
             return currentAlbum != nil
@@ -128,6 +130,17 @@ extension LibraryWindowController: NSMenuItemValidation {
     }
 
     @objc func phChangeDate(_ sender: Any?) { showChangeDate(for: targetIDs) }
+
+    /// Writes on the back of the chosen photo, turning it over in the grid to do it.
+    @objc func phWriteNote(_ sender: Any?) {
+        guard targetIDs.count == 1, let id = targetIDs.first else { return }
+        if state.viewerID == nil, shownGrid, let cell = grid.cellView(for: id) {
+            grid.turnOver(id)
+            writeNote(for: id, anchor: cell)
+        } else {
+            writeNote(for: id, anchor: nil)
+        }
+    }
 
     @objc func phToggleLabel(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID ?? labelForShortcut(sender.tag) else { return }

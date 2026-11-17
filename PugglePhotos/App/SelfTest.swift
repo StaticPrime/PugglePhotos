@@ -126,9 +126,9 @@ enum SelfTest {
                   "the timeline takes drops on days and between photos")
             check(window.sidebar.calendar.counts[CivilDay(year: 2019, month: 7, day: 4)] == 12, "the calendar counts each day's photos")
         }
-        step { wait(upTo: 4) { window.grid.collectionView.visibleItems().contains { ($0 as? PhotoCell)?.view.layer?.sublayers?.first?.contents != nil } } }
+        step { wait(upTo: 4) { window.grid.collectionView.visibleItems().contains { ($0 as? PhotoCell)?.hasPicture == true } } }
         step {
-            let loaded = window.grid.collectionView.visibleItems().filter { ($0 as? PhotoCell)?.view.layer?.sublayers?.first?.contents != nil }
+            let loaded = window.grid.collectionView.visibleItems().filter { ($0 as? PhotoCell)?.hasPicture == true }
             check(!loaded.isEmpty, "thumbnails load", "\(loaded.count) of \(window.grid.collectionView.visibleItems().count)")
         }
 
@@ -479,6 +479,7 @@ enum SelfTest {
         accessibilitySteps(app, window: window)
         speedSteps(app, window: window)
         filmstripSteps(app, window: window)
+        backSteps(app, window: window)
 
         // MARK: Saving
         step { wait(upTo: 3) { (try? DebugLaunchOptions.sampleStore?.load()) == catalog } }

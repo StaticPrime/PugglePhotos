@@ -138,6 +138,13 @@ enum DebugLaunchOptions {
             controller.setSelection(ids)
             controller.reveal(ids)
             if defaults.bool(forKey: "PHViewer"), let first = ids.first { controller.openViewer(first) }
+            // `-PHTurnOver YES` turns the first selected photo over in the grid; `-PHWriteNote YES` writes on its back.
+            if defaults.bool(forKey: "PHTurnOver"), let first = ids.first {
+                DispatchQueue.main.async {
+                    controller.grid.turnOver(first, animated: false)
+                    if defaults.bool(forKey: "PHWriteNote") { controller.phWriteNote(nil) }
+                }
+            }
         }
         switch defaults.string(forKey: "PHRedate") {
         case "day":

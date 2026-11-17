@@ -12,7 +12,7 @@ struct CellBadges: Equatable {
 }
 
 /// One thumbnail in the grid: the photo cropped to a square, with small badges for favorites, videos, labels and
-/// notes, and a pink ring when selected.
+/// notes, and a pink ring when selected. Turned over, it shows the photo's back.
 final class PhotoCell: NSCollectionViewItem {
     static let identifier = NSUserInterfaceItemIdentifier("PhotoCell")
 
@@ -38,7 +38,16 @@ final class PhotoCell: NSCollectionViewItem {
         request = nil
         photoID = nil
         cellView.image = nil
+        cellView.turnOver(false, back: nil, animated: false)
     }
+
+    var isTurnedOver: Bool { cellView.isTurnedOver }
+
+    /// Whether the photo's picture has arrived.
+    var hasPicture: Bool { cellView.image != nil }
+
+    /// Shows the photo's back (drawn by `back`), or its front.
+    func turnOver(_ over: Bool, back: CGImage?, animated: Bool) { cellView.turnOver(over, back: back, animated: animated) }
 
     /// Shows a photo: `title` is its tooltip, `spoken` what VoiceOver says for it.
     func configure(_ id: PhotoID, badges: CellBadges, title: String, spoken: String, thumbnails: ThumbnailCache, side: CGFloat,
@@ -66,6 +75,11 @@ final class PhotoCell: NSCollectionViewItem {
 }
 
 final class PhotoCellView: NSView {
+    /// The photo's two sides, which turn over together in depth.
+    private let stage = CALayer()
+    private let card = CATransformLayer()
+    private let backLayer = CALayer()
+    private(set) var isTurnedOver = false
     private let imageLayer = CALayer()
     private let selectionLayer = CALayer()
     private let shadeLayer = CAGradientLayer()
@@ -97,7 +111,15 @@ final class PhotoCellView: NSView {
         imageLayer.masksToBounds = true
         imageLayer.cornerRadius = 4
         imageLayer.backgroundColor = Theme.placeholder.cgColor
-        layer?.addSublayer(imageLayer)
+        imageLayer.isDoubleSided = false
+        backLayer.masksToBounds = true
+        backLayer.cornerRadius = 4
+        backLayer.isDoubleSided = false
+        backLayer.transform = CATransform3DMakeRotation(.pi, 0, 1, 0)
+        card.addSublayer(imageLayer)
+        card.addSublayer(backLayer)
+        stage.addSublayer(card)
+        layer?.addSublayer(stage)
         shadeLayer.colors = [NSColor.black.withAlphaComponent(0).cgColor, NSColor.black.withAlphaComponent(0.45).cgColor]
         shadeLayer.cornerRadius = 4
         shadeLayer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -156,7 +178,14 @@ final class PhotoCellView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        imageLayer.frame = bounds
+        stage.frame = bounds
+        var perspective = CATransform3DIdentity
+        perspective.m34 = -1 / max(bounds.width * 2.6, 200)
+        stage.sublayerTransform = perspective
+        for side in [card, imageLayer, backLayer] {
+            side.bounds = CGRect(origin: .zero, size: bounds.size)
+            side.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        }
         selectionLayer.frame = bounds.insetBy(dx: -3, dy: -3)
         let shadeHeight = min(34, bounds.height * 0.4)
         shadeLayer.frame = NSRect(x: 0, y: bounds.height - shadeHeight, width: bounds.width, height: shadeHeight)
@@ -180,7 +209,51 @@ final class PhotoCellView: NSView {
         setAccessibilitySelected(isSelected)
     }
 
+    /// Turns the photo over to show its back, or back again: in depth, or with Reduce Motion, a quick fade. The
+    /// badges go while the back shows.
+    func turnOver(_ over: Bool, back: CGImage?, animated: Bool) {
+        if let back {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            backLayer.contents = back
+            CATransaction.commit()
+        }
+        guard over != isTurnedOver else { return }
+        isTurnedOver = over
+        let turned = over ? CATransform3DMakeRotation(.pi, 0, 1, 0) : CATransform3DIdentity
+        if animated, !Motion.isReduced {
+            let turn = CABasicAnimation(keyPath: "transform")
+            turn.fromValue = card.presentation()?.transform ?? card.transform
+            turn.toValue = turned
+            turn.duration = 0.45
+            turn.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0, 0.2, 1)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            card.transform = turned
+            CATransaction.commit()
+            card.add(turn, forKey: "turn")
+        } else {
+            if animated {
+                let fade = CATransition()
+                fade.type = .fade
+                fade.duration = 0.25
+                stage.add(fade, forKey: "fade")
+            }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            card.transform = turned
+            CATransaction.commit()
+        }
+        updateBadges()
+        setAccessibilityValue(over ? "Turned over" : nil)
+    }
+
     private func updateBadges() {
+        guard !isTurnedOver else {
+            for view in [favoriteView, durationField, kindView, noteView, labelStack] as [NSView] { view.isHidden = true }
+            shadeLayer.isHidden = true
+            return
+        }
         favoriteView.isHidden = !badges.isFavorite
         durationField.isHidden = !badges.isVideo
         durationField.stringValue = Formatting.duration(badges.duration)
