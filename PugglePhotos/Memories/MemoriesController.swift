@@ -38,6 +38,10 @@ final class MemoriesController {
     private(set) var today: CivilDay
     /// When there's nothing today: the next day that has memories, within two months.
     private(set) var nextDay: CivilDay?
+    /// True while the memories are being looked for, away from the main thread.
+    private(set) var isFinding = false
+    /// Counts the searches, so one that finishes after a newer one began is thrown away.
+    @ObservationIgnored private var generation = 0
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var refreshWork: DispatchWorkItem?
     @ObservationIgnored private var notifyWork: DispatchWorkItem?
@@ -79,16 +83,34 @@ final class MemoriesController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
-    /// Finds the memories again and brings the notifications up to date.
+    /// Finds the memories again, away from the main thread so a big library doesn't stall the window, then brings
+    /// the notifications up to date.
     func refresh() {
         refreshWork?.cancel()
         today = CivilDay(clock(), in: library.formatting.timeZone)
         guard library.hasLoaded else { return }
         let finder = finder
-        page = finder.page()
-        nextDay = page.onThisDay.isEmpty ? (1...62).lazy.map { self.today.adding(days: $0) }.first { !finder.photosOnThisDay($0).isEmpty } : nil
-        NotificationCenter.default.post(name: .memoriesDidChange, object: self)
-        scheduleNotifications()
+        generation += 1
+        let search = generation
+        isFinding = true
+        Task {
+            let (page, nextDay) = await Self.find(with: finder)
+            guard search == generation else { return }
+            self.page = page
+            self.nextDay = nextDay
+            isFinding = false
+            NotificationCenter.default.post(name: .memoriesDidChange, object: self)
+            scheduleNotifications()
+        }
+    }
+
+    /// The Memories page, and when there's nothing today, the next day with memories.
+    @concurrent
+    private nonisolated static func find(with finder: MemoryFinder) async -> (MemoriesPage, CivilDay?) {
+        let page = finder.page()
+        let next = page.onThisDay.isEmpty
+            ? (1...62).lazy.map { finder.today.adding(days: $0) }.first { !finder.photosOnThisDay($0).isEmpty } : nil
+        return (page, next)
     }
 
     /// A memory by its ID: one on the page, or this day in another year's memories (from a notification).

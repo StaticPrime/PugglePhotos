@@ -518,6 +518,14 @@ final class ThumbnailCache {
         }
     }
 
+    /// Gets thumbnails ready ahead, at the size `request` would ask for: these photos start, those stop.
+    func prefetch(start: [PhotoID], stop: [PhotoID], pixels: CGFloat) {
+        let side = Self.bucket(pixels)
+        source.prefetchThumbnails(start: start, stop: stop, pixels: CGSize(width: side, height: side))
+    }
+
+    func stopPrefetching() { source.stopPrefetching() }
+
     func removeAll() { cache.removeAllObjects() }
 
     private func key(_ id: PhotoID, _ side: CGFloat) -> NSString { "\(id.rawValue)|\(Int(side))" as NSString }

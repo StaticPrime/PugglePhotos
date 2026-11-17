@@ -132,12 +132,8 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
             completion(nil, true)
             return nil
         }
-        let options = PHImageRequestOptions()
-        options.deliveryMode = .opportunistic
-        options.resizeMode = fit ? .exact : .fast
-        options.isNetworkAccessAllowed = true
         let requestID = manager.requestImage(for: asset, targetSize: pixels, contentMode: fit ? .aspectFit : .aspectFill,
-                                             options: options) { @Sendable image, info in
+                                             options: Self.imageOptions(fit: fit)) { @Sendable image, info in
             let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
             let cancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
             guard !cancelled else { return }
@@ -147,6 +143,24 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
         let manager = manager
         return ImageRequest { manager.cancelImageRequest(requestID) }
     }
+
+    /// How images are asked for. Thumbnails got ready ahead must be asked for the same way to be found ready.
+    private static func imageOptions(fit: Bool) -> PHImageRequestOptions {
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .opportunistic
+        options.resizeMode = fit ? .exact : .fast
+        options.isNetworkAccessAllowed = true
+        return options
+    }
+
+    func prefetchThumbnails(start: [PhotoID], stop: [PhotoID], pixels: CGSize) {
+        let options = Self.imageOptions(fit: false)
+        let stopping = stop.compactMap { assets[$0] }, starting = start.compactMap { assets[$0] }
+        if !stopping.isEmpty { manager.stopCachingImages(for: stopping, targetSize: pixels, contentMode: .aspectFill, options: options) }
+        if !starting.isEmpty { manager.startCachingImages(for: starting, targetSize: pixels, contentMode: .aspectFill, options: options) }
+    }
+
+    func stopPrefetching() { manager.stopCachingImagesForAllAssets() }
 
     func requestPlayerItem(_ id: PhotoID, completion: @escaping @MainActor (AVPlayerItem?) -> Void) {
         guard let asset = assets[id], asset.mediaType == .video else {

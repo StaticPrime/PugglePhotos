@@ -13,6 +13,10 @@ extension SelfTest {
         // MARK: Memories
         step {
             memories.refresh()
+            check(memories.isFinding, "memories are found away from the main thread")
+            wait { !memories.isFinding }
+        }
+        step {
             check(page.onThisDay.map(\.title) == ["1 Year Ago Today", "2 Years Ago Today", "3 Years Ago Today", "This Day Through the Years"],
                   "this day in each earlier year is a memory", "\(page.onThisDay.map(\.title))")
             check(page.onThisDay.first?.items.count == 4, "a memory holds that day's photos")

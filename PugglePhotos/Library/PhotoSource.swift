@@ -63,6 +63,11 @@ protocol PhotoSource: AnyObject {
     @discardableResult
     func requestImage(_ id: PhotoID, pixels: CGSize, fit: Bool,
                       completion: @escaping @MainActor (CGImage?, _ isFinal: Bool) -> Void) -> ImageRequest?
+    /// Starts getting square thumbnails `pixels` big ready for some photos before they're asked for, and stops for
+    /// others no longer near the screen.
+    func prefetchThumbnails(start: [PhotoID], stop: [PhotoID], pixels: CGSize)
+    /// Stops getting any thumbnails ready ahead.
+    func stopPrefetching()
     /// Something to play, for a video.
     func requestPlayerItem(_ id: PhotoID, completion: @escaping @MainActor (AVPlayerItem?) -> Void)
     /// Original file names, which take a while to read for a big library.
@@ -79,4 +84,10 @@ protocol PhotoSource: AnyObject {
     func updateAlbum(_ id: String, title: String, items: [PhotoID], completion: @escaping @MainActor (Error?) -> Void)
     /// Deletes a library album. The photos in it stay in the library.
     func deleteAlbum(_ id: String, completion: @escaping @MainActor (Error?) -> Void)
+}
+
+extension PhotoSource {
+    /// Sources that make pictures quickly don't need to work ahead.
+    func prefetchThumbnails(start: [PhotoID], stop: [PhotoID], pixels: CGSize) {}
+    func stopPrefetching() {}
 }

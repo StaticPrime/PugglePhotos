@@ -91,6 +91,9 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
         collectionView.setAccessibilityLabel("Photos")
         scrollView = NSScrollView()
         scrollView.documentView = collectionView
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(scrolled(_:)), name: NSView.boundsDidChangeNotification,
+                                               object: scrollView.contentView)
         scrollView.hasVerticalScroller = true
         scrollView.automaticallyAdjustsContentInsets = true
         scrollView.drawsBackground = true
@@ -116,6 +119,41 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
         collectionView.selectionIndexPaths = content.indexPaths(of: Set(selection))
         isUpdatingSelection = false
         if let anchor { scroll(to: anchor, animated: false) } else if !keepPosition { scrollToStart() }
+        resetPrefetch()
+        DispatchQueue.main.async { [weak self] in self?.updatePrefetch() }
+    }
+
+    // MARK: Getting thumbnails ready ahead
+
+    /// The photos whose thumbnails are being got ready, and where the view was when they were chosen.
+    private(set) var prefetched: Set<PhotoID> = []
+    private var prefetchedRect = NSRect.zero
+    private var prefetchedPixels: CGFloat = 0
+
+    @objc private func scrolled(_ note: Notification) { updatePrefetch() }
+
+    /// Gets thumbnails ready a screen above and below what's showing, checked again each third of a screen scrolled.
+    func updatePrefetch() {
+        guard let library = delegate?.library, view.window != nil else { return }
+        let visible = collectionView.visibleRect
+        guard visible.height > 0 else { return }
+        let pixels = layout.side * (view.window?.backingScaleFactor ?? 2)
+        if pixels == prefetchedPixels, abs(visible.midY - prefetchedRect.midY) < visible.height / 3 { return }
+        if pixels != prefetchedPixels { resetPrefetch() }
+        let band = visible.insetBy(dx: 0, dy: -visible.height)
+        let ids = Set(layout.layoutAttributesForElements(in: band).filter { $0.representedElementCategory == .item }
+            .compactMap { $0.indexPath.flatMap(content.id(at:)) })
+        library.thumbnails.prefetch(start: Array(ids.subtracting(prefetched)), stop: Array(prefetched.subtracting(ids)), pixels: pixels)
+        prefetched = ids
+        prefetchedRect = visible
+        prefetchedPixels = pixels
+    }
+
+    private func resetPrefetch() {
+        if !prefetched.isEmpty { delegate?.library.thumbnails.stopPrefetching() }
+        prefetched = []
+        prefetchedRect = .zero
+        prefetchedPixels = 0
     }
 
     /// Redraws the visible thumbnails' badges and the headings without reloading.

@@ -26,7 +26,12 @@ struct MemoriesView: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
-                if page.onThisDay.isEmpty {
+                if page.onThisDay.isEmpty, memories.isFinding {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                        .accessibilityLabel("Looking for memories")
+                } else if page.onThisDay.isEmpty {
                     NothingTodayCard(nextDay: memories.nextDay, today: memories.today, formatting: formatting)
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 640), spacing: 18)], spacing: 18) {
