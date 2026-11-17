@@ -10,7 +10,7 @@ PugglePhotos is a photo album for the Mac that works with the photos and videos 
 - Drag photos onto a day, or between two photos, to fix all their dates at once
 - Gallery, list and album covers, grouped and sorted your way
 
-PugglePhotos reads your Photos library where it is: nothing is copied or moved. Albums, labels, captions and notes are kept on your Mac, and dates and favorites are saved to your Photos library so they're right everywhere you see your photos.
+PugglePhotos reads your Photos library where it is: nothing is copied or moved. Albums are kept in step with your Photos library, and so are dates and favorites, so they're right everywhere you see your photos. Labels, captions and notes stay on your Mac.
 
 PugglePhotos is free, needs no account and has no tracking. It runs in the macOS app sandbox with no permission to use the network, on macOS 14 Sonoma or later. It's written in Swift with AppKit and SwiftUI, and is part of the PuggleSoft family with [PuggleDocs](https://github.com/StaticPrime/PuggleDocs), [PuggleSheets](https://github.com/StaticPrime/PuggleSheets) and [PuggleSlides](https://github.com/StaticPrime/PuggleSlides).
 
@@ -18,7 +18,7 @@ PugglePhotos is free, needs no account and has no tracking. It runs in the macOS
 
 ### Browsing
 
-- **The window.** The sidebar on the left (your library, albums, labels and the Photos library's own albums, with a calendar underneath), your photos in the middle and the info panel on the right (View ▸ Show Info, ⌘I). The toolbar has Back, gallery or list, a thumbnail size slider, grouping and sorting, the favorite heart and search. Light and Dark Mode both work.
+- **The window.** The sidebar on the left (your library, albums and labels, with a calendar underneath), your photos in the middle and the info panel on the right (View ▸ Show Info, ⌘I). The toolbar has Back, gallery or list, a thumbnail size slider, grouping and sorting, the favorite heart and search. Light and Dark Mode both work.
 - **The timeline.** Library shows every photo and video under the day it was taken ("Today", "Yesterday", "Saturday, June 14, 2025"), oldest first, opening on the newest. Each day's heading stays at the top while its photos scroll by, and counts what's under it; click a heading to select that day's photos. Go ▸ Today (⌘T) jumps to the most recent day.
 - **Gallery, list and grouping.** View as a gallery of thumbnails (⌘1) or a list (⌘2) with each photo's title, date, kind, size, albums, labels and note. Group by day, month, year, album or label (a photo in two albums shows in both, and the ones in none come last), or not at all. Sort by date taken, date added, title or kind, either way round. Library, Favorites, Videos and Recently Added each remember their own choice, as do albums and labels. Click a list column's heading to sort by it. ⌘+ and ⌘− (or the slider) change the thumbnail size.
 - **The calendar.** A month in the sidebar, with every day that has photos tinted, more strongly the more there are. Click a day to go to it; click the month to jump to any month of any year with photos; scroll over it to turn the months. View ▸ Hide Calendar puts it away.
@@ -29,11 +29,11 @@ PugglePhotos is free, needs no account and has no tracking. It runs in the macOS
 ### Organizing
 
 - **Albums.** File ▸ New Album (⌘N), or New Album with Selection (⇧⌘N), names the album right in the sidebar. Add photos by dragging them onto an album in the sidebar or onto its cover, from the Photo ▸ Add to Album menu or from the info panel. A photo can be in any number of albums. An album opens with its title and story at the top, both editable where they are, with its dates and size. Show it oldest or newest first, or in its own order, and drag photos around to arrange them. Delete removes photos from the album (never from your library); Photo ▸ Make Album Cover picks its cover.
+- **Albums in step with your Photos library.** Every album is also an album in your Photos library. Make, rename, fill, arrange or delete one here and the same happens there; albums made or changed there, on this Mac or your other devices, show up here. Each change goes to the library as one change, and Undo puts it back in both places. An album's story and cover stay with PugglePhotos.
 - **All Albums.** Every album's cover as a little stack of prints, with its dates and size, sorted by name, date, date created or size. Double-click a cover to open the album, drop photos on it to add them, or click New Album.
 - **Labels.** Make labels with a name, a color and an emoji ("😂 Funny", "🐶 Pets"). Put them on photos from the info panel or the Photo ▸ Labels menu, by dropping photos on a label in the sidebar or on a label's heading, or with ⌃1 to ⌃9 for the first nine. A label in the sidebar shows every photo that has it, by month.
 - **Captions and notes.** Give any photo a caption, its title in lists and the viewer, and a note for the story behind it, right in the info panel. Albums have a story of their own.
 - **Favorites.** Press period (.), click the heart in the toolbar or the info panel, or drop photos on Favorites. Favorites are the same ones as in your Photos library.
-- **Photos albums.** The albums in your Photos library show under "In Photos", as they are there. Right-click one and choose Copy to My Albums to make it a PugglePhotos album you can arrange, describe and add to.
 - **Several at once.** Select several photos and the info panel shows how many there are and their dates, with every label marked on all, some or none of them, and buttons to favorite them, add them to an album or change their dates together.
 - **Undo** (⌘Z) and **Redo** (⇧⌘Z) for every change, named for what they undo.
 
@@ -48,8 +48,8 @@ Scanned prints dated the day they were scanned, a camera with its clock set wron
 
 ### Your library and your privacy
 
-- The first time it opens, PugglePhotos asks for permission to use your Photos library. It reads photos where they are and never copies, moves or deletes them; it changes only what you ask it to change, a photo's date or whether it's a favorite.
-- Albums, labels, captions and notes are saved on your Mac in the app's own folder (`~/Library/Containers/com.pugglesoft.PugglePhotos/Data/Library/Application Support/PugglePhotos`), with a copy from each of the last 14 days kept in `Backups` next to it. A file that can't be read is set aside, never overwritten.
+- The first time it opens, PugglePhotos asks for permission to use your Photos library. It reads photos where they are and never copies, moves or deletes them; it changes only what you ask it to: a photo's date, whether it's a favorite, and your albums.
+- Labels, captions, notes and album stories are saved on your Mac in the app's own folder (`~/Library/Containers/com.pugglesoft.PugglePhotos/Data/Library/Application Support/PugglePhotos`), with a copy from each of the last 14 days kept in `Backups` next to it. A file that can't be read is set aside, never overwritten.
 - PugglePhotos has no permission to use the network and sends nothing anywhere.
 
 Help ▸ Keyboard Shortcuts (⌘/) lists every keyboard shortcut.
@@ -57,7 +57,8 @@ Help ▸ Keyboard Shortcuts (⌘/) lists every keyboard shortcut.
 ## Known limits
 
 - macOS may ask you to confirm when PugglePhotos changes dates or favorites in your Photos library; PugglePhotos sends each batch as one change, so you're asked at most once per drop.
-- Albums, labels, captions and notes are PugglePhotos' own: they don't show in other apps, and albums kept by the Photos library can be copied in but not changed. They follow photos by the library's identifiers for them, so they stay with the library on this Mac; switching to a different Photos library leaves them behind.
+- Labels, captions, notes, album stories and covers are PugglePhotos' own and don't show in other apps. They follow photos by the library's identifiers for them, so they stay with the library on this Mac; switching to a different Photos library leaves them behind.
+- Albums in folders in the Photos library show as albums of their own, and new albums are made outside any folder. Smart albums and shared albums aren't shown.
 - Times are shown in the Mac's current time zone.
 - Places are shown as coordinates, not place names. Live photos show as still photos, and hidden photos and shared albums aren't shown.
 - On a large library, file names arrive a little after the photos, so sorting by title settles once they have.
@@ -113,19 +114,19 @@ To sign and notarize releases, add these secrets under the repository's Settings
 
 ## Tests
 
-The catalog of albums, labels, captions and notes, the date arithmetic behind moving photos in time, sorting, grouping, search and saving live in a Swift package with 50 unit tests:
+The catalog of albums, labels, captions and notes, the date arithmetic behind moving photos in time, sorting, grouping, search and saving live in a Swift package with 54 unit tests:
 
 ```sh
 cd Packages/PugglePhotosKit && swift test
 ```
 
-Debug builds also include an end-to-end check that drives a real window on a made-up sample library (never the real Photos library or catalog) and prints `SELFTEST PASS/FAIL` lines. It covers the timeline and its headings, the calendar, thumbnails, selecting, favorites and their undo, a refused change, albums (making, naming, adding by dropping, removing with Delete, covers, arranging by dragging, banners, covers sorted every way, copying a Photos album), labels and their shortcuts, captions, notes, search, moving photos to a day, between two photos and onto the calendar (with undo and redo, the question asked first and Change Date and Time), grouping and sorting, the list, the size slider, the viewer and its keys, videos, and saving:
+Debug builds also include an end-to-end check that drives a real window on a made-up sample library (never the real Photos library or catalog) and prints `SELFTEST PASS/FAIL` lines. It covers the timeline and its headings, the calendar, thumbnails, selecting, favorites and their undo, a refused change, albums (making, naming, adding by dropping, removing with Delete, covers, arranging by dragging, banners, covers sorted every way, and every change reaching the album's twin in the Photos library, changes made there arriving here, deleting and undeleting, and a refused change), labels and their shortcuts, captions, notes, search, moving photos to a day, between two photos and onto the calendar (with undo and redo, the question asked first and Change Date and Time), grouping and sorting, the list, the size slider, the viewer and its keys, videos, and saving:
 
 ```sh
 build/DerivedData/Build/Products/Debug/PugglePhotos.app/Contents/MacOS/PugglePhotos -PHSelfTest YES
 ```
 
-Other debug launch arguments: `-PHSampleLibrary YES` uses the sample library: about 120 illustrated photos over seven years (a lake, the beach, birthdays, snow days, a pug named Waffles), a few videos, screenshots, a batch of scanned prints all dated the day they were scanned, and photos from this day in past years, with albums, labels, captions and notes to match. `-PHToday 2026-11-17` fixes the day it treats as today. `-PHSnapshot name.png` saves a screenshot of the window (or the About or Settings window, or an open sheet or question) to the app's temporary folder and quits, always on the sample library. Combine it with `-PHWindowWidth`, `-PHWindowHeight`, `-PHInspector YES`, `-PHDark YES`, `-PHSource favorites` (or `videos`, `recent`, `albums`, `album:2`, `label:1`, `photos:1`), `-PHViewMode list`, `-PHGrouping month`, `-PHSort title`, `-PHDescending YES`, `-PHZoom 220`, `-PHSearch lake`, `-PHSelect 3,4,5`, `-PHViewer YES`, `-PHCalendar 2019-07`, `-PHRedate day` (or `between`), `-PHOpenSheet changeDate` (or `shortcuts`, `newLabel`), `-PHAccess ask` (or `denied`), `-PHShowAbout YES` or `-PHSettings YES`. `-PHBenchmark YES` adds 60,000 sample photos and times grouping, sorting, searching and laying out the grid.
+Other debug launch arguments: `-PHSampleLibrary YES` uses the sample library: about 120 illustrated photos over seven years (a lake, the beach, birthdays, snow days, a pug named Waffles), a few videos, screenshots, a batch of scanned prints all dated the day they were scanned, and photos from this day in past years, with albums, labels, captions and notes to match. `-PHToday 2026-11-17` fixes the day it treats as today. `-PHSnapshot name.png` saves a screenshot of the window (or the About or Settings window, or an open sheet or question) to the app's temporary folder and quits, always on the sample library. Combine it with `-PHWindowWidth`, `-PHWindowHeight`, `-PHInspector YES`, `-PHDark YES`, `-PHSource favorites` (or `videos`, `recent`, `albums`, `album:2`, `label:1`), `-PHViewMode list`, `-PHGrouping month`, `-PHSort title`, `-PHDescending YES`, `-PHZoom 220`, `-PHSearch lake`, `-PHSelect 3,4,5`, `-PHViewer YES`, `-PHCalendar 2019-07`, `-PHRedate day` (or `between`), `-PHOpenSheet changeDate` (or `shortcuts`, `newLabel`), `-PHAccess ask` (or `denied`), `-PHShowAbout YES` or `-PHSettings YES`. `-PHBenchmark YES` adds 60,000 sample photos and times grouping, sorting, searching and laying out the grid.
 
 ## Project layout
 
@@ -152,6 +153,7 @@ Tools/release.sh             Releases the next version (see Releasing a new vers
 
 - **The photos** stay in the Photos library. PugglePhotos reads every item's date, size, kind and favorite through PhotoKit off the main thread, asks for thumbnails at the size each view shows them (and keeps them in memory by size), and follows changes made elsewhere as they happen.
 - **The catalog** is everything made in PugglePhotos: albums with their photos in order, labels, captions and notes, all referring to photos by the library's identifiers. It's one small JSON file, written whole and atomically half a second after each change.
+- **Albums are mirrored.** Each album is linked to its twin in the Photos library, which decides the album's title and photos whenever the two differ: each time the library changes, its albums are read again and new, changed and deleted ones are taken in. A change made in PugglePhotos shows at once and goes to the twin as one change, which compares first so only what differs is changed; changes made while one is on its way follow it together. If the library refuses, it keeps its version and so does PugglePhotos.
 - **Days** are worked out once per item as plain day numbers, so grouping a large library by day, month or year is arithmetic rather than calendar lookups. The grid's layout places thumbnails by arithmetic too, section by section, and asks only for what's on screen, which keeps scrolling smooth with tens of thousands of photos.
 - **Moving photos in time** works out every new date first, keeping the photos in the order they had, then sends the whole batch to the Photos library as one change. Undo sends the old dates back the same way.
 - **Edits** to the catalog go through one method that keeps the catalog as it was, so undo and redo restore exactly what was there. Changes to the Photos library register their undo at once and write the old values back when undone.

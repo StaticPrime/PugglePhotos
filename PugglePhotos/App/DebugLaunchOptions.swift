@@ -72,7 +72,7 @@ enum DebugLaunchOptions {
         }
     }
 
-    /// `-PHSource library|favorites|videos|recent|albums|album:N|label:N|photos:N` picks the place;
+    /// `-PHSource library|favorites|videos|recent|albums|album:N|label:N` picks the place;
     /// `-PHViewMode list`, `-PHGrouping month`, `-PHSort title`, `-PHDescending YES`, `-PHZoom 220` and
     /// `-PHSearch text` set how it shows; `-PHSelect 3` (or `3,4,5`) selects photos by position;
     /// `-PHViewer YES` opens the first selected; `-PHCalendar 2019-07` turns the calendar;
@@ -94,9 +94,6 @@ enum DebugLaunchOptions {
             case "label":
                 let labels = library.catalog.labels
                 if labels.indices.contains(index - 1) { controller.go(to: .label(labels[index - 1].id)) }
-            case "photos":
-                let albums = library.photosAlbums
-                if albums.indices.contains(index - 1) { controller.go(to: .photosAlbum(albums[index - 1].id)) }
             default: break
             }
         }

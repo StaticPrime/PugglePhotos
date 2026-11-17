@@ -50,7 +50,6 @@ struct Fixture {
         #expect(arranger.ids(for: .videos) == ["p2"])
         #expect(arranger.ids(for: .album(fixture.lake)) == ["p3", "p1"])
         #expect(arranger.ids(for: .label(fixture.family)) == ["p1", "p4"])
-        #expect(arranger.ids(for: .photosAlbum("x"), photosAlbum: ["p5", "gone", "p2"]) == ["p5", "p2"])
         #expect(arranger.ids(for: .recentlyAdded, recent: ["p4"]) == ["p4"])
         #expect(arranger.ids(for: .allAlbums).isEmpty)
     }

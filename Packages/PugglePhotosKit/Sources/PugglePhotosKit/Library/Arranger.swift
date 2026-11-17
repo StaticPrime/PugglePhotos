@@ -10,8 +10,6 @@ public enum LibrarySource: Hashable, Codable, Sendable {
     case allAlbums
     case album(UUID)
     case label(UUID)
-    /// An album kept by the Photos library itself, shown as it is there.
-    case photosAlbum(String)
 }
 
 /// How photos are grouped into sections.
@@ -145,9 +143,9 @@ public struct Arranger: Sendable {
 
     // MARK: Which photos
 
-    /// The photos a place in the sidebar holds, in date order (an album in its own order). `recent` and
-    /// `photosAlbum` come from the library when it keeps those lists itself.
-    public func ids(for source: LibrarySource, recent: [PhotoID] = [], photosAlbum: [PhotoID] = []) -> [PhotoID] {
+    /// The photos a place in the sidebar holds, in date order (an album in its own order). `recent` comes from the
+    /// library when it keeps that list itself.
+    public func ids(for source: LibrarySource, recent: [PhotoID] = []) -> [PhotoID] {
         switch source {
         case .library:
             return snapshot.allIDs
@@ -169,8 +167,6 @@ public struct Arranger: Sendable {
         case let .label(id):
             return membership.photos(labeled: id).filter(snapshot.contains)
                 .sorted { (snapshot.position(of: $0) ?? 0) < (snapshot.position(of: $1) ?? 0) }
-        case .photosAlbum:
-            return photosAlbum.filter(snapshot.contains)
         }
     }
 

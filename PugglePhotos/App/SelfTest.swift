@@ -109,9 +109,9 @@ enum SelfTest {
         step { wait { library.hasLoaded } }
         step {
             check(snapshot.count >= 120, "the sample library loads", "\(snapshot.count) items")
-            check(catalog.albums.count == 7 && catalog.labels.count == 5, "the sample albums and labels load",
+            check(catalog.albums.count == 9 && catalog.labels.count == 5, "the sample albums and labels load",
                   "\(catalog.albums.count) albums, \(catalog.labels.count) labels")
-            check(window.sidebar.outlineView.numberOfRows >= 18, "the sidebar lists the library, albums, labels and Photos albums",
+            check(window.sidebar.outlineView.numberOfRows >= 20, "the sidebar lists the library, albums and labels",
                   "\(window.sidebar.outlineView.numberOfRows) rows")
             let first = window.content.sections.first
             check(first?.key == .day(CivilDay(year: 2019, month: 7, day: 4)), "the timeline starts with the oldest day",
@@ -158,30 +158,43 @@ enum SelfTest {
             if let sheet = nsWindow.attachedSheet { nsWindow.endSheet(sheet) }
         }
 
-        // MARK: Albums
+        // MARK: Albums, mirrored in the Photos library
+        func libraryAlbum(_ id: UUID) -> LibraryAlbum? {
+            guard let photosID = catalog.album(id)?.photosAlbumID else { return nil }
+            return source.albums.first { $0.id == photosID }
+        }
         var newAlbum: UUID?
         step {
+            let imported = catalog.albums.filter { ["Imported Photos", "Scanned Prints"].contains($0.title) }
+            check(imported.count == 2, "albums made in the Photos library arrive as albums", "\(imported.map(\.title))")
+            check(catalog.albums.allSatisfy { $0.photosAlbumID != nil }, "every album has its twin in the Photos library")
             window.setSelection(Array(lake.prefix(3)))
             window.phNewAlbumWithSelection(nil)
             newAlbum = catalog.albums.last?.id
-            check(catalog.albums.count == 8 && catalog.albums.last?.items == Array(lake.prefix(3)),
+            check(catalog.albums.count == 10 && catalog.albums.last?.items == Array(lake.prefix(3)),
                   "New Album with Selection makes an album of the selection")
             check(catalog.albums.last?.title == "Untitled Album", "a new album gets a fresh name", catalog.albums.last?.title ?? "")
+            wait { libraryAlbum(newAlbum!) != nil }
         }
         step {
+            check(libraryAlbum(newAlbum!)?.items == Array(lake.prefix(3)), "a new album is made in the Photos library too")
             // Finish the name the sidebar offered to edit, then rename it.
             nsWindow.makeFirstResponder(window.grid.collectionView)
-            library.edit("Rename Album") { $0.renameAlbum(newAlbum!, to: "Dock Day") }
+            library.renameAlbum(newAlbum!, to: "Dock Day")
             check(catalog.album(newAlbum!)?.title == "Dock Day", "albums can be renamed")
+            wait { libraryAlbum(newAlbum!)?.title == "Dock Day" }
         }
         step {
+            check(libraryAlbum(newAlbum!)?.title == "Dock Day", "renaming renames the album in the Photos library")
             check(window.sidebarDrop(Array(lake[2...5]), on: .album(newAlbum!)), "photos can be dropped on an album in the sidebar")
             check(catalog.album(newAlbum!)?.items == Array(lake.prefix(6)), "dropping adds only photos not already there",
                   "\(catalog.album(newAlbum!)?.items.count ?? 0)")
             let membership = library.membership.albums(containing: lake[2])
             check(membership.count == 2, "a photo can be in more than one album", "\(membership.count)")
+            wait { libraryAlbum(newAlbum!)?.items.count == 6 }
         }
         step {
+            check(libraryAlbum(newAlbum!)?.items == Array(lake.prefix(6)), "added photos join the album in the Photos library")
             window.go(to: .album(newAlbum!))
             check(window.content.album?.id == newAlbum && window.content.allIDs == Array(lake.prefix(6)),
                   "an album shows its photos with its banner", "\(window.content.allIDs.count)")
@@ -189,8 +202,10 @@ enum SelfTest {
             window.grid.select([lake[5]])
             key(51, "\u{7F}", to: window.grid.collectionView, window: nsWindow)
             check(catalog.album(newAlbum!)?.items.count == 5 && snapshot.contains(lake[5]), "Delete removes from the album, not the library")
+            wait { libraryAlbum(newAlbum!)?.items.count == 5 }
         }
         step {
+            check(libraryAlbum(newAlbum!)?.items == Array(lake.prefix(5)), "removed photos leave the album in the Photos library")
             window.setSelection([lake[3]])
             window.phMakeCover(nil)
             check(library.arranger.cover(of: catalog.album(newAlbum!)!) == lake[3], "Make Album Cover sets the cover")
@@ -204,18 +219,33 @@ enum SelfTest {
             check(accepted && catalog.album(newAlbum!)?.items.first == lake[3], "dragging within an album in its own order moves the photo",
                   "\(catalog.album(newAlbum!)?.items ?? [])")
             check(date(lake[3]) < date(lake[4]), "moving within an album leaves dates alone")
+            wait { libraryAlbum(newAlbum!)?.items.first == lake[3] }
+        }
+        step {
+            check(libraryAlbum(newAlbum!)?.items == catalog.album(newAlbum!)?.items, "the new order reaches the Photos library")
+            undo.undo()
+            check(catalog.album(newAlbum!)?.items.first == lake[0], "undo puts the album's order back")
+            wait { libraryAlbum(newAlbum!)?.items.first == lake[0] }
+        }
+        step {
+            check(libraryAlbum(newAlbum!)?.items.first == lake[0], "undo puts the order back in the Photos library too")
+            window.browserRenameAlbum("Dock Day, Again")
+            check(catalog.album(newAlbum!)?.title == "Dock Day, Again", "the album banner renames the album")
+        }
+        step {
+            window.browserSetAlbumNote("Cannonballs all afternoon.")
+            check(catalog.album(newAlbum!)?.note == "Cannonballs all afternoon.", "the album banner keeps its story")
         }
         step {
             undo.undo()
-            check(catalog.album(newAlbum!)?.items.first == lake[0], "undo puts the album's order back")
-            window.browserRenameAlbum("Dock Day, Again")
-            window.browserSetAlbumNote("Cannonballs all afternoon.")
-            check(catalog.album(newAlbum!)?.title == "Dock Day, Again" && catalog.album(newAlbum!)?.note == "Cannonballs all afternoon.",
-                  "the album banner renames the album and keeps its story")
+            check(catalog.album(newAlbum!)?.note == "" && catalog.album(newAlbum!)?.title == "Dock Day, Again",
+                  "undoing the story leaves the album's name alone")
+            undo.redo()
+            check(catalog.album(newAlbum!)?.note == "Cannonballs all afternoon.", "redo puts the story back")
         }
         step {
             window.go(to: .allAlbums)
-            check(window.albums.summaries.count == 8 && window.albums.collectionView.numberOfItems(inSection: 0) == 9,
+            check(window.albums.summaries.count == 10 && window.albums.collectionView.numberOfItems(inSection: 0) == 11,
                   "All Albums shows every cover and a New Album card", "\(window.albums.summaries.count)")
             window.setAlbumSort(.name, ascending: true)
             check(window.albums.summaries.map(\.title) == window.albums.summaries.map(\.title).sorted { $0.localizedStandardCompare($1) == .orderedAscending },
@@ -226,14 +256,49 @@ enum SelfTest {
             check(window.albumsDrop([lake[11]], on: newAlbum!) && catalog.album(newAlbum!)!.items.contains(lake[11]),
                   "dropping photos on an album cover adds them")
         }
+        // Changes made to the albums in the Photos library show here.
+        var scansAlbum: Album?
         step {
-            let photosAlbum = library.photosAlbums.first { $0.title == "Scanned Prints" }!
-            let item = NSMenuItem()
-            item.representedObject = photosAlbum.id
-            window.phCopyPhotosAlbum(item)
-            check(catalog.albums.last?.title == "Scanned Prints" && catalog.albums.last?.items == photosAlbum.items,
-                  "a Photos album can be copied into my albums")
-            check(window.state.source == .album(catalog.albums.last!.id), "the copied album opens")
+            scansAlbum = catalog.albums.first { $0.title == "Scanned Prints" }
+            source.changeAlbumElsewhere(scansAlbum!.photosAlbumID!) { album in
+                album?.title = "Old Prints"
+                album?.items.append(lake[0])
+            }
+            wait { catalog.album(scansAlbum!.id)?.title == "Old Prints" }
+        }
+        step {
+            check(catalog.album(scansAlbum!.id)?.title == "Old Prints" && catalog.album(scansAlbum!.id)?.items.last == lake[0],
+                  "renaming and adding to an album in the Photos library shows here")
+            source.changeAlbumElsewhere(scansAlbum!.photosAlbumID!) { $0 = nil }
+            wait { catalog.album(scansAlbum!.id) == nil }
+        }
+        var deletedTwin = ""
+        step {
+            check(catalog.album(scansAlbum!.id) == nil, "an album deleted in the Photos library goes here too")
+            deletedTwin = catalog.album(newAlbum!)?.photosAlbumID ?? ""
+            library.deleteAlbum(newAlbum!)
+            check(catalog.album(newAlbum!) == nil, "albums can be deleted")
+            wait { !source.albums.contains { $0.id == deletedTwin } }
+        }
+        step {
+            check(!source.albums.contains { $0.id == deletedTwin }, "deleting an album deletes it in the Photos library")
+            undo.undo()
+            check(catalog.album(newAlbum!)?.note == "Cannonballs all afternoon.", "undo brings a deleted album back, story and all")
+            wait { libraryAlbum(newAlbum!) != nil }
+        }
+        step {
+            check(libraryAlbum(newAlbum!)?.items == catalog.album(newAlbum!)?.items, "the album comes back in the Photos library too")
+            source.refuseNextChange = true
+            library.renameAlbum(newAlbum!, to: "Never Mind")
+            wait { nsWindow.attachedSheet != nil }
+        }
+        step {
+            check(nsWindow.attachedSheet != nil, "a refused album change says so")
+            if let sheet = nsWindow.attachedSheet { nsWindow.endSheet(sheet) }
+            wait { catalog.album(newAlbum!)?.title == "Dock Day, Again" }
+        }
+        step {
+            check(catalog.album(newAlbum!)?.title == "Dock Day, Again", "after a refused change, the album keeps the library's name")
         }
 
         // MARK: Labels, captions and notes

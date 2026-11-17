@@ -122,14 +122,14 @@ extension LibraryWindowController: NSMenuItemValidation {
               let album = library.catalog.album(id), let window else { return }
         let alert = NSAlert()
         alert.messageText = "Delete the album “\(album.title)”?"
-        alert.informativeText = "The photos stay in your library and in any other albums. Edit ▸ Undo brings the album back."
+        alert.informativeText = "It’s deleted from your Photos library too. The photos stay in your library and in any other albums, and Edit ▸ Undo brings the album back."
         alert.addButton(withTitle: "Delete Album")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
             if state.source == .album(id) { go(to: .allAlbums, remember: false) }
-            library.edit("Delete Album") { $0.deleteAlbum(id) }
+            library.deleteAlbum(id)
         }
     }
 
@@ -150,15 +150,6 @@ extension LibraryWindowController: NSMenuItemValidation {
             if state.source == .label(id) { go(to: .library, remember: false) }
             library.edit("Delete Label") { $0.deleteLabel(id) }
         }
-    }
-
-    @objc func phCopyPhotosAlbum(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String, let album = library.photosAlbums.first(where: { $0.id == id }) else { return }
-        var created: UUID?
-        library.edit("Copy Album") { catalog in
-            created = catalog.addAlbum(title: catalog.unusedAlbumTitle(album.title), items: album.items)
-        }
-        if let created { go(to: .album(created)) }
     }
 
     // MARK: View

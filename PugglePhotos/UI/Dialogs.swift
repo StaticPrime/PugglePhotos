@@ -242,7 +242,7 @@ struct SettingsView: View {
                 Toggle("Show the calendar in the sidebar", isOn: $showsCalendar)
                 Toggle("Show favorites, labels and notes on thumbnails", isOn: $showsBadges)
             } footer: {
-                Text("Albums, labels, captions and notes are kept on this Mac. Dates and favorites are changed in your Photos library, so they’re right everywhere you see your photos.")
+                Text("Albums are kept in step with your Photos library, and dates and favorites are changed there too, so they’re right everywhere you see your photos. Labels, captions, notes and album stories are kept on this Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

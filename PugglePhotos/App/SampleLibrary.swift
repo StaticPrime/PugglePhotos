@@ -8,7 +8,9 @@ import PugglePhotosKit
 final class SamplePhotoSource: PhotoSource {
     private(set) var items: [PhotoID: MediaItem] = [:]
     private var scenes: [PhotoID: (scene: SampleScene, seed: Int)] = [:]
-    private var albums: [ExternalAlbum] = []
+    /// The sample library's own albums, which the catalog's albums mirror.
+    private(set) var albums: [LibraryAlbum] = []
+    private var albumNumber = 0
     private var recent: [PhotoID] = []
     private var videoFiles: [PhotoID: URL] = [:]
     var onChange: (() -> Void)?
@@ -119,6 +121,55 @@ final class SamplePhotoSource: PhotoSource {
         changed(completion)
     }
 
+    // MARK: Albums
+
+    func createAlbum(title: String, items: [PhotoID], completion: @escaping @MainActor (Result<String, Error>) -> Void) {
+        if refuseNextChange {
+            refuseNextChange = false
+            DispatchQueue.main.async { completion(.failure(LibraryError.notAllowed)) }
+            return
+        }
+        albumNumber += 1
+        let id = "sample-album-new-\(albumNumber)"
+        albums.append(LibraryAlbum(id: id, title: title, items: items.filter { self.items[$0] != nil }))
+        changed { _ in completion(.success(id)) }
+    }
+
+    func updateAlbum(_ id: String, title: String, items: [PhotoID], completion: @escaping @MainActor (Error?) -> Void) {
+        if refuseNextChange {
+            refuseNextChange = false
+            DispatchQueue.main.async { completion(LibraryError.notAllowed) }
+            return
+        }
+        guard let index = albums.firstIndex(where: { $0.id == id }) else {
+            DispatchQueue.main.async { completion(LibraryError.missing) }
+            return
+        }
+        albums[index].title = title
+        albums[index].items = items.filter { self.items[$0] != nil }
+        changed(completion)
+    }
+
+    func deleteAlbum(_ id: String, completion: @escaping @MainActor (Error?) -> Void) {
+        if refuseNextChange {
+            refuseNextChange = false
+            DispatchQueue.main.async { completion(LibraryError.notAllowed) }
+            return
+        }
+        albums.removeAll { $0.id == id }
+        changed(completion)
+    }
+
+    /// Changes an album the way someone using another app on the library would, for the self-test.
+    func changeAlbumElsewhere(_ id: String, _ change: (inout LibraryAlbum?) -> Void) {
+        var album = albums.first { $0.id == id }
+        change(&album)
+        albums.removeAll { $0.id == id }
+        if let album { albums.append(album) }
+        changeCount += 1
+        DispatchQueue.main.async { [weak self] in self?.onChange?() }
+    }
+
     /// Like the Photos library, reports the change it just made a moment later.
     private func changed(_ completion: @escaping @MainActor (Error?) -> Void) {
         changeCount += 1
@@ -148,7 +199,7 @@ enum SampleLibrary {
 
     struct Contents {
         var entries: [Entry]
-        var albums: [ExternalAlbum]
+        var albums: [LibraryAlbum]
         var recent: [PhotoID]
         var catalog: Catalog
     }
@@ -245,11 +296,18 @@ enum SampleLibrary {
 
         let recent = entries.filter { ($0.item.addedDate ?? .distantPast) > today.addingTimeInterval(-30 * 86_400) }
             .sorted { $0.item.addedDate! < $1.item.addedDate! }.map(\.item.id)
-        let albums = [
-            ExternalAlbum(id: "photos-imported", title: "Imported Photos", items: (byEvent["pug26"] ?? []) + (byEvent["food26"] ?? [])),
-            ExternalAlbum(id: "photos-scans", title: "Scanned Prints", items: byEvent["scans"] ?? []),
-        ]
-        return Contents(entries: entries, albums: albums, recent: recent, catalog: catalog(byEvent))
+        // Every catalog album has its twin in the library; two more albums exist only in the library so far, and
+        // arrive in the catalog when it first loads.
+        var catalog = catalog(byEvent)
+        var albums: [LibraryAlbum] = []
+        for (index, album) in catalog.albums.enumerated() {
+            let id = "sample-album-\(index + 1)"
+            albums.append(LibraryAlbum(id: id, title: album.title, items: album.items))
+            catalog.link(album.id, toPhotosAlbum: id)
+        }
+        albums.append(LibraryAlbum(id: "sample-album-imported", title: "Imported Photos", items: (byEvent["pug26"] ?? []) + (byEvent["food26"] ?? [])))
+        albums.append(LibraryAlbum(id: "sample-album-scans", title: "Scanned Prints", items: byEvent["scans"] ?? []))
+        return Contents(entries: entries, albums: albums, recent: recent, catalog: catalog)
     }
 
     /// Albums, labels, captions and notes to go with the sample photos.

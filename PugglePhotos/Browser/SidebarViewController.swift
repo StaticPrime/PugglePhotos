@@ -36,7 +36,7 @@ final class SidebarNode {
     }
 }
 
-/// The sidebar: the library, albums, labels and the Photos library's own albums, with the calendar underneath.
+/// The sidebar: the library, albums and labels, with the calendar underneath.
 /// Drop photos on an album, a label or Favorites to add them there.
 final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTextFieldDelegate {
     weak var delegate: SidebarDelegate?
@@ -45,7 +45,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var calendarContainer: NSView!
     private var roots: [SidebarNode] = []
     private var isReloading = false
-    private var collapsed: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "SidebarCollapsed") ?? ["In Photos"])
+    private var collapsed: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "SidebarCollapsed") ?? [])
     private var requests: [UUID: ImageRequest] = [:]
     private(set) var selectedSource: LibrarySource?
 
@@ -135,10 +135,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var albumNodes = [SidebarNode(.source(.allAlbums))]
         albumNodes += (delegate?.albumOrder ?? library.catalog.albums.map(\.id)).map { SidebarNode(.source(.album($0))) }
         let labelNodes = library.catalog.labels.map { SidebarNode(.source(.label($0.id))) }
-        let photosNodes = library.photosAlbums.map { SidebarNode(.source(.photosAlbum($0.id))) }
         roots = [SidebarNode(.heading("Library"), children: libraryNodes), SidebarNode(.heading("Albums"), children: albumNodes),
                  SidebarNode(.heading("Labels"), children: labelNodes)]
-        if !photosNodes.isEmpty { roots.append(SidebarNode(.heading("In Photos"), children: photosNodes)) }
         isReloading = true
         outlineView.reloadData()
         for root in roots {
@@ -296,10 +294,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case let .label(id):
             guard let label = library.catalog.label(id) else { return }
             cell.configure(title: label.displayName, symbol: nil, count: arranger.ids(for: source).count, dot: Theme.color(label.color))
-        case let .photosAlbum(id):
-            let album = library.photosAlbums.first { $0.id == id }
-            cell.configure(title: album?.title ?? "Album", symbol: "rectangle.stack.badge.person.crop",
-                           count: (album?.items ?? []).filter(library.snapshot.contains).count)
         }
     }
 

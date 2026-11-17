@@ -54,6 +54,8 @@ public enum AlbumOrder: String, Codable, Sendable, CaseIterable {
 }
 
 /// An album: photos chosen by hand, in an order of the user's choosing. A photo can be in any number of albums.
+/// Every album is mirrored by an album in the Photos library, which holds the same photos in the same order under
+/// the same title; the story, the cover and how it's shown are PugglePhotos' own.
 public struct Album: Identifiable, Hashable, Codable, Sendable {
     public var id: UUID
     public var title: String
@@ -64,9 +66,11 @@ public struct Album: Identifiable, Hashable, Codable, Sendable {
     public var cover: PhotoID?
     public var items: [PhotoID]
     public var order: AlbumOrder
+    /// The Photos library's identifier for the album mirroring this one; nil until that album has been made.
+    public var photosAlbumID: String?
 
     public init(id: UUID = UUID(), title: String, note: String = "", created: Date = Date(), cover: PhotoID? = nil,
-                items: [PhotoID] = [], order: AlbumOrder = .oldestFirst) {
+                items: [PhotoID] = [], order: AlbumOrder = .oldestFirst, photosAlbumID: String? = nil) {
         self.id = id
         self.title = title
         self.note = note
@@ -75,6 +79,20 @@ public struct Album: Identifiable, Hashable, Codable, Sendable {
         self.cover = cover
         self.items = items
         self.order = order
+        self.photosAlbumID = photosAlbumID
+    }
+}
+
+/// An album as the Photos library keeps it: its identifier, title and photos in order.
+public struct LibraryAlbum: Identifiable, Hashable, Sendable {
+    public let id: String
+    public var title: String
+    public var items: [PhotoID]
+
+    public init(id: String, title: String, items: [PhotoID]) {
+        self.id = id
+        self.title = title
+        self.items = items
     }
 }
 
@@ -232,6 +250,88 @@ public struct Catalog: Hashable, Codable, Sendable {
     private mutating func update(_ id: UUID, _ change: (inout Album) -> Void) {
         guard let index = albums.firstIndex(where: { $0.id == id }) else { return }
         change(&albums[index])
+    }
+
+    // MARK: Mirroring albums in the Photos library
+
+    /// What `reconcileAlbums` found.
+    public struct AlbumReconciliation: Sendable {
+        /// Albums that have no album in the Photos library yet and need one made.
+        public var unmirrored: [UUID] = []
+        /// Albums that came from the Photos library for the first time.
+        public var added: [UUID] = []
+        /// Albums whose Photos library album is gone, so they were removed too.
+        public var removed: [UUID] = []
+    }
+
+    /// Brings the albums in line with the Photos library's, which decides each album's title and photos: albums
+    /// already linked take the library's title and photos (keeping their story, cover and order setting), albums
+    /// new to the library are added, and albums whose library album was deleted are removed. Albums not linked to
+    /// any library album yet are left as they are and listed, so they can be made there.
+    @discardableResult
+    public mutating func reconcileAlbums(with library: [LibraryAlbum], now: Date = Date()) -> AlbumReconciliation {
+        var result = AlbumReconciliation()
+        let byID = Dictionary(library.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var linked = Set<String>()
+        var kept: [Album] = []
+        for var album in albums {
+            guard let photosID = album.photosAlbumID else {
+                result.unmirrored.append(album.id)
+                kept.append(album)
+                continue
+            }
+            guard let match = byID[photosID] else {
+                result.removed.append(album.id)
+                continue
+            }
+            linked.insert(photosID)
+            album.title = match.title
+            album.items = Self.unique(match.items)
+            if let cover = album.cover, !album.items.contains(cover) { album.cover = nil }
+            kept.append(album)
+        }
+        for item in library where !linked.contains(item.id) {
+            linked.insert(item.id)
+            let album = Album(title: item.title, created: now, items: Self.unique(item.items), photosAlbumID: item.id)
+            result.added.append(album.id)
+            kept.append(album)
+        }
+        albums = kept
+        return result
+    }
+
+    /// This catalog, but with the albums' titles, photos and links taken from `live`: undoing a change to labels,
+    /// captions or an album's story restores those, without undoing album changes made since (which belong to the
+    /// Photos library). Albums deleted since stay deleted; albums made since stay.
+    public func keepingAlbumContents(from live: Catalog) -> Catalog {
+        var result = self
+        let liveByID = Dictionary(live.albums.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var restored: [Album] = []
+        for var album in albums {
+            guard let current = liveByID[album.id] else { continue }
+            album.title = current.title
+            album.items = current.items
+            album.photosAlbumID = current.photosAlbumID
+            if let cover = album.cover, !album.items.contains(cover) { album.cover = nil }
+            restored.append(album)
+        }
+        let restoredIDs = Set(restored.map(\.id))
+        restored += live.albums.filter { !restoredIDs.contains($0.id) }
+        result.albums = restored
+        return result
+    }
+
+    /// Replaces an album (matched by ID), or adds it if it's not there.
+    public mutating func setAlbum(_ album: Album) {
+        if let index = albums.firstIndex(where: { $0.id == album.id }) {
+            albums[index] = album
+        } else {
+            albums.append(album)
+        }
+    }
+
+    public mutating func link(_ id: UUID, toPhotosAlbum photosID: String?) {
+        update(id) { $0.photosAlbumID = photosID }
     }
 
     // MARK: Labels

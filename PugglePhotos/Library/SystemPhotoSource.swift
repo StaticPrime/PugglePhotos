@@ -75,16 +75,15 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
             added.enumerateObjects { asset, _, _ in recent.append(PhotoID(asset.localIdentifier)) }
         }
 
-        var albums: [ExternalAlbum] = []
+        var albums: [LibraryAlbum] = []
         let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .albumRegular, options: nil)
         collections.enumerateObjects { collection, _, _ in
             var ids: [PhotoID] = []
             PHAsset.fetchAssets(in: collection, options: nil).enumerateObjects { asset, _, _ in
                 ids.append(PhotoID(asset.localIdentifier))
             }
-            albums.append(ExternalAlbum(id: collection.localIdentifier, title: collection.localizedTitle ?? "Untitled", items: ids))
+            albums.append(LibraryAlbum(id: collection.localIdentifier, title: collection.localizedTitle ?? "Untitled", items: ids))
         }
-        albums.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         return Loaded(contents: LibraryContents(items: items, recentlyAdded: recent, albums: albums), assets: assets)
     }
 
@@ -186,6 +185,97 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
         }
         perform({
             for asset in targets { PHAssetChangeRequest(for: asset).isFavorite = favorite }
+        }, completion: completion)
+    }
+
+    // MARK: Albums
+
+    func createAlbum(title: String, items: [PhotoID], completion: @escaping @MainActor (Result<String, Error>) -> Void) {
+        let assets = items.compactMap { assets[$0] }
+        let created = LockedValue<String?>(nil)
+        PHPhotoLibrary.shared().performChanges({
+            let request = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: title)
+            if !assets.isEmpty { request.addAssets(assets as NSArray) }
+            created.value = request.placeholderForCreatedAssetCollection.localIdentifier
+        }) { @Sendable success, error in
+            let id = created.value
+            Task { @MainActor in
+                if success, let id {
+                    completion(.success(id))
+                } else {
+                    completion(.failure(error.map { LibraryError.failed($0.localizedDescription) } ?? LibraryError.notAllowed))
+                }
+            }
+        }
+    }
+
+    func updateAlbum(_ id: String, title: String, items: [PhotoID], completion: @escaping @MainActor (Error?) -> Void) {
+        let wanted = items.compactMap { item in assets[item].map { (item, $0) } }
+        Task {
+            let error = await Self.makeAlbum(id, match: title, items: wanted)
+            completion(error)
+        }
+    }
+
+    /// Reads the album as it is now, then changes only what differs: the title, photos to take out, photos to put
+    /// in, and the order. All in one change block.
+    @concurrent private nonisolated static func makeAlbum(_ id: String, match title: String, items: [(PhotoID, PHAsset)]) async -> Error? {
+        guard let collection = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil).firstObject else {
+            return LibraryError.missing
+        }
+        let current = PHAsset.fetchAssets(in: collection, options: nil)
+        var currentIDs: [String] = []
+        current.enumerateObjects { asset, _, _ in currentIDs.append(asset.localIdentifier) }
+        let wantedIDs = items.map(\.1.localIdentifier)
+        let wantedSet = Set(wantedIDs)
+        let currentSet = Set(currentIDs)
+        let removing = currentIDs.enumerated().filter { !wantedSet.contains($0.element) }.map(\.offset)
+        let adding = items.filter { !currentSet.contains($0.1.localIdentifier) }.map(\.1)
+        // The order the album will have after removing and adding, then the moves that turn it into the wanted one.
+        var working = currentIDs.filter { wantedSet.contains($0) } + adding.map(\.localIdentifier)
+        var moves: [(from: Int, to: Int)] = []
+        if collection.canPerform(.rearrangeContent) {
+            for (target, wantedID) in wantedIDs.enumerated() {
+                guard let from = working.firstIndex(of: wantedID), from != target else { continue }
+                moves.append((from, target))
+                working.remove(at: from)
+                working.insert(wantedID, at: target)
+            }
+        }
+        let renaming = (collection.localizedTitle ?? "") != title && collection.canPerform(.rename)
+        guard renaming || !removing.isEmpty || !adding.isEmpty || !moves.isEmpty else { return nil }
+        let plan = AlbumPlan(collection: collection, current: current, title: renaming ? title : nil,
+                             removing: IndexSet(removing), adding: adding, moves: moves)
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                guard let request = PHAssetCollectionChangeRequest(for: plan.collection, assets: plan.current) else { return }
+                if let title = plan.title { request.title = title }
+                if !plan.removing.isEmpty { request.removeAssets(at: plan.removing) }
+                if !plan.adding.isEmpty { request.addAssets(plan.adding as NSArray) }
+                for move in plan.moves { request.moveAssets(at: IndexSet(integer: move.from), to: move.to) }
+            }
+            return nil
+        } catch {
+            return LibraryError.failed(error.localizedDescription)
+        }
+    }
+
+    private nonisolated struct AlbumPlan: @unchecked Sendable {
+        let collection: PHAssetCollection
+        let current: PHFetchResult<PHAsset>
+        let title: String?
+        let removing: IndexSet
+        let adding: [PHAsset]
+        let moves: [(from: Int, to: Int)]
+    }
+
+    func deleteAlbum(_ id: String, completion: @escaping @MainActor (Error?) -> Void) {
+        guard let collection = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil).firstObject else {
+            completion(nil)
+            return
+        }
+        perform({
+            PHAssetCollectionChangeRequest.deleteAssetCollections([collection] as NSArray)
         }, completion: completion)
     }
 

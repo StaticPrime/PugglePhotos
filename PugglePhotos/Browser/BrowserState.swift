@@ -46,7 +46,6 @@ final class BrowserState {
         case .allAlbums: "albums"
         case .album: "album"
         case .label: "label"
-        case .photosAlbum: "photosAlbum"
         }
     }
 
@@ -55,7 +54,6 @@ final class BrowserState {
         case .library: Arrangement(grouping: .day, sort: .dateTaken, ascending: true)
         case .recentlyAdded: Arrangement(grouping: .none, sort: .dateAdded, ascending: true)
         case .label: Arrangement(grouping: .month, sort: .dateTaken, ascending: true)
-        case .photosAlbum: Arrangement(grouping: .none, sort: .custom, ascending: true)
         default: Arrangement(grouping: .none, sort: .dateTaken, ascending: true)
         }
     }
@@ -88,10 +86,8 @@ final class BrowserState {
 extension LibrarySource {
     /// Places whose photos have an order of their own, which "Album Order" shows.
     var hasOwnOrder: Bool {
-        switch self {
-        case .album, .photosAlbum: true
-        default: false
-        }
+        if case .album = self { return true }
+        return false
     }
 
     var album: UUID? {

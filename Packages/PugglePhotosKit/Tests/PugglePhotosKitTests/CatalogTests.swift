@@ -84,6 +84,67 @@ import Testing
     }
 }
 
+@Suite struct AlbumMirroringTests {
+    @Test func libraryAlbumsDecideTitlesAndPhotos() {
+        var catalog = Catalog()
+        let lake = catalog.addAlbum(title: "Lake", items: ["a", "b"])
+        catalog.link(lake, toPhotosAlbum: "L1")
+        catalog.setAlbumNote(lake, to: "Every July.")
+        catalog.setCover("b", of: lake)
+        let result = catalog.reconcileAlbums(with: [LibraryAlbum(id: "L1", title: "Lake Days", items: ["a", "c", "a"])])
+        let album = catalog.album(lake)
+        #expect(album?.title == "Lake Days" && album?.items == ["a", "c"])
+        #expect(album?.note == "Every July.", "the story stays")
+        #expect(album?.cover == nil, "a cover no longer in the album falls back")
+        #expect(result.added.isEmpty && result.removed.isEmpty && result.unmirrored.isEmpty)
+    }
+
+    @Test func newLibraryAlbumsArriveAndDeletedOnesGo() {
+        var catalog = Catalog()
+        let gone = catalog.addAlbum(title: "Old", items: ["a"])
+        catalog.link(gone, toPhotosAlbum: "G1")
+        let local = catalog.addAlbum(title: "Not Yet in Photos", items: ["b"])
+        let now = date(2026, 11, 18)
+        let result = catalog.reconcileAlbums(with: [LibraryAlbum(id: "N1", title: "Imported", items: ["c", "d"])], now: now)
+        #expect(result.removed == [gone])
+        #expect(result.unmirrored == [local])
+        #expect(result.added.count == 1)
+        #expect(catalog.albums.map(\.title) == ["Not Yet in Photos", "Imported"])
+        let imported = catalog.albums.last
+        #expect(imported?.photosAlbumID == "N1" && imported?.items == ["c", "d"] && imported?.created == now)
+        // Reconciling again changes nothing.
+        let again = catalog.reconcileAlbums(with: [LibraryAlbum(id: "N1", title: "Imported", items: ["c", "d"])], now: now)
+        #expect(again.added.isEmpty && again.removed.isEmpty)
+    }
+
+    @Test func undoingOtherChangesKeepsAlbumContents() {
+        var before = Catalog()
+        let album = before.addAlbum(title: "Lake", items: ["a"])
+        before.setAlbumNote(album, to: "Old story")
+        var live = before
+        live.setAlbumNote(album, to: "New story")
+        live.add(["b"], toAlbum: album)
+        live.renameAlbum(album, to: "Lake Days")
+        live.link(album, toPhotosAlbum: "L1")
+        let made = live.addAlbum(title: "Made Since", items: ["c"])
+        let restored = before.keepingAlbumContents(from: live)
+        #expect(restored.album(album)?.note == "Old story")
+        #expect(restored.album(album)?.items == ["a", "b"] && restored.album(album)?.title == "Lake Days")
+        #expect(restored.album(album)?.photosAlbumID == "L1")
+        #expect(restored.album(made) != nil)
+        var deleted = live
+        deleted.deleteAlbum(album)
+        #expect(before.keepingAlbumContents(from: deleted).album(album) == nil, "albums deleted since stay deleted")
+    }
+
+    @Test func linksAreSaved() throws {
+        var catalog = Catalog()
+        let album = catalog.addAlbum(title: "Lake", items: ["a"])
+        catalog.link(album, toPhotosAlbum: "L1")
+        #expect(try CatalogStore.decode(CatalogStore.encode(catalog)).album(album)?.photosAlbumID == "L1")
+    }
+}
+
 @Suite struct CatalogStoreTests {
     func temporaryFolder() -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("PugglePhotosKitTests-\(UUID().uuidString)")

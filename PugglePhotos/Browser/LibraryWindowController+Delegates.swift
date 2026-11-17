@@ -27,7 +27,7 @@ extension LibraryWindowController: PhotoBrowserDelegate {
         if let album = currentAlbum, arrangement.sort == .custom {
             let anchorID = section[gap...].first { !ids.contains($0) }
             let index = anchorID.flatMap { album.items.firstIndex(of: $0) } ?? album.items.count
-            library.edit(ids.count == 1 ? "Move Photo" : "Move Photos") { $0.move(ids, inAlbum: album.id, toIndex: index) }
+            library.moveInAlbum(ids, album: album.id, toIndex: index)
             reveal(ids)
             return true
         }
@@ -60,7 +60,7 @@ extension LibraryWindowController: PhotoBrowserDelegate {
 
     func browserRenameAlbum(_ title: String) {
         guard let album = currentAlbum else { return }
-        library.edit("Rename Album") { $0.renameAlbum(album.id, to: title) }
+        library.renameAlbum(album.id, to: title)
     }
 
     func browserSetAlbumNote(_ note: String) {
@@ -142,8 +142,6 @@ extension LibraryWindowController: SidebarDelegate {
         case let .label(id):
             menu.addItem(represented(MenuBuilder.item("Edit Label…", #selector(phEditLabel(_:))), id))
             menu.addItem(represented(MenuBuilder.item("Delete Label…", #selector(phDeleteLabel(_:))), id))
-        case let .photosAlbum(id):
-            menu.addItem(represented(MenuBuilder.item("Copy to My Albums", #selector(phCopyPhotosAlbum(_:))), id))
         case .allAlbums:
             menu.addItem(MenuBuilder.item("New Album", #selector(phNewAlbum(_:))))
         default:
@@ -154,7 +152,7 @@ extension LibraryWindowController: SidebarDelegate {
     }
 
     func sidebarRenameAlbum(_ id: UUID, to title: String) {
-        library.edit("Rename Album") { $0.renameAlbum(id, to: title) }
+        library.renameAlbum(id, to: title)
     }
 
     func sidebarDrop(_ ids: [PhotoID], on source: LibrarySource) -> Bool {
@@ -262,20 +260,16 @@ extension LibraryWindowController: InspectorActions {
 
 extension LibraryWindowController {
     func add(_ ids: [PhotoID], toAlbum album: UUID) {
-        library.edit("Add to Album") { $0.add(ids, toAlbum: album) }
+        library.addToAlbum(ids, album: album)
     }
 
     func remove(_ ids: [PhotoID], fromAlbum album: UUID) {
-        library.edit(ids.count == 1 ? "Remove from Album" : "Remove from Album") { $0.remove(Set(ids), fromAlbum: album) }
+        library.removeFromAlbum(ids, album: album)
     }
 
     /// Makes an album (with these photos, if any), then lets the person name it in the sidebar.
     func newAlbum(with ids: [PhotoID]) {
-        var created: UUID?
-        library.edit("New Album") { catalog in
-            created = catalog.addAlbum(title: catalog.unusedAlbumTitle(), items: ids)
-        }
-        guard let created else { return }
+        let created = library.newAlbum(items: ids)
         if ids.isEmpty {
             go(to: .album(created))
         }

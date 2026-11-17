@@ -7,19 +7,13 @@ enum LibraryAccess: Equatable {
     case notDetermined, authorized, denied, restricted
 }
 
-/// An album the Photos library keeps itself, shown read-only under "In Photos".
-nonisolated struct ExternalAlbum: Identifiable, Hashable, Sendable {
-    let id: String
-    let title: String
-    let items: [PhotoID]
-}
-
 /// Everything loaded from the library in one go.
 nonisolated struct LibraryContents: Sendable {
     var items: [MediaItem]
     /// Recently added items, oldest first, when the library keeps that list itself.
     var recentlyAdded: [PhotoID]
-    var albums: [ExternalAlbum]
+    /// The library's own albums (the ones people make), which PugglePhotos' albums mirror.
+    var albums: [LibraryAlbum]
 }
 
 /// An image on its way. Cancel it when the view that wanted it moves on.
@@ -78,4 +72,11 @@ protocol PhotoSource: AnyObject {
     func setDates(_ changes: [Redate.Change], completion: @escaping @MainActor (Error?) -> Void)
     /// Marks photos as favorites, or not, all in one change to the library.
     func setFavorite(_ ids: [PhotoID], _ favorite: Bool, completion: @escaping @MainActor (Error?) -> Void)
+
+    /// Makes an album in the library holding these photos, and answers with its identifier.
+    func createAlbum(title: String, items: [PhotoID], completion: @escaping @MainActor (Result<String, Error>) -> Void)
+    /// Makes a library album match: this title, exactly these photos, in this order. One change to the library.
+    func updateAlbum(_ id: String, title: String, items: [PhotoID], completion: @escaping @MainActor (Error?) -> Void)
+    /// Deletes a library album. The photos in it stay in the library.
+    func deleteAlbum(_ id: String, completion: @escaping @MainActor (Error?) -> Void)
 }

@@ -132,11 +132,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     /// The photos the current place shows, before sorting and grouping.
     private func sourceIDs() -> [PhotoID] {
         let arranger = library.arranger
-        var photosAlbum: [PhotoID] = []
-        if case let .photosAlbum(id) = state.source {
-            photosAlbum = library.photosAlbums.first { $0.id == id }?.items ?? []
-        }
-        var ids = arranger.ids(for: state.source, recent: library.recentlyAdded, photosAlbum: photosAlbum)
+        var ids = arranger.ids(for: state.source, recent: library.recentlyAdded)
         let search = PhotoSearch(state.searchText, formatting: library.formatting)
         if !search.isEmpty { ids = search.filter(ids, using: arranger) }
         return ids
@@ -268,7 +264,6 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         case .allAlbums: window.title = "Albums"
         case let .album(id): window.title = library.catalog.album(id)?.title ?? "Album"
         case let .label(id): window.title = library.catalog.label(id)?.displayName ?? "Label"
-        case let .photosAlbum(id): window.title = library.photosAlbums.first { $0.id == id }?.title ?? "Album"
         }
         if state.source == .allAlbums {
             window.subtitle = library.catalog.albums.count == 1 ? "1 album" : "\(formatting.number(library.catalog.albums.count)) albums"
