@@ -166,6 +166,7 @@ enum MenuBuilder {
             item("Show Sidebar", #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]),
             item("Show Info", #selector(NSSplitViewController.toggleInspector(_:)), "i"),
             item("Hide Calendar", #selector(LibraryWindowController.phToggleCalendar(_:))),
+            item("Hide Filmstrip", #selector(LibraryWindowController.phToggleFilmstrip(_:))),
             .separator(),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
         ]

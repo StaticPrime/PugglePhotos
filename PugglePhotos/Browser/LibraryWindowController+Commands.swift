@@ -83,6 +83,9 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(phToggleCalendar(_:)):
             menuItem.title = sidebar.showsCalendar ? "Hide Calendar" : "Show Calendar"
             return true
+        case #selector(phToggleFilmstrip(_:)):
+            menuItem.title = state.showsFilmstrip ? "Hide Filmstrip" : "Show Filmstrip"
+            return true
         case #selector(phRenameAlbum(_:)), #selector(phDeleteAlbum(_:)):
             return (menuItem.representedObject as? UUID ?? currentAlbum?.id ?? albums.selectedAlbum) != nil
         case #selector(phGroupBy(_:)), #selector(phSortBy(_:)), #selector(phOrder(_:)):
@@ -258,6 +261,12 @@ extension LibraryWindowController: NSMenuItemValidation {
     @objc func phToggleCalendar(_ sender: Any?) {
         UserDefaults.standard.set(!sidebar.showsCalendar, forKey: Preferences.showsCalendarKey)
         sidebar.showsCalendar.toggle()
+    }
+
+    /// Shows or hides the row of thumbnails under the viewer.
+    @objc func phToggleFilmstrip(_ sender: Any?) {
+        state.showsFilmstrip.toggle()
+        viewer.showsFilmstrip = state.showsFilmstrip
     }
 
     @objc func phFind(_ sender: Any?) { toolbarController.focusSearch() }

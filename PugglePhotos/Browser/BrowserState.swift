@@ -15,6 +15,8 @@ final class BrowserState {
     var thumbnailSide: CGFloat { didSet { save() } }
     var albumSort: AlbumSort { didSet { save() } }
     var albumSortAscending: Bool { didSet { save() } }
+    /// Whether the viewer has a filmstrip along the bottom.
+    var showsFilmstrip: Bool { didSet { save() } }
     var searchText = ""
     var selection: [PhotoID] = []
     /// The photo open in the viewer, if any.
@@ -29,6 +31,7 @@ final class BrowserState {
         thumbnailSide = side > 0 ? min(max(CGFloat(side), Theme.minimumThumbnail), Theme.maximumThumbnail) : Theme.defaultThumbnail
         albumSort = AlbumSort(rawValue: defaults.string(forKey: "AlbumSort") ?? "") ?? .date
         albumSortAscending = defaults.object(forKey: "AlbumSortAscending") as? Bool ?? false
+        showsFilmstrip = defaults.object(forKey: "ShowsFilmstrip") as? Bool ?? true
         if let data = defaults.data(forKey: "Arrangements"),
            let saved = try? JSONDecoder().decode([String: Arrangement].self, from: data) {
             arrangements = saved
@@ -84,6 +87,7 @@ final class BrowserState {
         defaults.set(Double(thumbnailSide), forKey: "ThumbnailSize")
         defaults.set(albumSort.rawValue, forKey: "AlbumSort")
         defaults.set(albumSortAscending, forKey: "AlbumSortAscending")
+        defaults.set(showsFilmstrip, forKey: "ShowsFilmstrip")
         if let data = try? JSONEncoder().encode(arrangements) { defaults.set(data, forKey: "Arrangements") }
     }
 }

@@ -10,8 +10,8 @@ protocol ViewerDelegate: AnyObject {
     func viewerClose()
 }
 
-/// One photo or video, as big as the window allows, on a dark background. ← and → step through the photos,
-/// Esc goes back, and pinching, double-clicking or ⌘+ zooms in.
+/// One photo or video, as big as the window allows, on a dark background, over a filmstrip of the photos around
+/// it. ← and → step through the photos, Esc goes back, and pinching, double-clicking or ⌘+ zooms in.
 final class ViewerViewController: NSViewController {
     weak var delegate: ViewerDelegate?
     private(set) var currentID: PhotoID?
@@ -21,8 +21,22 @@ final class ViewerViewController: NSViewController {
     private let captionBackground = NSVisualEffectView()
     private let previousButton = ViewerArrowButton(symbol: "chevron.left", label: "Previous")
     private let nextButton = ViewerArrowButton(symbol: "chevron.right", label: "Next")
+    let filmstrip = FilmstripView()
     private var request: ImageRequest?
     private var playerItemID: PhotoID?
+    /// The photos stepped through, as the window last gave them, and where each one is.
+    private var sequence: [PhotoID] = []
+    private var positions: [PhotoID: Int] = [:]
+    private var photoBottom: NSLayoutConstraint!
+
+    /// Whether the filmstrip shows along the bottom.
+    var showsFilmstrip = true {
+        didSet {
+            filmstrip.isHidden = !showsFilmstrip
+            photoBottom?.constant = showsFilmstrip ? -FilmstripView.height : 0
+            if showsFilmstrip { filmstrip.show(sequence, current: currentID) }
+        }
+    }
 
     override func loadView() {
         let root = ViewerRootView()
@@ -44,7 +58,8 @@ final class ViewerViewController: NSViewController {
         captionField.alignment = .center
         captionField.translatesAutoresizingMaskIntoConstraints = false
         captionBackground.addSubview(captionField)
-        for view in [photoView, playerView, captionBackground, previousButton, nextButton] as [NSView] {
+        filmstrip.onChoose = { [weak self] id in self?.show(id) }
+        for view in [photoView, playerView, captionBackground, previousButton, nextButton, filmstrip] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -52,17 +67,23 @@ final class ViewerViewController: NSViewController {
         previousButton.action = #selector(showPrevious(_:))
         nextButton.target = self
         nextButton.action = #selector(showNext(_:))
+        photoBottom = photoView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: showsFilmstrip ? -FilmstripView.height : 0)
+        filmstrip.isHidden = !showsFilmstrip
         NSLayoutConstraint.activate([
             photoView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             photoView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             photoView.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
-            photoView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            photoBottom,
             playerView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 40),
             playerView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -40),
             playerView.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 16),
-            playerView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
+            playerView.bottomAnchor.constraint(equalTo: photoView.bottomAnchor, constant: -16),
+            filmstrip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            filmstrip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            filmstrip.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            filmstrip.heightAnchor.constraint(equalToConstant: FilmstripView.height),
             captionBackground.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            captionBackground.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -22),
+            captionBackground.bottomAnchor.constraint(equalTo: photoView.bottomAnchor, constant: -22),
             captionBackground.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor, multiplier: 0.7),
             captionField.leadingAnchor.constraint(equalTo: captionBackground.leadingAnchor, constant: 16),
             captionField.trailingAnchor.constraint(equalTo: captionBackground.trailingAnchor, constant: -16),
@@ -78,6 +99,13 @@ final class ViewerViewController: NSViewController {
         view = root
     }
 
+    /// The photos to step through, in order.
+    func setSequence(_ ids: [PhotoID]) {
+        guard ids != sequence else { return }
+        sequence = ids
+        positions = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
     /// Shows a photo or video.
     func show(_ id: PhotoID) {
         guard let library = delegate?.library, let item = library.snapshot.item(id) else { return }
@@ -85,6 +113,8 @@ final class ViewerViewController: NSViewController {
         currentID = id
         updateCaption()
         updateArrows()
+        filmstrip.library = library
+        if showsFilmstrip { filmstrip.show(sequence, current: id) }
         if item.kind.isVideo {
             photoView.isHidden = true
             playerView.isHidden = false
@@ -145,8 +175,7 @@ final class ViewerViewController: NSViewController {
     }
 
     private func updateArrows() {
-        let sequence = delegate?.viewerSequence ?? []
-        let index = currentID.flatMap { sequence.firstIndex(of: $0) }
+        let index = currentID.flatMap { positions[$0] }
         previousButton.isHidden = index == nil || index == 0
         nextButton.isHidden = index == nil || index == sequence.count - 1
     }
@@ -155,8 +184,7 @@ final class ViewerViewController: NSViewController {
     @objc func showNext(_ sender: Any?) { step(1) }
 
     func step(_ offset: Int) {
-        let sequence = delegate?.viewerSequence ?? []
-        guard let current = currentID, let index = sequence.firstIndex(of: current) else { return }
+        guard let current = currentID, let index = positions[current] else { return }
         let target = index + offset
         guard sequence.indices.contains(target) else {
             NSSound.beep()

@@ -222,6 +222,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         }
         if let viewerID = state.viewerID, library.snapshot.contains(viewerID) {
             show(viewer)
+            viewer.showsFilmstrip = state.showsFilmstrip
+            viewer.setSequence(viewerSequence)
             viewer.show(viewerID)
             return
         }
