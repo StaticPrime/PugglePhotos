@@ -471,6 +471,8 @@ enum SelfTest {
             check(window.state.viewerID == nil, "Back closes the viewer")
         }
 
+        memoryAndSlideshowSteps(app, window: window)
+
         // MARK: Saving
         step { wait(upTo: 3) { (try? DebugLaunchOptions.sampleStore?.load()) == catalog } }
         step {

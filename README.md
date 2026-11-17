@@ -2,8 +2,9 @@
 
 **A cozy home for your photo library and the memories in it.**
 
-PugglePhotos is a photo album for the Mac that works with the photos and videos already in your Photos library. Wander through every day you've photographed, gather favorites into albums, give photos labels, captions and the stories behind them, and put photos back on the right day just by dragging them there.
+PugglePhotos is a photo album for the Mac that works with the photos and videos already in your Photos library. Wander through every day you've photographed, gather favorites into albums, give photos labels, captions and the stories behind them, and put photos back on the right day just by dragging them there. Each morning it can tell you about this day in earlier years, and play those photos back as a slideshow with music.
 
+- Memories from this day in past years, big days and trips, years and labels, each a slideshow
 - A timeline of every day, with a calendar that shows where your photos are
 - Albums, as many as you like, with covers and stories, and a photo can be in any number of them
 - Colorful labels, captions and notes on any photo
@@ -18,13 +19,21 @@ PugglePhotos is free, needs no account and has no tracking. It runs in the macOS
 
 ### Browsing
 
-- **The window.** The sidebar on the left (your library, albums and labels, with a calendar underneath), your photos in the middle and the info panel on the right (View ▸ Show Info, ⌘I). The toolbar has Back, gallery or list, a thumbnail size slider, grouping and sorting, the favorite heart and search. Light and Dark Mode both work.
+- **The window.** The sidebar on the left (Memories, your library, albums and labels, with a calendar underneath), your photos in the middle and the info panel on the right (View ▸ Show Info, ⌘I). The toolbar has Back, gallery or list, a thumbnail size slider, grouping and sorting, the favorite heart and search. Light and Dark Mode both work.
 - **The timeline.** Library shows every photo and video under the day it was taken ("Today", "Yesterday", "Saturday, June 14, 2025"), oldest first, opening on the newest. Each day's heading stays at the top while its photos scroll by, and counts what's under it; click a heading to select that day's photos. Go ▸ Today (⌘T) jumps to the most recent day.
 - **Gallery, list and grouping.** View as a gallery of thumbnails (⌘1) or a list (⌘2) with each photo's title, date, kind, size, albums, labels and note. Group by day, month, year, album or label (a photo in two albums shows in both, and the ones in none come last), or not at all. Sort by date taken, date added, title or kind, either way round. Library, Favorites, Videos and Recently Added each remember their own choice, as do albums and labels. Click a list column's heading to sort by it. ⌘+ and ⌘− (or the slider) change the thumbnail size.
 - **The calendar.** A month in the sidebar, with every day that has photos tinted, more strongly the more there are. Click a day to go to it; click the month to jump to any month of any year with photos; scroll over it to turn the months. View ▸ Hide Calendar puts it away.
 - **The viewer.** Double-click, Return or Space opens a photo as big as the window allows, on a dark background. ← and → step through the photos, pinching, double-clicking or ⌘+ zooms in, and dragging moves around a zoomed photo. Videos play right there. Esc, ⌘[ or Back returns to the photos with the same one selected.
 - **Search.** The search field (⌘F) finds photos by caption, note, label, album, file name, kind ("video", "screenshot"), "favorite", year ("2019") or month ("june"); every word has to match.
 - **Thumbnails** show a heart for favorites, the length of videos, a dot for each label and a bubble when a photo has a note. Settings can hide all but the video length.
+
+### Memories and slideshows
+
+- **Memories.** The Memories page (Go ▸ Memories, ⌥⌘0) starts with this day in earlier years: a card for each year ("1 Year Ago Today", "3 Years Ago Today") and one with every year together. Below come highlights (days with lots of photos, with days in a row joined into one trip, named for the album most of their photos are in, a holiday or a label, or else their dates), a card for each year, and one for each label with enough photos. Screenshots are never memories. Click a card to play it; right-click for Show Photos, which lists its photos like any album.
+- **Slideshows.** A memory plays full screen: a title card, then each photo with a slow pan and zoom (photos of a different shape sit whole over a blurred copy of themselves), each video playing in place with the music turned down, and each photo's date and caption; one picture crossfades into the next. A bar of segments along the top fills as each photo plays. Click the right of the screen or press → for the next photo, the left or ← for the one before; Space pauses, M quiets the music and Esc ends it. The last card offers Play Again, Show Photos and Done. View ▸ Play Slideshow (⌥⌘P), or the Play Slideshow button at the top of an album, plays an album, a memory, the selected photos, or the photos showing from the selected one on.
+- **Music.** Slideshows play PugglePhotos' own gentle tune, made from scratch, or a song of your own, chosen in Settings, or nothing. Settings also sets how long each photo shows.
+- **A morning notification.** On days with photos from the same day in earlier years, a notification at the time you choose (9:00 AM unless you change it) says so; click it and the slideshow plays. The next month's notifications are set ahead, so they come even when PugglePhotos isn't open.
+- **Open at login.** Settings ▸ Open PugglePhotos when I log in starts it quietly at login, as a paw in the menu bar with today's memories in its menu, so notifications stay on time. Opening PugglePhotos brings back its window and Dock icon.
 
 ### Organizing
 
@@ -50,7 +59,7 @@ Scanned prints dated the day they were scanned, a camera with its clock set wron
 
 - The first time it opens, PugglePhotos asks for permission to use your Photos library. It reads photos where they are and never copies, moves or deletes them; it changes only what you ask it to: a photo's date, whether it's a favorite, and your albums.
 - Labels, captions, notes and album stories are saved on your Mac in the app's own folder (`~/Library/Containers/com.pugglesoft.PugglePhotos/Data/Library/Application Support/PugglePhotos`), with a copy from each of the last 14 days kept in `Backups` next to it. A file that can't be read is set aside, never overwritten.
-- PugglePhotos has no permission to use the network and sends nothing anywhere.
+- PugglePhotos has no permission to use the network and sends nothing anywhere. Memories are found, and their notifications made, on your Mac.
 
 Help ▸ Keyboard Shortcuts (⌘/) lists every keyboard shortcut.
 
@@ -62,6 +71,8 @@ Help ▸ Keyboard Shortcuts (⌘/) lists every keyboard shortcut.
 - Times are shown in the Mac's current time zone.
 - Places are shown as coordinates, not place names. Live photos show as still photos, and hidden photos and shared albums aren't shown.
 - On a large library, file names arrive a little after the photos, so sorting by title settles once they have.
+- Memories and highlights are named from dates, albums, labels and a few holidays, since PugglePhotos doesn't look up place names. Slideshows play on the screen the library window is on.
+- macOS asks once whether PugglePhotos may show notifications, and opening at login may need approving in System Settings ▸ General ▸ Login Items.
 
 ## Requirements
 
@@ -114,19 +125,19 @@ To sign and notarize releases, add these secrets under the repository's Settings
 
 ## Tests
 
-The catalog of albums, labels, captions and notes, the date arithmetic behind moving photos in time, sorting, grouping, search and saving live in a Swift package with 54 unit tests:
+The catalog of albums, labels, captions and notes, the date arithmetic behind moving photos in time, sorting, grouping, search and saving live in a Swift package with unit tests, including memories, notifications, the slideshow's timing and motion, and the tune:
 
 ```sh
 cd Packages/PugglePhotosKit && swift test
 ```
 
-Debug builds also include an end-to-end check that drives a real window on a made-up sample library (never the real Photos library or catalog) and prints `SELFTEST PASS/FAIL` lines. It covers the timeline and its headings, the calendar, thumbnails, selecting, favorites and their undo, a refused change, albums (making, naming, adding by dropping, removing with Delete, covers, arranging by dragging, banners, covers sorted every way, and every change reaching the album's twin in the Photos library, changes made there arriving here, deleting and undeleting, and a refused change), labels and their shortcuts, captions, notes, search, moving photos to a day, between two photos and onto the calendar (with undo and redo, the question asked first and Change Date and Time), grouping and sorting, the list, the size slider, the viewer and its keys, videos, and saving:
+Debug builds also include an end-to-end check that drives a real window on a made-up sample library (never the real Photos library or catalog) and prints `SELFTEST PASS/FAIL` lines. It covers the timeline and its headings, the calendar, thumbnails, selecting, favorites and their undo, a refused change, albums (making, naming, adding by dropping, removing with Delete, covers, arranging by dragging, banners, covers sorted every way, and every change reaching the album's twin in the Photos library, changes made there arriving here, deleting and undeleting, and a refused change), labels and their shortcuts, captions, notes, search, moving photos to a day, between two photos and onto the calendar (with undo and redo, the question asked first and Change Date and Time), grouping and sorting, the list, the size slider, the viewer and its keys, videos, memories (this day, highlights, years, labels, the page), their notifications (once a day, only days still to come, turned off), clicking one to play its slideshow, slideshows (filling the screen, moving through, pausing, the end card, Play Again, Esc, an album's slideshow with its video, Show Photos), a memory's photos, opening at login and waiting in the menu bar, the tune, and saving:
 
 ```sh
 build/DerivedData/Build/Products/Debug/PugglePhotos.app/Contents/MacOS/PugglePhotos -PHSelfTest YES
 ```
 
-Other debug launch arguments: `-PHSampleLibrary YES` uses the sample library: about 120 illustrated photos over seven years (a lake, the beach, birthdays, snow days, a pug named Waffles), a few videos, screenshots, a batch of scanned prints all dated the day they were scanned, and photos from this day in past years, with albums, labels, captions and notes to match. `-PHToday 2026-11-17` fixes the day it treats as today. `-PHSnapshot name.png` saves a screenshot of the window (or the About or Settings window, or an open sheet or question) to the app's temporary folder and quits, always on the sample library. Combine it with `-PHWindowWidth`, `-PHWindowHeight`, `-PHInspector YES`, `-PHDark YES`, `-PHSource favorites` (or `videos`, `recent`, `albums`, `album:2`, `label:1`), `-PHViewMode list`, `-PHGrouping month`, `-PHSort title`, `-PHDescending YES`, `-PHZoom 220`, `-PHSearch lake`, `-PHSelect 3,4,5`, `-PHViewer YES`, `-PHCalendar 2019-07`, `-PHRedate day` (or `between`), `-PHOpenSheet changeDate` (or `shortcuts`, `newLabel`), `-PHAccess ask` (or `denied`), `-PHShowAbout YES` or `-PHSettings YES`. `-PHBenchmark YES` adds 60,000 sample photos and times grouping, sorting, searching and laying out the grid.
+Other debug launch arguments: `-PHSampleLibrary YES` uses the sample library: about 120 illustrated photos over seven years (a lake, the beach, birthdays, snow days, a pug named Waffles), a few videos, screenshots, a batch of scanned prints all dated the day they were scanned, and photos from this day in past years, with albums, labels, captions and notes to match. `-PHToday 2026-11-17` fixes the day it treats as today. `-PHSnapshot name.png` saves a screenshot of the window (or the About or Settings window, or an open sheet or question) to the app's temporary folder and quits, always on the sample library. Combine it with `-PHWindowWidth`, `-PHWindowHeight`, `-PHInspector YES`, `-PHDark YES`, `-PHSource favorites` (or `videos`, `recent`, `albums`, `album:2`, `label:1`), `-PHViewMode list`, `-PHGrouping month`, `-PHSort title`, `-PHDescending YES`, `-PHZoom 220`, `-PHSearch lake`, `-PHSelect 3,4,5`, `-PHViewer YES`, `-PHCalendar 2019-07`, `-PHRedate day` (or `between`), `-PHOpenSheet changeDate` (or `shortcuts`, `newLabel`), `-PHAccess ask` (or `denied`), `-PHShowAbout YES` or `-PHSettings YES`; `-PHSource memories` shows the Memories page, and `-PHSlideshow today` (or `album:2`, `highlight:1`, `year:1`) plays a slideshow, with `-PHSlideshowAt 3` to jump ahead, `-PHSlideshowFreeze 0.5` to stop its motion halfway through a slide and `-PHSlideshowPaused YES` to pause it. `-PHNotificationClick YES` acts as if today's notification were clicked, and `-PHLaunchedAtLogin YES` starts as if at login. Debug runs on the sample library only record notifications and the login item, never post or register them, and stay silent unless `-PHAudio YES`. `-PHBenchmark YES` adds 60,000 sample photos and times grouping, sorting, searching and laying out the grid.
 
 ## Project layout
 
@@ -134,6 +145,8 @@ Other debug launch arguments: `-PHSampleLibrary YES` uses the sample library: ab
 PugglePhotos/                macOS app target (files are picked up automatically by Xcode)
   App/                       Entry point, app delegate, debug-only sample library, launch options and self-test
   Library/                   The Photos library through PhotoKit, and LibraryController: every change and its undo
+  Memories/                  Finding memories, the Memories page, notifications and opening at login
+  Slideshow/                 Full-screen slideshows, their controls and their music
   Browser/                   The window: sidebar and calendar, the photo grid and its layout, the list, album
                              covers, the toolbar, commands and dropping photos
   Viewer/                    One photo or video at a time
@@ -143,6 +156,8 @@ Packages/PugglePhotosKit/    The catalog, dates, sorting, grouping and search (n
   Model/                     Photos and videos, albums, labels, captions and notes
   Dates/                     Calendar days, moving photos in time, wording for dates and counts
   Library/                   Picking, sorting, grouping and searching photos
+  Memories/                  Finding memories, choosing their photos and planning their notifications
+  Slideshow/                 A slideshow's slides, the pan and zoom across each photo, and the tune
   Store/                     Saving the catalog, with daily backups
 Tools/make-icons.swift       Regenerates the app icon PNGs
 Tools/make-installer.sh      Builds the PugglePhotos.pkg installer
@@ -156,6 +171,10 @@ Tools/release.sh             Releases the next version (see Releasing a new vers
 - **Albums are mirrored.** Each album is linked to its twin in the Photos library, which decides the album's title and photos whenever the two differ: each time the library changes, its albums are read again and new, changed and deleted ones are taken in. A change made in PugglePhotos shows at once and goes to the twin as one change, which compares first so only what differs is changed; changes made while one is on its way follow it together. If the library refuses, it keeps its version and so does PugglePhotos.
 - **Days** are worked out once per item as plain day numbers, so grouping a large library by day, month or year is arithmetic rather than calendar lookups. The grid's layout places thumbnails by arithmetic too, section by section, and asks only for what's on screen, which keeps scrolling smooth with tens of thousands of photos.
 - **Moving photos in time** works out every new date first, keeping the photos in the order they had, then sends the whole batch to the Photos library as one change. Undo sends the old dates back the same way.
+- **Memories** come from an index of photos by calendar day, built once per change to the library. A memory's photos are chosen by score (favorites, captions, notes, labels) with the rest spread across its time, and bursts of near-identical shots count once.
+- **Slideshows** are layers on the screen: each slide's photo moves from one part of it to another with Core Animation (the same seed always gives the same motion), and slides crossfade. Pausing finishes the crossfade and holds the motion where it is. Pictures for the next slides are fetched ahead at the screen's size.
+- **The tune** is synthesized, not recorded: eight bars of soft chords, a low note and a music-box melody in C major, with a gentle echo, rendered once into a seamless loop.
+- **Notifications** for the next 30 days are worked out from the memory index and set ahead with the system, with a picture of each day's best photo, and set again whenever the library, the day or the settings change.
 - **Edits** to the catalog go through one method that keeps the catalog as it was, so undo and redo restore exactly what was there. Changes to the Photos library register their undo at once and write the old values back when undone.
 
 ## Contributing
