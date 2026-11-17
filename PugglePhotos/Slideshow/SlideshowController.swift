@@ -23,6 +23,10 @@ final class SlideshowController: NSObject {
     var onClose: ((Bool) -> Void)?
     /// For screenshots: stops all motion this far (0 to 1) into each slide.
     var frozenProgress: Double?
+    #if DEBUG
+    /// The pan and zoom of the last photo shown, for the self-test.
+    private(set) var lastMotion: KenBurns?
+    #endif
 
     private var images: [PhotoID: CGImage] = [:]
     private var backdrops: [PhotoID: CGImage] = [:]
@@ -171,6 +175,7 @@ final class SlideshowController: NSObject {
         layer.frame = stage.bounds
         layer.contentsScale = window.backingScaleFactor
         fill(layer, for: slide)
+        announce(slide)
         stage.present(layer, animated: animated, transition: SlideshowPlan.transition)
         slideLayer = layer
         slideStarted = Date()
@@ -229,10 +234,31 @@ final class SlideshowController: NSObject {
         }
     }
 
+    /// Tells VoiceOver what's showing: the title and what was written, or which photo it is and what it shows.
+    private func announce(_ slide: Slide) {
+        let spoken: String
+        switch slide.content {
+        case let .title(title, subtitle, _):
+            spoken = [title, subtitle, SlideshowPlan.quote(memory.note)].filter { !$0.isEmpty }.joined(separator: ". ")
+        case .photo(let id), .video(let id):
+            spoken = "\(countedIndex + 1) of \(slides.filter(\.isCounted).count): \(library.spokenDescription(of: id))"
+        case let .end(title):
+            spoken = "End of \(title). Play it again, or see every photo."
+        }
+        stage.setAccessibilityValue(spoken)
+        NSAccessibility.post(element: stage, notification: .announcementRequested,
+                             userInfo: [.announcement: spoken, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    }
+
     /// A photo with its slow pan and zoom, over a blurred copy of itself when it doesn't fill the screen.
     private func addPhoto(_ id: PhotoID, to layer: SlideLayer, duration: TimeInterval, dimmed: CGFloat) {
         let aspect = library.snapshot.item(id)?.aspectRatio ?? 1.5
-        let motion = KenBurns.motion(imageAspect: aspect, screenAspect: screenAspect, seed: KenBurns.seed(id))
+        var motion = KenBurns.motion(imageAspect: aspect, screenAspect: screenAspect, seed: KenBurns.seed(id))
+        // With Reduce Motion, the photo holds still where the pan would have ended.
+        if Motion.isReduced { motion = KenBurns(fills: motion.fills, from: motion.to, to: motion.to) }
+        #if DEBUG
+        lastMotion = motion
+        #endif
         if !motion.fills {
             layer.setBackdrop(backdrops[id], dim: 0.35)
             layer.backdropPhoto = id
@@ -386,6 +412,9 @@ final class SlideshowStageView: NSView {
         root.frame = bounds
         root.isGeometryFlipped = true
         layer?.addSublayer(root)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("Slideshow")
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }

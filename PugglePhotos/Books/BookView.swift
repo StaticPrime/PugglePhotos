@@ -10,6 +10,10 @@ protocol BookViewDelegate: AnyObject {
     func bookDidChangeState(_ state: Int)
     func bookSelectionDidChange(_ id: PhotoID?)
     func bookOpenPhoto(_ id: PhotoID)
+    /// What VoiceOver says for a photo in the book.
+    func bookDescription(of id: PhotoID) -> String
+    /// Where in the book a place is, for VoiceOver.
+    func bookPlace(_ state: Int) -> String
     /// While a photo is dragged or turned: draw its page with it there.
     func bookPreview(_ id: PhotoID, center: CGPoint?, angle: Double?)
     /// When the drag or turn ends.
@@ -40,6 +44,10 @@ final class BookView: NSView {
     private var hovered: PhotoID?
     private var tracking: NSTrackingArea?
     private var drag: Drag?
+    /// The photos VoiceOver finds on the pages showing, made when it first asks.
+    private var spots: [AccessibleSpot]?
+    /// The place VoiceOver was last told about.
+    private var announcedState: Int?
 
     private enum Drag {
         case photo(id: PhotoID, page: Int, start: NSPoint, center: CGPoint, moved: Bool)
@@ -85,6 +93,16 @@ final class BookView: NSView {
         book.addSublayer(handle)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Photo book")
+        setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: "Next Page") { [weak self] in
+                self?.next()
+                return true
+            },
+            NSAccessibilityCustomAction(name: "Previous Page") { [weak self] in
+                self?.previous()
+                return true
+            },
+        ])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
@@ -182,6 +200,11 @@ final class BookView: NSView {
         CATransaction.commit()
         updateSelection()
         refreshVideos()
+        spots = nil
+        if announcedState != state {
+            announcedState = state
+            NSAccessibility.post(element: self, notification: .valueChanged)
+        }
     }
 
     /// Redraws one page in place (after an edit or a photo arriving).
@@ -211,6 +234,40 @@ final class BookView: NSView {
     func next() { turn(forward: true) }
     func previous() { turn(forward: false) }
 
+    // MARK: VoiceOver
+
+    /// Which pages are open: "Cover", "Pages 3–4 of 20".
+    override func accessibilityValue() -> Any? { delegate?.bookPlace(state) }
+
+    /// The photos on the open pages, each found where it lies; pressing one opens it.
+    override func accessibilityChildren() -> [Any]? {
+        if let spots { return spots }
+        guard let layout = delegate?.layout, !isTurning else { return [] }
+        let pages = layout.state(state)
+        var made: [AccessibleSpot] = []
+        for (left, page) in [(true, pages.left), (false, pages.right)] {
+            guard let page else { continue }
+            for placement in layout.pages[page].placements {
+                let id = placement.id
+                made.append(AccessibleSpot(in: self, role: .image, name: { [weak self] in self?.delegate?.bookDescription(of: id) ?? "Photo" },
+                                           rect: { [weak self] in self?.viewFrame(of: placement, left: left) },
+                                           press: { [weak self] in self?.delegate?.bookOpenPhoto(id) }))
+            }
+        }
+        spots = made
+        return made
+    }
+
+    /// Roughly where a photo lies on the open book, in the view.
+    private func viewFrame(of placement: BookPlacement, left: Bool) -> NSRect? {
+        guard let frame = delegate?.layout.settings.frame else { return nil }
+        let size = placement.frameSize(frame)
+        let scale = pageRect(left: left).width / BookLayout.pageSize.width
+        let center = viewPoint(placement.center, onLeft: left)
+        return NSRect(x: center.x - size.width * scale / 2, y: center.y - size.height * scale / 2,
+                      width: size.width * scale, height: size.height * scale)
+    }
+
     // MARK: Turning a page
 
     /// Turns one leaf, from wherever it is now (for a drag let go partway) to the end.
@@ -220,6 +277,11 @@ final class BookView: NSView {
         let target = forward ? state + 1 : state - 1
         guard (0..<layout.stateCount).contains(target) else {
             NSSound.beep()
+            return
+        }
+        // With Reduce Motion, the next pages fade in instead; a page being dragged still follows the pointer.
+        if Motion.isReduced, leaf == nil {
+            fade(to: target)
             return
         }
         if leaf == nil { beginTurn(forward: forward) }
@@ -304,6 +366,19 @@ final class BookView: NSView {
             leftPage.isHidden = under.left == nil
         }
         CATransaction.commit()
+    }
+
+    /// Crossfades to another place in the book, for Reduce Motion.
+    private func fade(to target: Int) {
+        select(nil)
+        stopVideos()
+        let fade = CATransition()
+        fade.type = .fade
+        fade.duration = 0.35
+        layer?.add(fade, forKey: "fade")
+        state = target
+        reload()
+        delegate?.bookDidChangeState(state)
     }
 
     /// Darkens the leaf's faces as it stands upright, as light falls across a curling page.

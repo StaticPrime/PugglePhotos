@@ -210,6 +210,8 @@ final class BookViewController: NSViewController, BookViewDelegate {
 
     func bookOpenPhoto(_ id: PhotoID) { onOpenPhoto?(id) }
 
+    func bookDescription(of id: PhotoID) -> String { library.spokenDescription(of: id) }
+
     func bookPreview(_ id: PhotoID, center: CGPoint?, angle: Double?) {
         var override = draft?.id == id ? draft!.override : (library.catalog.book(album ?? UUID()).overrides[id] ?? BookPlacementOverride())
         if let center { override.center = center }
@@ -282,20 +284,21 @@ final class BookViewController: NSViewController, BookViewDelegate {
 
     func resetLayout() { change("Reset Book Layout") { $0.overrides = [:] } }
 
+    /// Where in the book a place is: "Cover", "Title Page", "Pages 3–4 of 20", "Back Cover".
+    func bookPlace(_ state: Int) -> String {
+        let pages = layout.state(state)
+        if state == 0 { return "Cover" }
+        if state == layout.stateCount - 1 { return "Back Cover" }
+        let numbers = [pages.left, pages.right].compactMap { $0 }.compactMap { layout.pages[$0].number }
+        let photoPages = layout.pages.filter { $0.kind == .photos }.count
+        return numbers.isEmpty ? (state == 1 ? "Title Page" : "End")
+            : "Page\(numbers.count > 1 ? "s" : "") \(numbers.map(String.init).joined(separator: "–")) of \(photoPages)"
+    }
+
     private func updateControls() {
         let count = layout.stateCount
         let state = bookView.state
-        let pages = layout.state(state)
-        if state == 0 {
-            controls.place = "Cover"
-        } else if state == count - 1 {
-            controls.place = "Back Cover"
-        } else {
-            let numbers = [pages.left, pages.right].compactMap { $0 }.compactMap { layout.pages[$0].number }
-            let photoPages = layout.pages.filter { $0.kind == .photos }.count
-            controls.place = numbers.isEmpty ? (state == 1 ? "Title Page" : "End")
-                : "Page\(numbers.count > 1 ? "s" : "") \(numbers.map(String.init).joined(separator: "–")) of \(photoPages)"
-        }
+        controls.place = bookPlace(state)
         controls.canGoBack = state > 0
         controls.canGoOn = state < count - 1
         controls.settings = layout.settings

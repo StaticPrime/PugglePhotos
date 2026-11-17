@@ -40,8 +40,11 @@ final class PhotoCell: NSCollectionViewItem {
         cellView.image = nil
     }
 
-    func configure(_ id: PhotoID, badges: CellBadges, title: String, thumbnails: ThumbnailCache, side: CGFloat, scale: CGFloat) {
+    /// Shows a photo: `title` is its tooltip, `spoken` what VoiceOver says for it.
+    func configure(_ id: PhotoID, badges: CellBadges, title: String, spoken: String, thumbnails: ThumbnailCache, side: CGFloat,
+                   scale: CGFloat) {
         let pixels = side * scale
+        cellView.setAccessibilityLabel(spoken)
         if photoID == id, cellView.image != nil {
             cellView.badges = badges
             return
@@ -50,7 +53,6 @@ final class PhotoCell: NSCollectionViewItem {
         photoID = id
         cellView.badges = badges
         cellView.toolTip = title.isEmpty ? nil : title
-        cellView.setAccessibilityLabel(title.isEmpty ? badges.kind.displayName : title)
         if let cached = thumbnails.cached(id, pixels: pixels) {
             cellView.image = cached
             return

@@ -204,8 +204,8 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
 
     private func configure(_ cell: PhotoCell, at indexPath: IndexPath) {
         guard let id = content.id(at: indexPath), let library = delegate?.library else { return }
-        cell.configure(id, badges: Self.badges(id, library), title: library.title(of: id), thumbnails: library.thumbnails,
-                       side: layout.side, scale: view.window?.backingScaleFactor ?? 2)
+        cell.configure(id, badges: Self.badges(id, library), title: library.title(of: id), spoken: library.spokenDescription(of: id),
+                       thumbnails: library.thumbnails, side: layout.side, scale: view.window?.backingScaleFactor ?? 2)
     }
 
     /// What a thumbnail shows over the photo. With badges turned off in Settings, only a video's length stays.

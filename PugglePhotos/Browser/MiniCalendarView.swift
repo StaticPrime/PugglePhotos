@@ -3,7 +3,8 @@ import PugglePhotosKit
 
 /// The calendar at the bottom of the sidebar. Days with photos are tinted, more strongly the more there are.
 /// Click a day to go to it; drop photos on a day to move them there. While dragging, hover over the arrows to turn
-/// the month.
+/// the month. From the keyboard, the arrow keys move between days, Page Up and Page Down turn the month, and Return
+/// or Space goes to the day; VoiceOver finds each day and the month arrows.
 final class MiniCalendarView: NSView {
     private(set) var year: Int
     private(set) var month: Int
@@ -19,6 +20,12 @@ final class MiniCalendarView: NSView {
     var years: [Int] = []
 
     private var dropDay: CivilDay? { didSet { needsDisplay = true } }
+    /// The day the keyboard is on, ringed while the calendar has the keyboard.
+    private(set) var keyDay: CivilDay? { didSet { noteFocusRingMaskChanged() } }
+    /// The ring shows once the keyboard is used here, not after a click.
+    private var showsKeyRing = false { didSet { noteFocusRingMaskChanged() } }
+    /// What VoiceOver finds in the month showing, made when it first asks.
+    private var spots: [AccessibleSpot]?
     private var springTimer: Timer?
     private var springDirection = 0
 
@@ -47,7 +54,9 @@ final class MiniCalendarView: NSView {
         self.year = year
         self.month = month
         needsDisplay = true
+        spots = nil
         setAccessibilityValue(formatting.monthTitle(year: year, month: month))
+        NSAccessibility.post(element: self, notification: .layoutChanged)
     }
 
     func show(_ day: CivilDay) { show(year: day.year, month: day.month) }
@@ -160,10 +169,88 @@ final class MiniCalendarView: NSView {
         } else if titleRect.contains(point) {
             monthMenu().popUp(positioning: nil, at: NSPoint(x: titleRect.minX, y: titleRect.maxY + 4), in: self)
         } else if let day = day(at: point) {
-            selectedDay = day
-            if !grid.contains(day) { show(day) }
-            onSelectDay?(day)
+            showsKeyRing = false
+            keyDay = day
+            choose(day)
         }
+    }
+
+    private func choose(_ day: CivilDay) {
+        selectedDay = day
+        if !grid.contains(day) { show(day) }
+        onSelectDay?(day)
+    }
+
+    // MARK: The keyboard
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        if keyDay.map(grid.contains) != true {
+            keyDay = [selectedDay, today].compactMap { $0 }.first(where: grid.contains) ?? grid.days.first(where: grid.contains)
+        }
+        showsKeyRing = NSApp.currentEvent?.type == .keyDown
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        noteFocusRingMaskChanged()
+        return true
+    }
+
+    override var focusRingMaskBounds: NSRect { showsKeyRing ? bounds : .zero }
+
+    override func drawFocusRingMask() {
+        guard showsKeyRing, let keyDay, let rect = rect(for: keyDay) else { return }
+        let side = min(rect.width, rect.height) - 1
+        NSBezierPath(ovalIn: NSRect(x: rect.midX - side / 2, y: rect.midY - side / 2, width: side, height: side)).fill()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        showsKeyRing = true
+        let day = keyDay ?? selectedDay ?? today
+        switch event.specialKey {
+        case .leftArrow?: moveKeyDay(to: day.adding(days: -1))
+        case .rightArrow?: moveKeyDay(to: day.adding(days: 1))
+        case .upArrow?: moveKeyDay(to: day.adding(days: -7))
+        case .downArrow?: moveKeyDay(to: day.adding(days: 7))
+        case .pageUp?, .pageDown?:
+            turn(event.specialKey == .pageUp ? -1 : 1)
+            keyDay = grid.days.first { grid.contains($0) && $0.day == day.day } ?? grid.days.last(where: grid.contains)
+        case .carriageReturn?, .enter?: choose(day)
+        default:
+            if event.charactersIgnoringModifiers == " " { choose(day) } else { super.keyDown(with: event) }
+        }
+    }
+
+    private func moveKeyDay(to day: CivilDay) {
+        keyDay = day
+        if !grid.contains(day) { show(day) }
+    }
+
+    // MARK: VoiceOver
+
+    override func accessibilityChildren() -> [Any]? {
+        if let spots { return spots }
+        let made = [AccessibleSpot(in: self, role: .button, name: { "Previous Month" }, rect: { [weak self] in self?.previousRect },
+                                   press: { [weak self] in self?.turn(-1) }),
+                    AccessibleSpot(in: self, role: .button, name: { "Next Month" }, rect: { [weak self] in self?.nextRect },
+                                   press: { [weak self] in self?.turn(1) })]
+            + grid.days.filter(grid.contains).map { day in
+                AccessibleSpot(in: self, role: .button, name: { [weak self] in self?.spokenName(of: day) ?? "" },
+                               rect: { [weak self] in self?.rect(for: day) }, press: { [weak self] in self?.choose(day) })
+            }
+        spots = made
+        return made
+    }
+
+    /// "Tuesday, November 17, 3 photos, today".
+    private func spokenName(of day: CivilDay) -> String {
+        let count = counts[day] ?? 0
+        var parts = [formatting.weekdayAndDay(day), count == 0 ? "no photos" : (count == 1 ? "1 photo" : "\(count) photos")]
+        if day == today { parts.append("today") }
+        if day == selectedDay { parts.append("selected") }
+        return parts.joined(separator: ", ")
     }
 
     override func scrollWheel(with event: NSEvent) {

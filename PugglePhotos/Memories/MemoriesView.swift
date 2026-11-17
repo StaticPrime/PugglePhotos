@@ -70,6 +70,10 @@ struct MemoryCard: View {
     @State private var image: CGImage?
     @State private var hovering = false
     @State private var request: ImageRequest?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Whether the card keeps still under the pointer, for Reduce Motion.
+    private var still: Bool { reduceMotion || Motion.isReduced }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -83,7 +87,7 @@ struct MemoryCard: View {
                 }
             }
             .frame(maxWidth: .infinity, minHeight: height, maxHeight: height)
-            .scaleEffect(hovering ? 1.06 : 1)
+            .scaleEffect(hovering && !still ? 1.06 : 1)
             .animation(.easeOut(duration: 2.5), value: hovering)
             .clipped()
             LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom)
@@ -108,7 +112,7 @@ struct MemoryCard: View {
                     .font(.system(size: 15, weight: .bold))
                     .frame(width: 40, height: 40)
                     .background(Circle().fill(Color.pugglePink))
-                    .scaleEffect(hovering ? 1.12 : 1)
+                    .scaleEffect(hovering && !still ? 1.12 : 1)
                     .animation(.spring(duration: 0.3), value: hovering)
             }
             .foregroundStyle(.white)
