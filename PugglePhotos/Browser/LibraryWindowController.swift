@@ -17,6 +17,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         let book = BookViewController(library: library)
         book.onOpenPhoto = { [weak self] id in self?.openViewer(id) }
         book.onProblem = { [weak self] title, message in self?.showProblem(title, message) }
+        book.onWriteNote = { [weak self, weak book] id, rect, family in
+            self?.writeNote(for: id, anchor: book?.bookView, rect: rect, family: family)
+        }
         return book
     }()
     let inspectorModel: InspectorModel

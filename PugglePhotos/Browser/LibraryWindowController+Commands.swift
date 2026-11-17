@@ -4,9 +4,10 @@ import SwiftUI
 
 /// Menu commands, reached through the responder chain.
 extension LibraryWindowController: NSMenuItemValidation {
-    /// The photos a command acts on: the one in the viewer, or the selection.
+    /// The photos a command acts on: the one in the viewer, the one picked in a book, or the selection.
     var targetIDs: [PhotoID] {
         if let id = state.viewerID { return [id] }
+        if isShowingBook { return (book.bookView.selected ?? book.bookView.selectedSticky).map { [$0] } ?? [] }
         return state.selection
     }
 
@@ -67,6 +68,8 @@ extension LibraryWindowController: NSMenuItemValidation {
                 case "frame": settings.frame.rawValue
                 case "tilt": settings.tilt.rawValue
                 case "perPage": settings.perPage.rawValue
+                case "notes": settings.noteStyle.rawValue
+                case "handwriting": settings.handwriting ?? ""
                 default: settings.cover.rawValue
                 }
                 menuItem.state = current == value ? .on : .off
@@ -134,7 +137,9 @@ extension LibraryWindowController: NSMenuItemValidation {
     /// Writes on the back of the chosen photo, turning it over in the grid to do it.
     @objc func phWriteNote(_ sender: Any?) {
         guard targetIDs.count == 1, let id = targetIDs.first else { return }
-        if state.viewerID == nil, shownGrid, let cell = grid.cellView(for: id) {
+        if isShowingBook {
+            book.writeNote(id)
+        } else if state.viewerID == nil, shownGrid, let cell = grid.cellView(for: id) {
             grid.turnOver(id)
             writeNote(for: id, anchor: cell)
         } else {
@@ -239,6 +244,8 @@ extension LibraryWindowController: NSMenuItemValidation {
             case "frame": settings.frame = BookFrame(rawValue: value) ?? settings.frame
             case "tilt": settings.tilt = BookTilt(rawValue: value) ?? settings.tilt
             case "perPage": settings.perPage = BookPerPage(rawValue: value) ?? settings.perPage
+            case "notes": settings.notes = BookNoteStyle(rawValue: value) ?? settings.notes
+            case "handwriting": settings.handwriting = value.isEmpty ? nil : value
             default: settings.cover = BookCover(rawValue: value) ?? settings.cover
             }
         }

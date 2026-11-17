@@ -18,6 +18,18 @@ protocol BookViewDelegate: AnyObject {
     func bookPreview(_ id: PhotoID, center: CGPoint?, angle: Double?)
     /// When the drag or turn ends.
     func bookCommit(_ id: PhotoID, center: CGPoint?, angle: Double?)
+    /// While a sticky note is moved, resized or turned: draw its page with it so.
+    func bookPreviewSticky(_ id: PhotoID, _ sticky: BookSticky)
+    /// When the move, resize or turn ends.
+    func bookCommitSticky(_ id: PhotoID, _ sticky: BookSticky, actionName: String)
+    /// Write a photo's note, from its sticky note or its back; `rect` is where it is in the view.
+    func bookWriteNote(_ id: PhotoID, at rect: NSRect)
+    /// The menu for a photo, or its sticky note.
+    func bookMenu(for id: PhotoID, sticky: Bool) -> NSMenu?
+    /// Which photo shows its back, and which is left off its page while it turns over above it.
+    func bookSetTurnedOver(_ id: PhotoID?, hiding: PhotoID?)
+    /// A photo alone, front or back, for turning it over above the page.
+    func bookPhotoSide(_ id: PhotoID, back: Bool, scale: CGFloat) -> (image: CGImage, size: CGSize)?
     func bookPlayer(for id: PhotoID, completion: @escaping @MainActor (AVPlayer?) -> Void)
     var alwaysPlaysVideos: Bool { get }
     var playsVideoSound: Bool { get }
@@ -25,11 +37,34 @@ protocol BookViewDelegate: AnyObject {
 
 /// A photo book open on a desk: two pages side by side (or the closed cover), turned with a real-looking page turn.
 /// Click the paper to turn a page, or drag it over; click a photo to pick it, then drag it or its round handle to
-/// move or turn it. Videos play while the pointer is over them.
+/// move or turn it, or click it again to turn it over and read its back. Sticky notes move, stretch and turn the
+/// same way, and a double-click writes on one. Videos play while the pointer is over them.
 final class BookView: NSView {
     weak var delegate: BookViewDelegate?
     private(set) var state = 0
-    private(set) var selected: PhotoID?
+
+    /// What's picked: a photo, or a photo's sticky note.
+    enum Pick: Equatable {
+        case photo(PhotoID)
+        case sticky(PhotoID)
+    }
+
+    private(set) var pick: Pick?
+    /// The photo picked, if it's a photo.
+    var selected: PhotoID? {
+        if case let .photo(id) = pick { return id }
+        return nil
+    }
+    /// The photo whose sticky note is picked.
+    var selectedSticky: PhotoID? {
+        if case let .sticky(id) = pick { return id }
+        return nil
+    }
+    /// The photo turned over to show its back, if any.
+    private(set) var turnedOver: PhotoID?
+    /// The photo turning over above the page, while it turns.
+    private var turnLayer: CALayer?
+    private let stickyHandle = CAShapeLayer()
     private let desk = CAGradientLayer()
     private let book = CALayer()
     private let bookShadow = CALayer()
@@ -50,9 +85,13 @@ final class BookView: NSView {
     private var announcedState: Int?
 
     private enum Drag {
-        case photo(id: PhotoID, page: Int, start: NSPoint, center: CGPoint, moved: Bool)
+        /// `turns`: the photo was already picked, so a click without moving turns it over.
+        case photo(id: PhotoID, page: Int, start: NSPoint, center: CGPoint, moved: Bool, turns: Bool)
         case rotate(id: PhotoID, page: Int, center: CGPoint, startAngle: Double, startPointerAngle: Double)
         case page(forward: Bool, start: NSPoint, progress: CGFloat)
+        case sticky(id: PhotoID, page: Int, start: NSPoint, sticky: BookSticky, moved: Bool)
+        case stretchSticky(id: PhotoID, page: Int, sticky: BookSticky)
+        case turnSticky(id: PhotoID, page: Int, sticky: BookSticky, startPointerAngle: Double)
     }
 
     override init(frame frameRect: NSRect) {
@@ -91,6 +130,9 @@ final class BookView: NSView {
         handle.lineWidth = 2
         book.addSublayer(selection)
         book.addSublayer(handle)
+        stickyHandle.isHidden = true
+        stickyHandle.lineWidth = 2
+        book.addSublayer(stickyHandle)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Photo book")
         setAccessibilityCustomActions([
@@ -120,6 +162,8 @@ final class BookView: NSView {
             selection.strokeColor = Theme.accent.cgColor
             handle.strokeColor = Theme.accent.cgColor
             handle.fillColor = NSColor.white.cgColor
+            stickyHandle.strokeColor = Theme.accent.cgColor
+            stickyHandle.fillColor = NSColor.white.cgColor
         }
     }
 
@@ -153,6 +197,13 @@ final class BookView: NSView {
         let rect = pageRect(left: onLeft)
         let scale = rect.width / BookLayout.pageSize.width
         return CGPoint(x: rect.minX + point.x * scale + offset(for: state), y: rect.minY + point.y * scale)
+    }
+
+    /// A point in the view in a page's coordinates, even off the page: for handles dragged past its edge.
+    func pageCoordinates(_ point: NSPoint, onPage page: Int) -> CGPoint {
+        let rect = pageRect(left: delegate?.layout.state(state).left == page)
+        let scale = BookLayout.pageSize.width / rect.width
+        return CGPoint(x: (point.x - offset(for: state) - rect.minX) * scale, y: (point.y - rect.minY) * scale)
     }
 
     /// The page under a point in the view, and the point in that page's coordinates.
@@ -454,11 +505,13 @@ final class BookView: NSView {
 
     // MARK: Picking and moving photos
 
-    func select(_ id: PhotoID?) {
-        guard selected != id else { return }
-        selected = id
+    func select(_ id: PhotoID?) { pick(id.map(Pick.photo)) }
+
+    func pick(_ new: Pick?) {
+        guard pick != new else { return }
+        pick = new
         updateSelection()
-        delegate?.bookSelectionDidChange(id)
+        delegate?.bookSelectionDidChange(selected)
     }
 
     /// The selected photo's place: its page and whether that's on the left.
@@ -469,7 +522,50 @@ final class BookView: NSView {
         return (found.placement, found.page, found.page == pages.left)
     }
 
+    /// The picked sticky note's photo and where it is.
+    private func stickyPlacement() -> (placement: BookPlacement, page: Int, left: Bool)? {
+        guard let id = selectedSticky, let layout = delegate?.layout, let found = layout.find(id), found.placement.hasSticky,
+              id != turnedOver else { return nil }
+        let pages = layout.state(state)
+        guard found.page == pages.left || found.page == pages.right else { return nil }
+        return (found.placement, found.page, found.page == pages.left)
+    }
+
+    /// Where a sticky note's two handles are: the corner that stretches it, and the knob that turns it.
+    private func stickyHandles(_ placement: BookPlacement, left: Bool) -> (stretch: CGPoint, turn: CGPoint, top: CGPoint) {
+        let rect = placement.sticky.rect
+        return (viewPoint(placement.stickyPage(CGPoint(x: rect.maxX, y: rect.maxY)), onLeft: left),
+                viewPoint(placement.stickyPage(CGPoint(x: 0, y: rect.minY - 24)), onLeft: left),
+                viewPoint(placement.stickyPage(CGPoint(x: 0, y: rect.minY)), onLeft: left))
+    }
+
     private func updateSelection() {
+        stickyHandle.isHidden = true
+        if let (placement, _, left) = stickyPlacement() {
+            let corners = placement.stickyCorners().map { viewPoint($0, onLeft: left) }
+            let outline = CGMutablePath()
+            outline.addLines(between: corners)
+            outline.closeSubpath()
+            let handles = stickyHandles(placement, left: left)
+            let knob = CGMutablePath()
+            knob.move(to: handles.top)
+            knob.addLine(to: handles.turn)
+            knob.addEllipse(in: CGRect(x: handles.turn.x - 7, y: handles.turn.y - 7, width: 14, height: 14))
+            let corner = CGMutablePath()
+            corner.addRect(CGRect(x: handles.stretch.x - 6, y: handles.stretch.y - 6, width: 12, height: 12))
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            let offset = offset(for: state)
+            for layer in [selection, handle, stickyHandle] { layer.frame = book.bounds.offsetBy(dx: -offset, dy: 0) }
+            selection.path = outline
+            handle.path = knob
+            stickyHandle.path = corner
+            selection.isHidden = false
+            handle.isHidden = false
+            stickyHandle.isHidden = false
+            CATransaction.commit()
+            return
+        }
         guard let (placement, _, left) = selectedPlacement(), let frame = delegate?.layout.settings.frame else {
             selection.isHidden = true
             handle.isHidden = true
@@ -505,13 +601,192 @@ final class BookView: NSView {
         return hypot(point.x - knob.x, point.y - knob.y) < 14
     }
 
+    // MARK: Sticky notes
+
+    /// A sticky note moved by a distance on the page: the move turned into its photo's own coordinates.
+    static func moved(_ sticky: BookSticky, by delta: CGPoint, photoAngle: Double) -> BookSticky {
+        let radians = -photoAngle * .pi / 180
+        var moved = sticky
+        moved.center = CGPoint(x: sticky.center.x + delta.x * cos(radians) - delta.y * sin(radians),
+                               y: sticky.center.y + delta.x * sin(radians) + delta.y * cos(radians))
+        return moved
+    }
+
+    /// A sticky note stretched by its bottom right corner to a point on the page, its top left corner staying put.
+    static func stretched(_ sticky: BookSticky, to point: CGPoint, on placement: BookPlacement) -> BookSticky {
+        var before = placement
+        before.sticky = sticky
+        let local = before.stickyLocal(point)
+        let width = max(BookSticky.smallest.width, local.x + sticky.size.width / 2)
+        let height = max(BookSticky.smallest.height, local.y + sticky.size.height / 2)
+        // The middle moves by half the growth, along the note's own lean.
+        let shift = CGPoint(x: (width - sticky.size.width) / 2, y: (height - sticky.size.height) / 2)
+        let radians = sticky.angle * .pi / 180
+        var stretched = sticky
+        stretched.size = CGSize(width: width.rounded(), height: height.rounded())
+        stretched.center = CGPoint(x: sticky.center.x + shift.x * cos(radians) - shift.y * sin(radians),
+                                   y: sticky.center.y + shift.x * sin(radians) + shift.y * cos(radians))
+        return stretched
+    }
+
+    /// A sticky note's lean, turned by its knob: Shift turns it in steps of 15°.
+    static func turned(_ sticky: BookSticky, on placement: BookPlacement, pointer: CGPoint, startPointerAngle: Double, snapping: Bool) -> Double {
+        var before = placement
+        before.sticky = sticky
+        let middle = before.stickyPage(.zero)
+        var angle = sticky.angle + (atan2(pointer.y - middle.y, pointer.x - middle.x) - startPointerAngle) * 180 / .pi
+        if snapping { angle = (angle / 15).rounded() * 15 }
+        return normalized(angle)
+    }
+
+    /// The smallest rectangle in the view around some page points.
+    private func viewRect(of points: [CGPoint], left: Bool) -> NSRect {
+        let view = points.map { viewPoint($0, onLeft: left) }
+        let xs = view.map(\.x), ys = view.map(\.y)
+        return NSRect(x: xs.min() ?? 0, y: ys.min() ?? 0, width: (xs.max() ?? 0) - (xs.min() ?? 0), height: (ys.max() ?? 0) - (ys.min() ?? 0))
+    }
+
+    /// Where a photo is in the view, for a popover beside it.
+    func rect(of id: PhotoID) -> NSRect? {
+        guard let layout = delegate?.layout, let found = layout.find(id) else { return nil }
+        let pages = layout.state(state)
+        guard found.page == pages.left || found.page == pages.right else { return nil }
+        return viewRect(of: found.placement.corners(layout.settings.frame), left: found.page == pages.left)
+    }
+
+    // MARK: Turning a photo over
+
+    /// Turns a photo over to show its back, or back again, turning it in depth above its page (or with Reduce
+    /// Motion, at once). Only one photo shows its back at a time.
+    func turnOver(_ id: PhotoID) {
+        guard let delegate, turnLayer == nil, let found = delegate.layout.find(id) else { return }
+        let pages = delegate.layout.state(state)
+        guard found.page == pages.left || found.page == pages.right else { return }
+        let over = turnedOver != id
+        if over, turnedOver != nil { setTurnedOver(nil) }
+        let page = found.page, left = found.page == pages.left
+        let placement = found.placement
+        let scale = pageRect(left: left).width / BookLayout.pageSize.width
+        let pixels = scale * (window?.backingScaleFactor ?? 2)
+        guard !Motion.isReduced, window != nil, let front = delegate.bookPhotoSide(id, back: false, scale: pixels),
+              let back = delegate.bookPhotoSide(id, back: true, scale: pixels) else {
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = 0.25
+            layer?.add(fade, forKey: "turnOver")
+            setTurnedOver(over ? id : nil)
+            return
+        }
+        let size = CGSize(width: front.size.width * scale, height: front.size.height * scale)
+        let container = CALayer()
+        container.bounds = CGRect(origin: .zero, size: size)
+        let center = viewPoint(placement.center, onLeft: left)
+        container.position = CGPoint(x: center.x - offset(for: state), y: center.y)
+        container.setAffineTransform(CGAffineTransform(rotationAngle: placement.angle * .pi / 180))
+        var perspective = CATransform3DIdentity
+        perspective.m34 = -1 / max(size.width * 3, 300)
+        container.sublayerTransform = perspective
+        let card = CATransformLayer()
+        card.bounds = container.bounds
+        card.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        for (image, isBack) in [(front.image, false), (back.image, true)] {
+            let side = CALayer()
+            side.contents = image
+            side.bounds = container.bounds
+            side.position = card.position
+            side.isDoubleSided = false
+            if isBack { side.transform = CATransform3DMakeRotation(.pi, 0, 1, 0) }
+            card.addSublayer(side)
+        }
+        container.addSublayer(card)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        book.insertSublayer(container, below: selection)
+        card.transform = over ? CATransform3DIdentity : CATransform3DMakeRotation(.pi, 0, 1, 0)
+        selection.isHidden = true
+        handle.isHidden = true
+        stickyHandle.isHidden = true
+        CATransaction.commit()
+        turnLayer = container
+        // The page without the photo while it turns above it.
+        delegate.bookSetTurnedOver(turnedOver, hiding: id)
+        reloadPage(page)
+        stopVideos()
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.setTurnedOver(over ? id : nil)
+                self.turnLayer?.removeFromSuperlayer()
+                self.turnLayer = nil
+                self.updateSelection()
+            }
+        }
+        let turn = CABasicAnimation(keyPath: "transform")
+        turn.fromValue = card.transform
+        turn.toValue = over ? CATransform3DMakeRotation(.pi, 0, 1, 0) : CATransform3DIdentity
+        turn.duration = 0.55
+        turn.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0, 0.2, 1)
+        card.transform = turn.toValue as! CATransform3D
+        card.add(turn, forKey: "turn")
+        CATransaction.commit()
+    }
+
+    /// Shows a photo's back (or no photo's), redrawing the pages it changes.
+    func setTurnedOver(_ id: PhotoID?) {
+        let changed = [turnedOver, id].compactMap { $0 }
+        turnedOver = id
+        delegate?.bookSetTurnedOver(id, hiding: nil)
+        guard let layout = delegate?.layout else { return }
+        for photo in Set(changed) { if let page = layout.find(photo)?.page { reloadPage(page) } }
+        updateSelection()
+        spots = nil
+    }
+
+    /// The turned-over photo goes back when its page is turned.
+    func forgetTurnedOver() {
+        turnedOver = nil
+        turnLayer?.removeFromSuperlayer()
+        turnLayer = nil
+        delegate?.bookSetTurnedOver(nil, hiding: nil)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let delegate, !isTurning, let hit = pagePoint(point), delegate.layout.pages[hit.page].kind == .photos else { return nil }
+        if let placement = delegate.layout.sticky(at: hit.point, onPage: hit.page), placement.id != turnedOver {
+            pick(.sticky(placement.id))
+            return delegate.bookMenu(for: placement.id, sticky: true)
+        }
+        if let placement = delegate.layout.placement(at: hit.point, onPage: hit.page) {
+            select(placement.id)
+            return delegate.bookMenu(for: placement.id, sticky: false)
+        }
+        return nil
+    }
+
     // MARK: Mouse and keys
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
-        guard let delegate, !isTurning else { return }
+        guard let delegate, !isTurning, turnLayer == nil else { return }
         let layout = delegate.layout
+        // A picked sticky note's handles: the corner stretches it, the knob turns it.
+        if let (placement, page, left) = stickyPlacement() {
+            let handles = stickyHandles(placement, left: left)
+            if hypot(point.x - handles.stretch.x, point.y - handles.stretch.y) < 11 {
+                drag = .stretchSticky(id: placement.id, page: page, sticky: placement.sticky)
+                return
+            }
+            if hypot(point.x - handles.turn.x, point.y - handles.turn.y) < 13 {
+                let middle = placement.stickyPage(.zero)
+                let pagePoint = pagePoint(point)?.point ?? middle
+                drag = .turnSticky(id: placement.id, page: page, sticky: placement.sticky,
+                                   startPointerAngle: atan2(pagePoint.y - middle.y, pagePoint.x - middle.x))
+                return
+            }
+        }
         if onHandle(point), let (placement, page, _) = selectedPlacement() {
             let pagePoint = pagePoint(point)?.point ?? placement.center
             drag = .rotate(id: placement.id, page: page, center: placement.center, startAngle: placement.angle,
@@ -522,13 +797,25 @@ final class BookView: NSView {
             select(nil)
             return
         }
+        // Sticky notes lie over the photos.
+        if layout.pages[hit.page].kind == .photos, let placement = layout.sticky(at: hit.point, onPage: hit.page), placement.id != turnedOver {
+            if event.clickCount == 2 {
+                delegate.bookWriteNote(placement.id, at: viewRect(of: placement.stickyCorners(), left: hit.left))
+                return
+            }
+            pick(.sticky(placement.id))
+            drag = .sticky(id: placement.id, page: hit.page, start: point, sticky: placement.sticky, moved: false)
+            return
+        }
         if layout.pages[hit.page].kind == .photos, let placement = layout.placement(at: hit.point, onPage: hit.page) {
             if event.clickCount == 2 {
                 delegate.bookOpenPhoto(placement.id)
                 return
             }
+            // The first click picks a photo; a click on the photo picked turns it over.
+            let turns = selected == placement.id
             select(placement.id)
-            drag = .photo(id: placement.id, page: hit.page, start: point, center: placement.center, moved: false)
+            drag = .photo(id: placement.id, page: hit.page, start: point, center: placement.center, moved: false, turns: turns)
             return
         }
         select(nil)
@@ -541,13 +828,35 @@ final class BookView: NSView {
         guard let current = drag else { return }
         let scale = BookLayout.pageSize.width / pageSize.width
         switch current {
-        case let .photo(id, page, start, center, _):
-            let moved = CGPoint(x: center.x + (point.x - start.x) * scale, y: center.y + (point.y - start.y) * scale)
-            drag = .photo(id: id, page: page, start: start, center: center, moved: true)
-            delegate?.bookPreview(id, center: BookLayout.clamp(moved), angle: nil)
+        case let .photo(id, page, start, center, moved, turns):
+            guard moved || hypot(point.x - start.x, point.y - start.y) > 3 else { return }
+            let to = CGPoint(x: center.x + (point.x - start.x) * scale, y: center.y + (point.y - start.y) * scale)
+            drag = .photo(id: id, page: page, start: start, center: center, moved: true, turns: turns)
+            if turnedOver == id { setTurnedOver(nil) }
+            delegate?.bookPreview(id, center: BookLayout.clamp(to), angle: nil)
             reloadPage(page)
+        case let .sticky(id, page, start, sticky, moved):
+            guard moved || hypot(point.x - start.x, point.y - start.y) > 3, let placement = delegate?.layout.find(id)?.placement else { return }
+            drag = .sticky(id: id, page: page, start: start, sticky: sticky, moved: true)
+            delegate?.bookPreviewSticky(id, Self.moved(sticky, by: CGPoint(x: (point.x - start.x) * scale, y: (point.y - start.y) * scale),
+                                                       photoAngle: placement.angle))
+            reloadPage(page)
+            updateSelection()
+        case let .stretchSticky(id, page, sticky):
+            guard let placement = delegate?.layout.find(id)?.placement else { return }
+            delegate?.bookPreviewSticky(id, Self.stretched(sticky, to: pageCoordinates(point, onPage: page), on: placement))
+            reloadPage(page)
+            updateSelection()
+        case let .turnSticky(id, page, sticky, startPointerAngle):
+            guard let placement = delegate?.layout.find(id)?.placement else { return }
+            var turned = sticky
+            turned.angle = Self.turned(sticky, on: placement, pointer: pageCoordinates(point, onPage: page), startPointerAngle: startPointerAngle,
+                                       snapping: event.modifierFlags.contains(.shift))
+            delegate?.bookPreviewSticky(id, turned)
+            reloadPage(page)
+            updateSelection()
         case let .rotate(id, page, center, startAngle, startPointerAngle):
-            guard let pagePoint = pagePoint(point)?.point else { return }
+            let pagePoint = pageCoordinates(point, onPage: page)
             let pointer = atan2(pagePoint.y - center.y, pagePoint.x - center.x)
             var angle = startAngle + (pointer - startPointerAngle) * 180 / .pi
             if event.modifierFlags.contains(.shift) { angle = (angle / 15).rounded() * 15 }
@@ -567,12 +876,29 @@ final class BookView: NSView {
         guard let current = drag else { return }
         let scale = BookLayout.pageSize.width / pageSize.width
         switch current {
-        case let .photo(id, _, start, center, moved):
-            guard moved else { return }
+        case let .photo(id, _, start, center, moved, turns):
+            guard moved else {
+                if turns { turnOver(id) }
+                return
+            }
             let final = CGPoint(x: center.x + (point.x - start.x) * scale, y: center.y + (point.y - start.y) * scale)
             delegate?.bookCommit(id, center: BookLayout.clamp(final), angle: nil)
-        case let .rotate(id, _, center, startAngle, startPointerAngle):
-            guard let pagePoint = pagePoint(point)?.point else { return }
+        case let .sticky(id, _, start, sticky, moved):
+            guard moved, let placement = delegate?.layout.find(id)?.placement else { return }
+            delegate?.bookCommitSticky(id, Self.moved(sticky, by: CGPoint(x: (point.x - start.x) * scale, y: (point.y - start.y) * scale),
+                                                      photoAngle: placement.angle), actionName: "Move Sticky Note")
+        case let .stretchSticky(id, page, sticky):
+            guard let placement = delegate?.layout.find(id)?.placement else { return }
+            delegate?.bookCommitSticky(id, Self.stretched(sticky, to: pageCoordinates(point, onPage: page), on: placement),
+                                       actionName: "Resize Sticky Note")
+        case let .turnSticky(id, page, sticky, startPointerAngle):
+            guard let placement = delegate?.layout.find(id)?.placement else { return }
+            var turned = sticky
+            turned.angle = Self.turned(sticky, on: placement, pointer: pageCoordinates(point, onPage: page), startPointerAngle: startPointerAngle,
+                                       snapping: event.modifierFlags.contains(.shift))
+            delegate?.bookCommitSticky(id, turned, actionName: "Turn Sticky Note")
+        case let .rotate(id, page, center, startAngle, startPointerAngle):
+            let pagePoint = pageCoordinates(point, onPage: page)
             var angle = startAngle + (atan2(pagePoint.y - center.y, pagePoint.x - center.x) - startPointerAngle) * 180 / .pi
             if event.modifierFlags.contains(.shift) { angle = (angle / 15).rounded() * 15 }
             delegate?.bookCommit(id, center: nil, angle: Self.normalized(angle))
@@ -596,7 +922,8 @@ final class BookView: NSView {
         switch event.keyCode {
         case 123: previous()
         case 124: next()
-        case 53: select(nil)
+        case 53:
+            if turnedOver != nil { turnOver(turnedOver!) } else { pick(nil) }
         default:
             super.keyDown(with: event)
         }

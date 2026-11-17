@@ -15,6 +15,7 @@ final class BookControlsModel {
     var hiddenCount = 0
     var hasSelection = false
     var isBusy = false
+    var choosingHandwriting = false
     @ObservationIgnored weak var controller: BookViewController?
 }
 
@@ -43,12 +44,17 @@ final class BookViewController: NSViewController, BookViewDelegate {
     private var imageOrder: [PhotoID] = []
     private var requests: [PhotoID: ImageRequest] = [:]
     private var draft: (id: PhotoID, override: BookPlacementOverride)?
+    /// The photo showing its back, and the one left off its page while it turns over.
+    private var turnedOver: PhotoID?
+    private var hiding: PhotoID?
     /// Where each album's book was left open.
     private var places: [UUID: Int] = [:]
     /// Called to open a photo in the viewer.
     var onOpenPhoto: ((PhotoID) -> Void)?
     /// Called to show a problem.
     var onProblem: ((String, String) -> Void)?
+    /// Called to write a photo's note, beside a rectangle of the book view, in the book's handwriting.
+    var onWriteNote: ((PhotoID, NSRect, String?) -> Void)?
 
     init(library: LibraryController) {
         self.library = library
@@ -87,6 +93,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
         if album != id {
             if let album { places[album] = bookView.state }
             album = id
+            bookView.forgetTurnedOver()
             images = [:]
             imageOrder = []
             requests.values.forEach { $0.cancel() }
@@ -110,14 +117,16 @@ final class BookViewController: NSViewController, BookViewDelegate {
         case .newestFirst: ids = arranger.sorted(ids, by: .dateTaken, ascending: false)
         }
         let items = ids.compactMap { id in library.snapshot.item(id).map { BookItem(id: id, aspect: $0.aspectRatio, isVideo: $0.kind.isVideo) } }
-        var captions: [PhotoID: String] = [:]
+        var captions: [PhotoID: String] = [:], notes: [PhotoID: String] = [:]
         for id in ids {
-            if let caption = library.catalog.photos[id]?.caption, !caption.isEmpty { captions[id] = caption }
+            guard let details = library.catalog.photos[id] else { continue }
+            if !details.caption.isEmpty { captions[id] = details.caption }
+            if !details.note.isEmpty { notes[id] = details.note }
         }
         var settings = library.catalog.book(album)
         if let draft { settings.overrides[draft.id] = draft.override }
         let cover = arranger.cover(of: albumValue)
-        layout = BookLayout(items: items, captions: captions, settings: settings, coverPhoto: cover)
+        layout = BookLayout(items: items, captions: captions, notes: notes, settings: settings, coverPhoto: cover)
         let summary = arranger.summary(of: albumValue)
         let subtitle = [library.formatting.dateRange(from: summary.firstDate, to: summary.lastDate),
                         library.formatting.count(photos: summary.photos, videos: summary.videos)].compactMap { $0 }.joined(separator: " · ")
@@ -125,6 +134,10 @@ final class BookViewController: NSViewController, BookViewDelegate {
             self?.images[id]
         }
         renderer.coverPhoto = cover
+        renderer.turnedOver = turnedOver
+        renderer.hiding = hiding
+        let library = library
+        renderer.day = { id in library.snapshot.day(of: id).map(library.formatting.writtenDay) ?? "" }
         self.renderer = renderer
         pageImages = [:]
         prefetch()
@@ -202,6 +215,11 @@ final class BookViewController: NSViewController, BookViewDelegate {
 
     func bookDidChangeState(_ state: Int) {
         if let album { places[album] = state }
+        // A photo turned over goes back when its page is turned away.
+        if let turned = bookView.turnedOver, let page = layout.find(turned)?.page {
+            let showing = layout.state(state)
+            if page != showing.left, page != showing.right { bookView.forgetTurnedOver() }
+        }
         prefetch()
         updateControls()
     }
@@ -231,6 +249,135 @@ final class BookViewController: NSViewController, BookViewDelegate {
             settings.overrides[id] = override
             catalog.setBook(settings, for: album)
         }
+    }
+
+    func bookPreviewSticky(_ id: PhotoID, _ sticky: BookSticky) {
+        var override = draft?.id == id ? draft!.override : (library.catalog.book(album ?? UUID()).overrides[id] ?? BookPlacementOverride())
+        override.sticky = sticky
+        draft = (id, override)
+        rebuildKeepingImages()
+    }
+
+    func bookCommitSticky(_ id: PhotoID, _ sticky: BookSticky, actionName: String) {
+        draft = nil
+        change(actionName) { settings in settings.changeOverride(id) { $0.sticky = sticky } }
+    }
+
+    func bookWriteNote(_ id: PhotoID, at rect: NSRect) { onWriteNote?(id, rect, layout.settings.handwriting) }
+
+    /// Writes on the back of a photo in the book: beside it, if it's on the open pages.
+    func writeNote(_ id: PhotoID) {
+        if let rect = bookView.rect(of: id) { onWriteNote?(id, rect, layout.settings.handwriting) }
+    }
+
+    func bookSetTurnedOver(_ id: PhotoID?, hiding: PhotoID?) {
+        turnedOver = id
+        self.hiding = hiding
+        renderer?.turnedOver = id
+        renderer?.hiding = hiding
+        pageImages = [:]
+        updateControls()
+    }
+
+    func bookPhotoSide(_ id: PhotoID, back: Bool, scale: CGFloat) -> (image: CGImage, size: CGSize)? {
+        guard let renderer, let placement = layout.find(id)?.placement else { return nil }
+        return renderer.photoSide(placement, back: back, scale: scale)
+    }
+
+    /// Right-click on a photo or its sticky note: turn it over, write on it, how its note shows, the sticky note's
+    /// color, and leaving it out.
+    func bookMenu(for id: PhotoID, sticky: Bool) -> NSMenu? {
+        guard let placement = layout.find(id)?.placement else { return nil }
+        let menu = NSMenu()
+        func add(_ title: String, _ action: Selector, _ value: Any? = nil, checked: Bool = false) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = value ?? id
+            item.state = checked ? .on : .off
+            menu.addItem(item)
+        }
+        add(bookView.turnedOver == id ? "Turn Back Over" : "Turn Over", #selector(menuTurnOver(_:)))
+        add("Write on the Back…", #selector(menuWriteNote(_:)))
+        menu.addItem(.separator())
+        let noteMenu = NSMenu()
+        let current = layout.settings.overrides[id]?.noteStyle
+        let bookStyle = layout.settings.noteStyle.displayName(for: layout.settings.frame)
+        for (title, style) in [("As the Book Does (\(bookStyle))", nil)] + BookNoteStyle.allCases.map({ ($0.singularName, Optional($0)) }) {
+            let item = NSMenuItem(title: title, action: #selector(menuNoteStyle(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = NoteChoice(id: id, style: style)
+            item.state = current == style ? .on : .off
+            noteMenu.addItem(item)
+        }
+        let noteItem = NSMenuItem(title: "Note", action: nil, keyEquivalent: "")
+        noteItem.submenu = noteMenu
+        menu.addItem(noteItem)
+        if placement.hasSticky {
+            let colors = NSMenu()
+            for color in BookStickyColor.allCases {
+                let item = NSMenuItem(title: color.displayName, action: #selector(menuStickyColor(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = StickyColorChoice(id: id, color: color)
+                item.state = placement.sticky.color == color ? .on : .off
+                item.image = MenuBuilder.labelImage(NSColor(cgColor: BookRenderer.color(color.color)) ?? .yellow)
+                colors.addItem(item)
+            }
+            let colorItem = NSMenuItem(title: "Sticky Note Color", action: nil, keyEquivalent: "")
+            colorItem.submenu = colors
+            menu.addItem(colorItem)
+            if layout.settings.overrides[id]?.sticky != nil { add("Put Sticky Note Back", #selector(menuResetSticky(_:))) }
+        }
+        if !sticky {
+            menu.addItem(.separator())
+            add("Leave Out of Book", #selector(menuLeaveOut(_:)))
+        }
+        return menu
+    }
+
+    private final class NoteChoice: NSObject {
+        let id: PhotoID, style: BookNoteStyle?
+        init(id: PhotoID, style: BookNoteStyle?) { self.id = id; self.style = style }
+    }
+
+    private final class StickyColorChoice: NSObject {
+        let id: PhotoID, color: BookStickyColor
+        init(id: PhotoID, color: BookStickyColor) { self.id = id; self.color = color }
+    }
+
+    @objc private func menuTurnOver(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? PhotoID { bookView.turnOver(id) }
+    }
+
+    @objc private func menuWriteNote(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? PhotoID { writeNote(id) }
+    }
+
+    @objc private func menuNoteStyle(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? NoteChoice else { return }
+        setNoteStyle(choice.style, for: choice.id)
+    }
+
+    /// How one photo's note shows; nil to show it as the book does.
+    func setNoteStyle(_ style: BookNoteStyle?, for id: PhotoID) {
+        change(style == .hidden ? "Hide Note" : "Show Note") { settings in settings.changeOverride(id) { $0.noteStyle = style } }
+    }
+
+    @objc private func menuStickyColor(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? StickyColorChoice, let placement = layout.find(choice.id)?.placement else { return }
+        var sticky = placement.sticky
+        sticky.color = choice.color
+        change("Sticky Note Color") { settings in settings.changeOverride(choice.id) { $0.sticky = sticky } }
+    }
+
+    @objc private func menuResetSticky(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? PhotoID else { return }
+        change("Put Sticky Note Back") { settings in settings.changeOverride(id) { $0.sticky = nil } }
+    }
+
+    @objc private func menuLeaveOut(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? PhotoID else { return }
+        bookView.select(id)
+        leaveOutSelected()
     }
 
     /// Lays out again without dropping the pictures, for live previews.
@@ -275,14 +422,30 @@ final class BookViewController: NSViewController, BookViewDelegate {
 
     func putBackLeftOut() { change("Put Back in Book") { $0.hidden = [] } }
 
+    /// Lays the book out afresh. Photos go to new places; their sticky notes and how their notes show stay with them.
     func shuffle() {
         change("Shuffle Book") { settings in
             settings.seed = settings.seed &+ 1
-            settings.overrides = [:]
+            for id in Array(settings.overrides.keys) {
+                settings.changeOverride(id) { override in
+                    override.center = nil
+                    override.angle = nil
+                    override.scale = nil
+                }
+            }
         }
     }
 
-    func resetLayout() { change("Reset Book Layout") { $0.overrides = [:] } }
+    /// Puts back every photo and sticky note the person moved, turned or resized; how notes show stays.
+    func resetLayout() {
+        change("Reset Book Layout") { settings in
+            for id in Array(settings.overrides.keys) {
+                settings.changeOverride(id) { override in
+                    override = BookPlacementOverride(noteStyle: override.noteStyle)
+                }
+            }
+        }
+    }
 
     /// Where in the book a place is: "Cover", "Title Page", "Pages 3–4 of 20", "Back Cover".
     func bookPlace(_ state: Int) -> String {
@@ -360,6 +523,14 @@ final class BookViewController: NSViewController, BookViewDelegate {
     /// Draws one place in the book with its pages side by side, from the top left of a page `height` tall.
     func drawSpread(_ state: Int, in context: CGContext, height: CGFloat) {
         guard let renderer else { return }
+        // On paper, every photo shows its front.
+        let turned = renderer.turnedOver, hidden = renderer.hiding
+        renderer.turnedOver = nil
+        renderer.hiding = nil
+        defer {
+            renderer.turnedOver = turned
+            renderer.hiding = hidden
+        }
         let pages = layout.state(state)
         var x: CGFloat = 0
         for (page, left) in [(pages.left, true), (pages.right, false)] {
@@ -468,6 +639,26 @@ struct BookControlsView: View {
             picker("Tilt", BookTilt.allCases, \.tilt, \.displayName)
             picker("Layout", BookPerPage.allCases, \.perPage, \.displayName)
             picker("Cover", BookCover.allCases, \.cover, \.displayName)
+            Menu {
+                ForEach(BookNoteStyle.allCases, id: \.self) { style in
+                    Button {
+                        model.controller?.change("Notes") { $0.notes = style }
+                    } label: {
+                        let name = style.displayName(for: model.settings.frame)
+                        if model.settings.noteStyle == style { Label(name, systemImage: "checkmark") } else { Text(name) }
+                    }
+                }
+            } label: {
+                Text("Notes")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("How the photos’ notes show in this book")
+            Button { model.choosingHandwriting = true } label: { Label("Handwriting", systemImage: "pencil.and.scribble") }
+                .help("The handwriting this book is written in")
+                .popover(isPresented: $model.choosingHandwriting) {
+                    BookHandwritingView(model: model).padding(14).frame(width: 440)
+                }
             Button { model.controller?.shuffle() } label: { Label("Shuffle", systemImage: "dice") }
                 .help("Lay the book out afresh")
             if model.hiddenCount > 0 {
@@ -502,5 +693,22 @@ struct BookControlsView: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+    }
+}
+
+/// A book's handwriting: the one chosen in Settings, or its own.
+struct BookHandwritingView: View {
+    @Bindable var model: BookControlsModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("As in Settings (\(Handwriting.name(of: Handwriting.family)))", isOn: Binding(
+                get: { model.settings.handwriting == nil },
+                set: { follows in model.controller?.change("Handwriting") { $0.handwriting = follows ? nil : Handwriting.family } }))
+            HandwritingPicker(family: Binding(
+                get: { model.settings.handwriting ?? Handwriting.family },
+                set: { family in model.controller?.change("Handwriting") { $0.handwriting = family } }),
+                followsSettings: Binding(get: { model.settings.handwriting == nil }, set: { _ in }))
+        }
     }
 }

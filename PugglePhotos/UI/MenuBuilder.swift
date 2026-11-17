@@ -189,6 +189,12 @@ enum MenuBuilder {
             choices("Tilt", "tilt", BookTilt.allCases, \.displayName),
             choices("Layout", "perPage", BookPerPage.allCases, \.displayName),
             choices("Cover", "cover", BookCover.allCases, \.displayName),
+            choices("Notes", "notes", BookNoteStyle.allCases, \.displayName),
+            submenu("Handwriting", ([("As in Settings", "")] + Handwriting.styles.map { ($0.name, $0.family) }).map { name, family in
+                let menuItem = item(name, #selector(LibraryWindowController.phBookStyle(_:)))
+                menuItem.representedObject = ("handwriting", family)
+                return menuItem
+            }),
             item("Shuffle Book Layout", #selector(LibraryWindowController.phShuffleBook(_:)), symbol: "dice"),
             item("Reset Book Layout", #selector(LibraryWindowController.phResetBookLayout(_:))),
             item("Put Back Left-Out Photos", #selector(LibraryWindowController.phPutBackInBook(_:))),

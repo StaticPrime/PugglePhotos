@@ -421,9 +421,10 @@ extension LibraryWindowController {
         }
     }
 
-    /// Writing on the back of a photo: in a popover beside it, or a sheet when it isn't on screen. A click elsewhere
-    /// keeps what was written; only Cancel throws it away.
-    func writeNote(for id: PhotoID, anchor: NSView?) {
+    /// Writing on the back of a photo: in a popover beside it (beside `rect` of `anchor`, or all of it), or a sheet
+    /// when it isn't on screen, in a book's handwriting or the one chosen in Settings. A click elsewhere keeps what
+    /// was written; only Cancel throws it away.
+    func writeNote(for id: PhotoID, anchor: NSView?, rect: NSRect? = nil, family: String? = nil) {
         let draft = NoteDraft(library.catalog.details(id).note)
         let title = library.snapshot.day(of: id).map(library.formatting.longDay) ?? ""
         let save: () -> Void = { [weak self] in
@@ -433,12 +434,12 @@ extension LibraryWindowController {
             library.edit(text.isEmpty ? "Erase Note" : "Note") { $0.setNote(text, for: id) }
         }
         if let anchor {
-            presentPopover(at: anchor.bounds, of: anchor, edge: .maxX, onClose: save) { close in
-                NoteEditorView(draft: draft, title: title, family: nil, onCancel: close, onSave: close)
+            presentPopover(at: rect ?? anchor.bounds, of: anchor, edge: .maxX, onClose: save) { close in
+                NoteEditorView(draft: draft, title: title, family: family, onCancel: close, onSave: close)
             }
         } else {
             presentSheet { dismiss in
-                NoteEditorView(draft: draft, title: title, family: nil, onCancel: dismiss) {
+                NoteEditorView(draft: draft, title: title, family: family, onCancel: dismiss) {
                     dismiss()
                     save()
                 }

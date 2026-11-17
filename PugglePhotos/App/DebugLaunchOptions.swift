@@ -105,13 +105,17 @@ enum DebugLaunchOptions {
         if defaults.object(forKey: "PHDescending") != nil { controller.setAscending(!defaults.bool(forKey: "PHDescending")) }
         // `-PHViewMode book` opens an album as a book: `-PHBookState 2` turns to the second spread, `-PHBookPaper black`,
         // `-PHBookFrame print`, `-PHBookTilt playful` and `-PHBookLayout one` restyle it, `-PHBookSelect YES` picks its first
-        // photo, and `-PHBookTurn 0.4` holds a page partway through turning.
+        // photo, and `-PHBookTurn 0.4` holds a page partway through turning. `-PHBookNotes sticky` (or `onPhoto`,
+        // `underPhoto`, `hidden`) shows the notes that way, `-PHBookHandwriting "Marker Felt"` writes in that hand,
+        // `-PHBookTurnOver YES` turns the first photo on the spread over, and `-PHBookSticky YES` picks a sticky note.
         if controller.isShowingBook {
             let book = controller.book
             if let value = defaults.string(forKey: "PHBookPaper"), let paper = BookPaper(rawValue: value) { book.change("Paper") { $0.paper = paper } }
             if let value = defaults.string(forKey: "PHBookFrame"), let frame = BookFrame(rawValue: value) { book.change("Frames") { $0.frame = frame } }
             if let value = defaults.string(forKey: "PHBookTilt"), let tilt = BookTilt(rawValue: value) { book.change("Tilt") { $0.tilt = tilt } }
             if let value = defaults.string(forKey: "PHBookLayout"), let perPage = BookPerPage(rawValue: value) { book.change("Layout") { $0.perPage = perPage } }
+            if let value = defaults.string(forKey: "PHBookNotes"), let notes = BookNoteStyle(rawValue: value) { book.change("Notes") { $0.notes = notes } }
+            if let value = defaults.string(forKey: "PHBookHandwriting") { book.change("Handwriting") { $0.handwriting = value } }
             let place = defaults.integer(forKey: "PHBookState")
             if place > 0 { book.bookView.go(to: place, animated: false) }
             if defaults.bool(forKey: "PHBookSelect") {
@@ -119,6 +123,13 @@ enum DebugLaunchOptions {
                 let first = [pages.left, pages.right].compactMap { $0 }.flatMap { book.layout.pages[$0].placements }.first { _ in true }
                 if let first, book.layout.pages[book.layout.find(first.id)?.page ?? 0].kind == .photos { book.bookView.select(first.id) }
             }
+            let showing = book.layout.state(book.bookView.state)
+            let photos = [showing.left, showing.right].compactMap { $0 }.flatMap { book.layout.pages[$0].kind == .photos ? book.layout.pages[$0].placements : [] }
+            if defaults.bool(forKey: "PHBookTurnOver"), let first = photos.first {
+                book.bookView.select(first.id)
+                book.bookView.setTurnedOver(first.id)
+            }
+            if defaults.bool(forKey: "PHBookSticky"), let noted = photos.first(where: \.hasSticky) { book.bookView.pick(.sticky(noted.id)) }
             let turn = defaults.double(forKey: "PHBookTurn")
             if turn > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { book.bookView.holdTurn(at: turn) } }
         }

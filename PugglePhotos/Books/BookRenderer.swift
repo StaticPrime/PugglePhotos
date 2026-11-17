@@ -1,9 +1,9 @@
 import AppKit
 import PugglePhotosKit
 
-/// Draws a photo book's pages: paper with a little grain, each photo in its frame with a soft shadow, captions in a
-/// handwriting font, tape, page numbers, the title page, endpapers and the cloth covers. The same drawing serves the
-/// screen, the page turns, PDFs and printing.
+/// Draws a photo book's pages: paper with a little grain, each photo in its frame with a soft shadow, captions and
+/// notes in the book's handwriting, sticky notes, tape, page numbers, the title page, endpapers and the cloth covers,
+/// and the back of a photo turned over. The same drawing serves the screen, the page turns, PDFs and printing.
 final class BookRenderer {
     let settings: BookSettings
     let title: String
@@ -11,6 +11,12 @@ final class BookRenderer {
     let story: String
     /// The picture for a photo, if it has arrived; whole, not cropped.
     var image: (PhotoID) -> CGImage?
+    /// The photo turned over to show its back, if any.
+    var turnedOver: PhotoID?
+    /// A photo left off its page while it turns over above it.
+    var hiding: PhotoID?
+    /// The day a photo was taken, as written on its back.
+    var day: (PhotoID) -> String = { _ in "" }
 
     init(settings: BookSettings, title: String, subtitle: String, story: String, image: @escaping (PhotoID) -> CGImage?) {
         self.settings = settings
@@ -60,7 +66,11 @@ final class BookRenderer {
             drawTitleText(in: context, below: page.placements.first.map { $0.center.y + $0.frameSize(settings.frame).height / 2 } ?? 120)
         case .photos, .blank, .added:
             drawPaper(in: context, bounds: bounds)
-            for placement in page.placements { drawPlacement(placement, in: context) }
+            for placement in page.placements where placement.id != hiding { drawPlacement(placement, in: context) }
+            // Sticky notes lie over every photo on the page.
+            for placement in page.placements where placement.hasSticky && placement.id != hiding && placement.id != turnedOver {
+                drawSticky(placement, in: context)
+            }
             if let number = page.number { drawPageNumber(number, in: bounds) }
         }
         if page.kind != .cover, page.kind != .back { drawGutter(in: context, bounds: bounds, isLeft: isLeft) }
@@ -137,8 +147,13 @@ final class BookRenderer {
 
     // MARK: Photos
 
-    /// One photo: its shadow, its frame, the picture, a play badge for videos, tape, and its caption.
+    /// One photo: its shadow, its frame, the picture, a play badge for videos, tape, its caption and its note; or
+    /// its back, when it's turned over.
     func drawPlacement(_ placement: BookPlacement, in context: CGContext, selected: Bool = false) {
+        if placement.id == turnedOver {
+            drawBack(placement, in: context)
+            return
+        }
         let frame = settings.frame
         context.saveGState()
         context.translateBy(x: placement.center.x, y: placement.center.y)
@@ -161,7 +176,131 @@ final class BookRenderer {
         if placement.isVideo { drawPlayBadge(in: context, rect: picture) }
         if frame == .taped { drawTape(in: context, frame: outer) }
         if !placement.caption.isEmpty { drawCaption(placement.caption, in: placement.captionRect(frame), onFrame: frame == .instant) }
+        if placement.showsNote, placement.noteStyle == .onPhoto || placement.noteStyle == .underPhoto { drawNote(placement, frame: frame) }
         context.restoreGState()
+    }
+
+    /// The back of a photo: its frame's shape in photo paper, with the day, the caption and the note.
+    private func drawBack(_ placement: BookPlacement, in context: CGContext) {
+        let frame = settings.frame
+        context.saveGState()
+        context.translateBy(x: placement.center.x, y: placement.center.y)
+        context.rotate(by: placement.angle * .pi / 180)
+        let outer = placement.frameRect(frame)
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: 4), blur: 10,
+                          color: NSColor.black.withAlphaComponent(settings.paper.isDark ? 0.55 : 0.28).cgColor)
+        context.setFillColor(PhotoBack.paper.cgColor)
+        context.fill(outer)
+        context.restoreGState()
+        PhotoBack.draw(PhotoBack.Content(day: day(placement.id), caption: placement.caption, note: placement.note, family: settings.handwriting),
+                       in: outer, context: context, prompt: false)
+        context.restoreGState()
+    }
+
+    /// A photo's note written on it or under it: in an instant photo's white space, across the bottom of the
+    /// picture in white, or on the paper beneath.
+    private func drawNote(_ placement: BookPlacement, frame: BookFrame) {
+        let rect = placement.noteRect(frame)
+        let onPicture = placement.noteStyle == .onPhoto && frame != .instant
+        let onFrame = placement.noteStyle == .onPhoto && frame == .instant
+        let color: NSColor = onPicture ? .white : (onFrame ? NSColor(srgbRed: 0.15, green: 0.22, blue: 0.45, alpha: 0.92) : ink.withAlphaComponent(0.88))
+        var size = min(19, max(11, rect.height * (onFrame ? 0.4 : 0.34)))
+        while size > 9, textHeight(placement.note, font: handwriting(size), width: rect.width) > rect.height { size -= 1 }
+        let previous = NSGraphicsContext.current?.cgContext
+        if onPicture {
+            previous?.saveGState()
+            previous?.setShadow(offset: CGSize(width: 0, height: 1), blur: 4, color: NSColor.black.withAlphaComponent(0.75).cgColor)
+        }
+        drawText(placement.note, font: handwriting(size), color: color, in: rect, lines: max(1, Int(rect.height / (size * 1.2))))
+        if onPicture { previous?.restoreGState() }
+    }
+
+    // MARK: Sticky notes
+
+    /// A sticky note stuck to a photo: square paper, a touch lighter at the top where it's stuck, lifting a little
+    /// at the bottom corner, with the note written on it.
+    func drawSticky(_ placement: BookPlacement, in context: CGContext) {
+        let sticky = placement.sticky
+        context.saveGState()
+        context.translateBy(x: placement.center.x, y: placement.center.y)
+        context.rotate(by: placement.angle * .pi / 180)
+        context.translateBy(x: sticky.center.x, y: sticky.center.y)
+        context.rotate(by: sticky.angle * .pi / 180)
+        let rect = sticky.rect
+        let curl = min(rect.width, rect.height) * 0.11
+        let paper = CGMutablePath()
+        paper.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        paper.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        paper.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - curl))
+        paper.addQuadCurve(to: CGPoint(x: rect.maxX - curl, y: rect.maxY), control: CGPoint(x: rect.maxX - curl * 0.1, y: rect.maxY - curl * 0.1))
+        paper.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        paper.closeSubpath()
+        // The shadow falls more where the paper lifts.
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 1.5, height: 4), blur: 7, color: NSColor.black.withAlphaComponent(0.3).cgColor)
+        context.addPath(paper)
+        context.setFillColor(Self.color(sticky.color.color))
+        context.fillPath()
+        context.restoreGState()
+        context.saveGState()
+        context.addPath(paper)
+        context.clip()
+        let colors = [NSColor.white.withAlphaComponent(0.22).cgColor, NSColor.white.withAlphaComponent(0).cgColor,
+                      NSColor.black.withAlphaComponent(0.07).cgColor]
+        if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: [0, 0.3, 1]) {
+            context.drawLinearGradient(gradient, start: CGPoint(x: rect.minX, y: rect.minY), end: CGPoint(x: rect.maxX, y: rect.maxY), options: [])
+        }
+        // The sticky strip along the top.
+        context.setFillColor(NSColor.black.withAlphaComponent(0.035).cgColor)
+        context.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * 0.17))
+        // The lifted corner catches the light.
+        let lift = CGMutablePath()
+        lift.move(to: CGPoint(x: rect.maxX, y: rect.maxY - curl))
+        lift.addQuadCurve(to: CGPoint(x: rect.maxX - curl, y: rect.maxY), control: CGPoint(x: rect.maxX - curl * 0.1, y: rect.maxY - curl * 0.1))
+        lift.addLine(to: CGPoint(x: rect.maxX - curl * 1.2, y: rect.maxY - curl * 1.2))
+        lift.closeSubpath()
+        context.addPath(lift)
+        context.setFillColor(NSColor.white.withAlphaComponent(0.28).cgColor)
+        context.fillPath()
+        context.restoreGState()
+        // The note.
+        let room = CGRect(x: rect.minX + rect.width * 0.1, y: rect.minY + rect.height * 0.17, width: rect.width * 0.8, height: rect.height * 0.74)
+        var size = min(26, max(10, min(rect.width, rect.height) * 0.15))
+        while size > 8, textHeight(placement.note, font: handwriting(size), width: room.width) > room.height { size -= 0.5 }
+        let previous = NSGraphicsContext.current
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        drawText(placement.note, font: handwriting(size), color: NSColor(srgbRed: 0.17, green: 0.16, blue: 0.24, alpha: 0.92), in: room,
+                 lines: max(1, Int(room.height / (size * 1.15))), alignment: .left, top: true)
+        NSGraphicsContext.current = previous
+        context.restoreGState()
+    }
+
+    /// One photo alone, its front or its back, as a picture `scale` pixels to a page point with room around it for
+    /// its shadow; unturned, for turning over above the page. Also answers the picture's size in page points.
+    func photoSide(_ placement: BookPlacement, back: Bool, scale: CGFloat) -> (image: CGImage, size: CGSize)? {
+        let frame = placement.frameSize(settings.frame)
+        let margin: CGFloat = 24
+        let size = CGSize(width: frame.width + margin * 2, height: frame.height + margin * 2)
+        let width = Int((size.width * scale).rounded()), height = Int((size.height * scale).rounded())
+        guard width > 0, height > 0,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: scale, y: -scale)
+        let previous = NSGraphicsContext.current
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        defer { NSGraphicsContext.current = previous }
+        var alone = placement
+        alone.center = CGPoint(x: size.width / 2, y: size.height / 2)
+        alone.angle = 0
+        let turned = turnedOver
+        turnedOver = back ? placement.id : nil
+        drawPlacement(alone, in: context)
+        turnedOver = turned
+        return context.makeImage().map { ($0, size) }
     }
 
     /// The picture, cropped to fill its space, or a soft gray while it loads.
@@ -213,12 +352,16 @@ final class BookRenderer {
 
     // MARK: Words
 
-    static func handwriting(_ size: CGFloat, bold: Bool = false) -> NSFont {
-        for name in bold ? ["Noteworthy-Bold", "MarkerFelt-Wide", "BradleyHandITCTT-Bold"] : ["Noteworthy-Light", "BradleyHandITCTT-Bold", "MarkerFelt-Thin"] {
-            if let font = NSFont(name: name, size: size) { return font }
-        }
-        let base = NSFont.systemFont(ofSize: size, weight: bold ? .bold : .regular)
-        return base.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: size) } ?? base
+    /// The book's handwriting, or the one chosen in Settings.
+    func handwriting(_ size: CGFloat, bold: Bool = false) -> NSFont {
+        Handwriting.font(settings.handwriting, size: size, bold: bold)
+    }
+
+    func textHeight(_ text: String, font: NSFont, width: CGFloat) -> CGFloat {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        return ceil(NSAttributedString(string: text, attributes: [.font: font, .paragraphStyle: paragraph])
+            .boundingRect(with: CGSize(width: width, height: 10_000), options: [.usesLineFragmentOrigin]).height)
     }
 
     static func serif(_ size: CGFloat) -> NSFont {
@@ -231,18 +374,22 @@ final class BookRenderer {
     private func drawCaption(_ text: String, in rect: CGRect, onFrame: Bool) {
         let color = onFrame ? NSColor(srgbRed: 0.16, green: 0.15, blue: 0.2, alpha: 0.9) : ink.withAlphaComponent(0.88)
         let size = min(20, max(12, rect.height * (onFrame ? 0.42 : 0.62)))
-        drawText(text, font: Self.handwriting(size), color: color, in: rect, lines: 2)
+        drawText(text, font: handwriting(size), color: color, in: rect, lines: 2)
     }
 
-    private func drawText(_ text: String, font: NSFont, color: NSColor, in rect: CGRect, lines: Int, alignment: NSTextAlignment = .center) {
+    /// Writes text in a rectangle, wrapping, at most `lines` lines (and no taller than the rectangle), in the middle
+    /// of it or from its top.
+    private func drawText(_ text: String, font: NSFont, color: NSColor, in rect: CGRect, lines: Int, alignment: NSTextAlignment = .center,
+                          top: Bool = false) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = alignment
         paragraph.lineBreakMode = .byWordWrapping
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
         let string = NSAttributedString(string: text, attributes: attributes)
         let needed = string.boundingRect(with: CGSize(width: rect.width, height: 1000), options: [.usesLineFragmentOrigin]).height
-        let height = min(needed, font.boundingRectForFont.height * CGFloat(lines) * 1.1)
-        string.draw(with: CGRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height),
+        var height = min(needed, font.boundingRectForFont.height * CGFloat(lines) * 1.1)
+        if top { height = min(height, max(rect.height, font.pointSize * 1.3)) }
+        string.draw(with: CGRect(x: rect.minX, y: top ? rect.minY : rect.midY - height / 2, width: rect.width, height: height),
                     options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 
@@ -254,7 +401,7 @@ final class BookRenderer {
     /// The album's name, its dates and its story, under the cover photo.
     private func drawTitleText(in context: CGContext, below top: CGFloat) {
         var y = max(top + 36, 150)
-        let titleFont = Self.handwriting(40, bold: true)
+        let titleFont = handwriting(40, bold: true)
         drawText(title, font: titleFont, color: ink, in: CGRect(x: 50, y: y, width: 500, height: 56), lines: 2)
         y += 58
         if !subtitle.isEmpty {
@@ -263,7 +410,7 @@ final class BookRenderer {
             y += 34
         }
         if !story.isEmpty {
-            drawText(story, font: Self.handwriting(19), color: ink.withAlphaComponent(0.85),
+            drawText(story, font: handwriting(19), color: ink.withAlphaComponent(0.85),
                      in: CGRect(x: 70, y: y, width: 460, height: max(40, 740 - y)), lines: 8)
         }
     }

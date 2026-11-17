@@ -365,6 +365,16 @@ enum SampleLibrary {
         if let cake = byEvent["birthday23"]?[1] { catalog.setCaption("Cake first, presents later", for: [cake]) }
         if let waffles = byEvent["pug26"]?.first { catalog.setCaption("Waffles meets the ball", for: [waffles]) }
         if let snowman = byEvent["snow19"]?[2] { catalog.setCaption("Mr. Carrot Nose", for: [snowman]) }
+        // Notes on the backs of a few photos, for the books.
+        let backs: [(String, Int, String)] = [
+            ("beach20", 1, "Low tide! We walked all the way out to the sandbar and back."),
+            ("beach20", 4, "Dad’s famous sandcastle, about four minutes before the wave."),
+            ("sunset25", 1, "Ten minutes after this the whole sky went purple."),
+            ("beach25", 2, "Found the perfect shell. Kept it in the car all summer."),
+        ]
+        for (event, index, note) in backs {
+            if let id = byEvent[event]?[index] { catalog.setNote(note, for: id) }
+        }
 
         let journal: [(Int, Int, Int, String, String)] = [
             (2023, 7, 21, "😌", "Lake day. The water was freezing and nobody cared. Mia finally swam out to the raft on her own, then made everyone watch her do it twice more."),
