@@ -68,6 +68,8 @@ extension LibraryWindowController: PhotoBrowserDelegate {
         library.edit("Album Description") { $0.setAlbumNote(album.id, to: note) }
     }
 
+    func browserOpenBook() { setViewMode(.book) }
+
     func browserPlayAlbum() {
         guard let album = currentAlbum, let memory = memories.finder.album(album.id) else { return }
         play(memory)
@@ -185,6 +187,8 @@ extension LibraryWindowController: SidebarDelegate {
         let menu = NSMenu()
         switch source {
         case let .album(id):
+            menu.addItem(represented(MenuBuilder.item("Open as Book", #selector(phOpenAlbumAsBook(_:)), symbol: "book"), id))
+            menu.addItem(.separator())
             menu.addItem(represented(MenuBuilder.item("Rename Album", #selector(phRenameAlbum(_:))), id))
             menu.addItem(represented(MenuBuilder.item("Delete Album…", #selector(phDeleteAlbum(_:))), id))
         case let .label(id):

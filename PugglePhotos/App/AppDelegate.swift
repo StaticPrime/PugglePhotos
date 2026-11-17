@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         Preferences.registerDefaults()
         MemoryPreferences.registerDefaults()
+        BookPreferences.registerDefaults()
         UserDefaults.standard.register(defaults: ["NSFullScreenMenuItemEverywhere": false])
         launchedAtLogin = LaunchReason.isLoginLaunch()
         #if DEBUG

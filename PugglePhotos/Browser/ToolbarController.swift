@@ -53,11 +53,12 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
         case Self.mode:
             let group = NSToolbarItemGroup(itemIdentifier: itemIdentifier,
                                            images: [NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Gallery")!,
-                                                    NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "List")!],
-                                           selectionMode: .selectOne, labels: ["Gallery", "List"], target: self,
+                                                    NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "List")!,
+                                                    NSImage(systemSymbolName: "book", accessibilityDescription: "Book")!],
+                                           selectionMode: .selectOne, labels: ["Gallery", "List", "Book"], target: self,
                                            action: #selector(modeChanged(_:)))
             group.label = "View"
-            group.toolTip = "Show as a gallery (⌘1) or a list (⌘2)"
+            group.toolTip = "Show as a gallery (⌘1), a list (⌘2) or, for an album, a photo book (⌘3)"
             modeGroup = group
             return group
         case Self.zoom:
@@ -110,8 +111,10 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
     func update() {
         let state = owner.state
         let onMemories = state.source == .memories
-        modeGroup?.selectedIndex = state.viewMode == .list ? 1 : 0
+        let isBook = state.viewMode == .book && owner.currentAlbum != nil
+        modeGroup?.selectedIndex = isBook ? 2 : (state.viewMode == .list ? 1 : 0)
         modeGroup?.isEnabled = owner.library.access == .authorized
+        if let modeGroup, modeGroup.subitems.count == 3 { modeGroup.subitems[2].isEnabled = owner.currentAlbum != nil }
         zoomSlider?.doubleValue = Double(state.thumbnailSide)
         zoomSlider?.isEnabled = !onMemories && (state.viewMode == .gallery || state.source == .allAlbums)
         arrangeItem?.isEnabled = !onMemories
@@ -138,7 +141,8 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
     @objc private func back(_ sender: Any?) { owner.goBack() }
 
     @objc private func modeChanged(_ sender: NSToolbarItemGroup) {
-        owner.setViewMode(sender.selectedIndex == 1 ? .list : .gallery)
+        owner.setViewMode([ViewMode.gallery, .list, .book][max(0, min(2, sender.selectedIndex))])
+        update()
     }
 
     @objc private func zoomChanged(_ sender: NSSlider) {

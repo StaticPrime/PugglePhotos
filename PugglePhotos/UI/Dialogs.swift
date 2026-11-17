@@ -277,6 +277,8 @@ struct SettingsView: View {
     @AppStorage(MemoryPreferences.timeKey) private var minutes = 9 * 60
     @AppStorage(MemoryPreferences.secondsPerPhotoKey) private var secondsPerPhoto = 4.5
     @AppStorage(MemoryPreferences.musicKey) private var music = SlideshowMusic.Choice.tune.rawValue
+    @AppStorage(BookPreferences.alwaysPlayKey) private var booksAlwaysPlay = false
+    @AppStorage(BookPreferences.soundKey) private var booksPlaySound = true
 
     private var time: Binding<Date> {
         Binding(get: { Calendar.current.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: Date()) ?? Date() },
@@ -321,6 +323,10 @@ struct SettingsView: View {
                     Slider(value: $secondsPerPhoto, in: 2...8, step: 0.5)
                     Text(String(format: "%.1f seconds", secondsPerPhoto)).monospacedDigit().frame(width: 84, alignment: .trailing)
                 }
+            }
+            Section("Photo Books") {
+                Toggle("Play videos with sound when the pointer is over them", isOn: $booksPlaySound)
+                Toggle("Always play the videos on the open pages, without sound", isOn: $booksAlwaysPlay)
             }
             Section {
                 Toggle("Ask before changing dates when photos are dropped", isOn: $askBeforeChangingDates)
@@ -376,8 +382,9 @@ struct ShortcutsView: View {
             ("Open the selected photo", "Return or Space"),
             ("Back to the photos", "Esc or ⌘["),
             ("Previous or next photo in the viewer", "← or →"),
-            ("Gallery or list", "⌘1 or ⌘2"),
-            ("All Albums", "⌘3"),
+            ("Gallery, list or book", "⌘1, ⌘2 or ⌘3"),
+            ("All Albums", "⌥⌘5"),
+            ("Turn a book's page", "← or →"),
             ("Bigger or smaller thumbnails", "⌘+ or ⌘−"),
             ("Search", "⌘F"),
             ("Show or hide the sidebar", "⌃⌘S"),
@@ -395,6 +402,8 @@ struct ShortcutsView: View {
             ("Put on or take off the first nine labels", "⌃1 … ⌃9"),
             ("Remove from the album", "Delete"),
             ("Change date and time", "⇧⌘D"),
+            ("Tilt a photo in a book", "[ or ]"),
+            ("Save a book as a PDF, or print it", "⇧⌘E or ⌘P"),
             ("Select all", "⌘A"),
             ("Undo or redo", "⌘Z or ⇧⌘Z"),
         ]),

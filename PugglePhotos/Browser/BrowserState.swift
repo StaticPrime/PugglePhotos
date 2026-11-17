@@ -3,6 +3,8 @@ import PugglePhotosKit
 
 enum ViewMode: String {
     case gallery, list
+    /// An album as a photo book.
+    case book
 }
 
 /// Where a window is and how it shows things: the place in the sidebar, gallery or list, the thumbnail size,

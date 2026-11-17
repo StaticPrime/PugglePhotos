@@ -48,6 +48,7 @@ protocol PhotoBrowserDelegate: AnyObject {
     func browserRenameAlbum(_ title: String)
     func browserSetAlbumNote(_ note: String)
     func browserPlayAlbum()
+    func browserOpenBook()
 }
 
 /// The photo grid: thumbnails in sections, chosen, opened, dragged and dropped like files in a folder.
@@ -222,6 +223,7 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
             banner.onRename = { [weak self] in self?.delegate?.browserRenameAlbum($0) }
             banner.onNote = { [weak self] in self?.delegate?.browserSetAlbumNote($0) }
             banner.onPlay = { [weak self] in self?.delegate?.browserPlayAlbum() }
+            banner.onOpenBook = { [weak self] in self?.delegate?.browserOpenBook() }
             return banner
         }
         let header = collectionView.makeSupplementaryView(ofKind: kind, withIdentifier: SectionHeaderView.identifier, for: indexPath) as! SectionHeaderView

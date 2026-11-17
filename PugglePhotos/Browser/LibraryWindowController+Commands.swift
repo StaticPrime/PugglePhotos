@@ -45,6 +45,29 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(phShowList(_:)):
             menuItem.state = state.viewMode == .list && state.source != .allAlbums ? .on : .off
             return library.access == .authorized
+        case #selector(phShowBook(_:)):
+            menuItem.state = isShowingBook ? .on : .off
+            return currentAlbum != nil
+        case #selector(phTiltLeft(_:)), #selector(phTiltRight(_:)), #selector(phStraighten(_:)), #selector(phLeaveOutOfBook(_:)):
+            if isEditingText { return false }
+            return isShowingBook && book.bookView.selected != nil
+        case #selector(phPutBackInBook(_:)):
+            return isShowingBook && book.layout.settings.hidden.count > 0
+        case #selector(phShuffleBook(_:)), #selector(phResetBookLayout(_:)), #selector(phExportBookPDF(_:)), #selector(phPrintBook(_:)):
+            return isShowingBook
+        case #selector(phBookStyle(_:)):
+            if let (key, value) = menuItem.representedObject as? (String, String) {
+                let settings = book.layout.settings
+                let current = switch key {
+                case "paper": settings.paper.rawValue
+                case "frame": settings.frame.rawValue
+                case "tilt": settings.tilt.rawValue
+                case "perPage": settings.perPage.rawValue
+                default: settings.cover.rawValue
+                }
+                menuItem.state = current == value ? .on : .off
+            }
+            return isShowingBook
         case #selector(phShowAllAlbums(_:)):
             menuItem.state = state.source == .allAlbums ? .on : .off
             return true
@@ -158,6 +181,39 @@ extension LibraryWindowController: NSMenuItemValidation {
 
     @objc func phShowGallery(_ sender: Any?) { setViewMode(.gallery) }
     @objc func phShowList(_ sender: Any?) { setViewMode(.list) }
+    @objc func phShowBook(_ sender: Any?) { setViewMode(.book) }
+
+    @objc func phOpenAlbumAsBook(_ sender: Any?) {
+        guard let id = (sender as? NSMenuItem)?.representedObject as? UUID ?? albums.selectedAlbum else { return }
+        go(to: .album(id))
+        setViewMode(.book)
+    }
+
+    // MARK: Photo books
+
+    @objc func phTiltLeft(_ sender: Any?) { book.tiltSelected(by: -3) }
+    @objc func phTiltRight(_ sender: Any?) { book.tiltSelected(by: 3) }
+    @objc func phStraighten(_ sender: Any?) { book.tiltSelected(by: 0) }
+    @objc func phLeaveOutOfBook(_ sender: Any?) { book.leaveOutSelected() }
+    @objc func phPutBackInBook(_ sender: Any?) { book.putBackLeftOut() }
+    @objc func phShuffleBook(_ sender: Any?) { book.shuffle() }
+    @objc func phResetBookLayout(_ sender: Any?) { book.resetLayout() }
+    @objc func phExportBookPDF(_ sender: Any?) { book.exportPDF() }
+    @objc func phPrintBook(_ sender: Any?) { book.printBook() }
+
+    /// Paper, frames, tilt, layout and cover: the menu item carries which setting and which choice.
+    @objc func phBookStyle(_ sender: NSMenuItem) {
+        guard let (key, value) = sender.representedObject as? (String, String) else { return }
+        book.change(sender.title) { settings in
+            switch key {
+            case "paper": settings.paper = BookPaper(rawValue: value) ?? settings.paper
+            case "frame": settings.frame = BookFrame(rawValue: value) ?? settings.frame
+            case "tilt": settings.tilt = BookTilt(rawValue: value) ?? settings.tilt
+            case "perPage": settings.perPage = BookPerPage(rawValue: value) ?? settings.perPage
+            default: settings.cover = BookCover(rawValue: value) ?? settings.cover
+            }
+        }
+    }
     @objc func phShowAllAlbums(_ sender: Any?) { go(to: .allAlbums) }
 
     @objc func phGroupBy(_ sender: NSMenuItem) {

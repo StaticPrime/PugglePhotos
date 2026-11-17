@@ -13,6 +13,12 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     let list = PhotoListViewController()
     let albums = AlbumsViewController()
     let viewer = ViewerViewController()
+    private(set) lazy var book: BookViewController = {
+        let book = BookViewController(library: library)
+        book.onOpenPhoto = { [weak self] id in self?.openViewer(id) }
+        book.onProblem = { [weak self] title, message in self?.showProblem(title, message) }
+        return book
+    }()
     let inspectorModel: InspectorModel
     private(set) var content = BrowserContent()
     private(set) var splitController: NSSplitViewController!
@@ -215,6 +221,12 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         }
         content = makeContent()
         let selection = state.selection.filter { library.snapshot.contains($0) }
+        if state.viewMode == .book, let album = currentAlbum {
+            show(book)
+            book.show(album: album.id)
+            setSelection([], notify: false)
+            return
+        }
         if content.isEmpty, content.album == nil {
             showEmptyState()
         } else if state.viewMode == .list {
@@ -235,6 +247,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private var shownSource: LibrarySource?
+
+    /// Whether an album is open as a photo book.
+    var isShowingBook: Bool { shownChild === book && state.viewerID == nil }
     /// Set when the library is about to be shown afresh, so it opens on the newest photos.
     private var opensAtEnd = true
 
@@ -315,6 +330,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
 
     private func libraryChanged(_ change: LibraryController.Change?) {
         sidebar.reload()
+        if shownChild === book {
+            book.libraryChanged()
+            updateTitle()
+            return
+        }
         switch change {
         case .catalog?:
             // Captions and labels change badges; albums and labels can change what's shown.
@@ -459,6 +479,10 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func setViewMode(_ mode: ViewMode) {
+        if mode == .book, currentAlbum == nil {
+            NSSound.beep()
+            return
+        }
         if state.source == .allAlbums { go(to: .library) }
         closeViewer(refreshing: false)
         state.viewMode = mode

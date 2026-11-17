@@ -92,6 +92,9 @@ enum MenuBuilder {
             item("New Label…", #selector(LibraryWindowController.phNewLabel(_:)), "n", [.command, .option]),
             .separator(),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w"),
+            .separator(),
+            item("Export Book as PDF…", #selector(LibraryWindowController.phExportBookPDF(_:)), "e", [.command, .shift]),
+            item("Print Book…", #selector(LibraryWindowController.phPrintBook(_:)), "p"),
         ]
     }
 
@@ -125,7 +128,7 @@ enum MenuBuilder {
             place("Favorites", "favorites", "heart", "2"),
             place("Videos", "videos", "video", "3"),
             place("Recently Added", "recent", "clock.arrow.circlepath", "4"),
-            item("All Albums", #selector(LibraryWindowController.phShowAllAlbums(_:)), "3", symbol: "rectangle.stack"),
+            item("All Albums", #selector(LibraryWindowController.phShowAllAlbums(_:)), "5", [.command, .option], symbol: "rectangle.stack"),
             .separator(),
             item("Today", #selector(LibraryWindowController.phGoToToday(_:)), "t"),
             .separator(),
@@ -139,10 +142,15 @@ enum MenuBuilder {
         var items = [
             item("as Gallery", #selector(LibraryWindowController.phShowGallery(_:)), "1"),
             item("as List", #selector(LibraryWindowController.phShowList(_:)), "2"),
+            item("as Book", #selector(LibraryWindowController.phShowBook(_:)), "3"),
             .separator(),
             item("Play Slideshow", #selector(LibraryWindowController.phPlaySlideshow(_:)), "p", [.command, .option], symbol: "play.rectangle"),
             .separator(),
         ]
+        if let owner = (NSApp.mainWindow ?? NSApp.keyWindow)?.windowController as? LibraryWindowController, owner.isShowingBook {
+            items += bookItems()
+            items.append(.separator())
+        }
         if let owner = (NSApp.mainWindow ?? NSApp.keyWindow)?.windowController as? LibraryWindowController
             ?? NSApp.windows.compactMap({ $0.windowController as? LibraryWindowController }).first {
             items += ArrangeMenu.items(for: owner)
@@ -162,6 +170,28 @@ enum MenuBuilder {
         return items
     }
 
+    /// The book's choices: paper, frames, tilt, layout and cover, then shuffling and resetting.
+    static func bookItems() -> [NSMenuItem] {
+        func choices<T: RawRepresentable & CaseIterable>(_ title: String, _ key: String, _ cases: [T], _ name: (T) -> String) -> NSMenuItem
+            where T.RawValue == String {
+            submenu(title, cases.map { value in
+                let menuItem = item(name(value), #selector(LibraryWindowController.phBookStyle(_:)))
+                menuItem.representedObject = (key, value.rawValue)
+                return menuItem
+            })
+        }
+        return [
+            choices("Paper", "paper", BookPaper.allCases, \.displayName),
+            choices("Frames", "frame", BookFrame.allCases, \.displayName),
+            choices("Tilt", "tilt", BookTilt.allCases, \.displayName),
+            choices("Layout", "perPage", BookPerPage.allCases, \.displayName),
+            choices("Cover", "cover", BookCover.allCases, \.displayName),
+            item("Shuffle Book Layout", #selector(LibraryWindowController.phShuffleBook(_:)), symbol: "dice"),
+            item("Reset Book Layout", #selector(LibraryWindowController.phResetBookLayout(_:))),
+            item("Put Back Left-Out Photos", #selector(LibraryWindowController.phPutBackInBook(_:))),
+        ]
+    }
+
     /// The Photo menu: what can be done to the selected photos.
     static func photoItems() -> [NSMenuItem] {
         let library = (NSApp.delegate as? AppDelegate)?.library
@@ -176,6 +206,11 @@ enum MenuBuilder {
             .separator(),
             item("Make Album Cover", #selector(LibraryWindowController.phMakeCover(_:))),
             item("Remove from Album", #selector(LibraryWindowController.phRemoveFromAlbum(_:)), "\u{8}", []),
+            .separator(),
+            item("Tilt Left", #selector(LibraryWindowController.phTiltLeft(_:)), "[", []),
+            item("Tilt Right", #selector(LibraryWindowController.phTiltRight(_:)), "]", []),
+            item("Straighten", #selector(LibraryWindowController.phStraighten(_:))),
+            item("Leave Out of Book", #selector(LibraryWindowController.phLeaveOutOfBook(_:))),
         ]
     }
 

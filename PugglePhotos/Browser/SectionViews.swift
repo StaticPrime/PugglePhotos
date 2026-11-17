@@ -156,9 +156,11 @@ final class AlbumBannerView: NSView, NSCollectionViewElement, NSTextFieldDelegat
     private let subtitleField = NSTextField(labelWithString: "")
     private let noteField = NSTextField()
     private let playButton = NSButton()
+    private let bookButton = NSButton()
     var onRename: ((String) -> Void)?
     var onNote: ((String) -> Void)?
     var onPlay: (() -> Void)?
+    var onOpenBook: (() -> Void)?
     private var title = ""
     private var note = ""
 
@@ -195,15 +197,25 @@ final class AlbumBannerView: NSView, NSCollectionViewElement, NSTextFieldDelegat
         playButton.target = self
         playButton.action = #selector(play(_:))
         playButton.toolTip = "Play the album as a slideshow (⌥⌘P)"
-        for field in [titleField, subtitleField, noteField, playButton] as [NSView] {
+        bookButton.title = "Open Book"
+        bookButton.image = NSImage(systemSymbolName: "book", accessibilityDescription: nil)
+        bookButton.imagePosition = .imageLeading
+        bookButton.bezelStyle = .push
+        bookButton.controlSize = .large
+        bookButton.target = self
+        bookButton.action = #selector(openBook(_:))
+        bookButton.toolTip = "See the album as a photo book (⌘3)"
+        for field in [titleField, subtitleField, noteField, playButton, bookButton] as [NSView] {
             field.translatesAutoresizingMaskIntoConstraints = false
             addSubview(field)
         }
         NSLayoutConstraint.activate([
             playButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
             playButton.centerYAnchor.constraint(equalTo: titleField.centerYAnchor),
+            bookButton.trailingAnchor.constraint(equalTo: playButton.leadingAnchor, constant: -10),
+            bookButton.centerYAnchor.constraint(equalTo: titleField.centerYAnchor),
             titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            titleField.trailingAnchor.constraint(lessThanOrEqualTo: playButton.leadingAnchor, constant: -16),
+            titleField.trailingAnchor.constraint(lessThanOrEqualTo: bookButton.leadingAnchor, constant: -16),
             titleField.topAnchor.constraint(equalTo: topAnchor, constant: 18),
             subtitleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
             subtitleField.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 2),
@@ -234,6 +246,7 @@ final class AlbumBannerView: NSView, NSCollectionViewElement, NSTextFieldDelegat
     }
 
     @objc private func play(_ sender: Any?) { onPlay?() }
+    @objc private func openBook(_ sender: Any?) { onOpenBook?() }
 
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
