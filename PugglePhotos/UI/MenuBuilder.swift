@@ -175,7 +175,8 @@ enum MenuBuilder {
         return items
     }
 
-    /// The book's choices: paper, frames, tilt, layout and cover, then shuffling and resetting.
+    /// The book's choices: its paper, frames, tilt, layout, cover, binding, notes and handwriting, then writing, pages and
+    /// putting it back as it was laid out.
     static func bookItems() -> [NSMenuItem] {
         func choices<T: RawRepresentable & CaseIterable>(_ title: String, _ key: String, _ cases: [T], _ name: (T) -> String) -> NSMenuItem
             where T.RawValue == String {
@@ -202,7 +203,6 @@ enum MenuBuilder {
             item("Write on Pages", #selector(LibraryWindowController.phToggleBookWriting(_:)), symbol: "pencil.line"),
             item("Add a Blank Page", #selector(LibraryWindowController.phAddBookPage(_:)), symbol: "doc.badge.plus"),
             item("Remove This Page", #selector(LibraryWindowController.phRemoveBookPage(_:))),
-            item("Shuffle Book Layout", #selector(LibraryWindowController.phShuffleBook(_:)), symbol: "dice"),
             item("Reset Book Layout", #selector(LibraryWindowController.phResetBookLayout(_:))),
             item("Put Back Left-Out Photos", #selector(LibraryWindowController.phPutBackInBook(_:))),
         ]

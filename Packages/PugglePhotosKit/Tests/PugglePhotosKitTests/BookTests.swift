@@ -64,7 +64,7 @@ import Testing
         let b = BookLayout(items: items(20), captions: [:], settings: BookSettings(seed: 5), coverPhoto: nil)
         let c = BookLayout(items: items(20), captions: [:], settings: BookSettings(seed: 6), coverPhoto: nil)
         #expect(a.pages == b.pages)
-        #expect(a.pages != c.pages, "shuffling lays it out afresh")
+        #expect(a.pages != c.pages, "another seed lays it out differently")
         let straight = BookLayout(items: items(20), captions: [:], settings: BookSettings(tilt: .none), coverPhoto: nil)
         #expect(straight.pages.flatMap(\.placements).allSatisfy { $0.angle == 0 })
     }

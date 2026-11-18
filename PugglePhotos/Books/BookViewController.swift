@@ -717,22 +717,6 @@ final class BookViewController: NSViewController, BookViewDelegate {
 
     func putBackLeftOut() { change("Put Back in Book") { $0.hidden = [] } }
 
-    /// Lays the book out afresh. Photos go to new places, back on their own pages; their sticky notes and how their
-    /// notes show stay with them.
-    func shuffle() {
-        change("Shuffle Book") { settings in
-            settings.seed = settings.seed &+ 1
-            for id in Array(settings.overrides.keys) {
-                settings.changeOverride(id) { override in
-                    override.center = nil
-                    override.angle = nil
-                    override.scale = nil
-                    override.page = nil
-                }
-            }
-        }
-    }
-
     /// Puts back every photo and sticky note the person moved, turned or resized; how notes show stays.
     func resetLayout() {
         change("Reset Book Layout") { settings in
@@ -1106,8 +1090,6 @@ struct BookControlsView: View {
                 .popover(isPresented: $model.choosingHandwriting) {
                     BookHandwritingView(model: model).padding(14).frame(width: 440)
                 }
-            Button { model.controller?.shuffle() } label: { Label("Shuffle", systemImage: "dice") }
-                .help("Lay the book out afresh")
             Divider().frame(height: 20)
             Toggle(isOn: Binding(get: { model.isWriting }, set: { model.controller?.setWriting($0) })) {
                 Label("Write", systemImage: "pencil.line")

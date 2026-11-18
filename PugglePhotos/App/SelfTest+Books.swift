@@ -120,7 +120,7 @@ extension SelfTest {
     }
 
     /// Photo books: opening one, turning pages by click, key and drag, picking, moving and turning photos, the
-    /// paper and frames, shuffling, leaving photos out, videos on the page, the viewer, PDF, EPUB and printing.
+    /// paper and frames, leaving photos out, videos on the page, the viewer, PDF, EPUB and printing.
     static func bookSteps(_ app: AppDelegate, window: LibraryWindowController) {
         let library = app.library!
         var book: BookViewController { window.book }
@@ -444,12 +444,6 @@ extension SelfTest {
             check(library.catalog.album(albumID!)?.book?.paper == .black, "a book's look is saved with its album")
             let print = book.layout.pages.first { $0.kind == .photos }?.placements.first
             check(print.map { abs($0.imageSize.width / $0.imageSize.height - $0.aspect) < 0.01 } == true, "prints keep each photo's shape")
-            let before = book.layout.pages
-            let seed = settings.seed
-            book.shuffle()
-            check(settings.seed != seed && settings.overrides.isEmpty && book.layout.pages != before, "Shuffle lays the book out afresh")
-            library.undoManager.undo()
-            check(settings.seed == seed, "and can be undone")
         }
 
         // MARK: Bindings
