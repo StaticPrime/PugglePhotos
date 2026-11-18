@@ -332,6 +332,11 @@ extension SelfTest {
             }
             return pixel.prefix(3).map { CGFloat($0) / 255 }
         }
+        // How light a cover is so far in from its spine, halfway down: the front's spine is on its left, the back's on its right.
+        func light(ofCover page: Int, inFromSpine x: CGFloat) -> CGFloat {
+            let at = page == 0 ? x : BookLayout.pageSize.width - x
+            return color(ofPage: page, at: CGPoint(x: at, y: BookLayout.pageSize.height * 0.5)).reduce(0, +)
+        }
         var glued: [CGFloat] = []
         // How far the rings strayed from the holes they go through, at most, through a turn, and how often they were seen.
         var ringsStrayed: CGFloat = 0, ringsSeen = 0
@@ -342,6 +347,16 @@ extension SelfTest {
             check(view.ringCountForTesting == 0 && abs(view.pageRect(left: false).minX - view.pageRect(left: true).maxX) < 0.01,
                   "a glued book's pages meet in the middle, with no rings")
             check(view.coverShowsForTesting, "and its cover shows around them")
+            // Closed, its cover rounds over the spine into shade, the joint pressed in beside it, on the front cover's
+            // left and the back's right.
+            let back = book.layout.pages.count - 1
+            let spines = [0, back].map { cover in
+                (edge: light(ofCover: cover, inFromSpine: 2), joint: light(ofCover: cover, inFromSpine: 31.9),
+                 board: light(ofCover: cover, inFromSpine: 60), beside: light(ofCover: cover, inFromSpine: 45))
+            }
+            check(spines.allSatisfy { $0.edge < $0.board - 0.4 && $0.joint < $0.beside - 0.2 },
+                  "closed, a glued book's cover rounds over its spine like a hardback's, the joint pressed in beside it, front and back",
+                  "\(spines)")
             check(menuItem("View", "Gold").map { !window.validateMenuItem($0) } == true && settings.rings == .silver,
                   "the rings' metal can't be chosen for a glued book")
             check(choose("View", "3 Rings") && settings.binding == .threeRing && view.ringCountForTesting == 3,

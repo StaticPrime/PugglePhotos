@@ -55,11 +55,11 @@ final class BookRenderer {
         switch page.kind {
         case .cover:
             drawCloth(in: context, bounds: bounds)
-            if settings.binding.hasRings { drawBinderSpine(in: context, bounds: bounds, onLeft: true) }
+            drawSpine(in: context, bounds: bounds, onLeft: true)
             drawCoverFront(in: context, bounds: bounds)
         case .back:
             drawCloth(in: context, bounds: bounds)
-            if settings.binding.hasRings { drawBinderSpine(in: context, bounds: bounds, onLeft: false) }
+            drawSpine(in: context, bounds: bounds, onLeft: false)
             drawPaw(in: context, center: CGPoint(x: bounds.midX, y: bounds.maxY - 110), size: 46,
                     color: NSColor.black.withAlphaComponent(0.16).cgColor)
         case .insideCover:
@@ -197,6 +197,65 @@ final class BookRenderer {
             context.setStrokeColor(Self.color(tones.shade))
             context.strokeEllipse(in: through)
         }
+    }
+
+    /// A closed book's cover along its spine, the front's on its left and the back's on its right.
+    private func drawSpine(in context: CGContext, bounds: CGRect, onLeft: Bool) {
+        if settings.binding.hasRings {
+            drawBinderSpine(in: context, bounds: bounds, onLeft: onLeft)
+        } else {
+            drawCaseSpine(in: context, bounds: bounds, onLeft: onLeft)
+        }
+    }
+
+    /// A closed glued book's cover, bound like a hardback: the cloth rounding over the spine's back into shade, its
+    /// shoulder catching the light, the joint pressed in beside it where the cover hinges open, and the headcaps where
+    /// the cloth turns in over the spine's ends; and the board's other edges, where the cloth turns over them.
+    private func drawCaseSpine(in context: CGContext, bounds: CGRect, onLeft: Bool) {
+        func black(_ alpha: CGFloat) -> CGColor { NSColor.black.withAlphaComponent(alpha).cgColor }
+        func white(_ alpha: CGFloat) -> CGColor { NSColor.white.withAlphaComponent(alpha).cgColor }
+        // A band so far in from the spine's edge, from `near` to `far`.
+        func band(_ near: CGFloat, _ far: CGFloat) -> CGRect {
+            onLeft ? CGRect(x: bounds.minX + near, y: bounds.minY, width: far - near, height: bounds.height)
+                : CGRect(x: bounds.maxX - far, y: bounds.minY, width: far - near, height: bounds.height)
+        }
+        func x(_ inward: CGFloat) -> CGFloat { onLeft ? bounds.minX + inward : bounds.maxX - inward }
+        // Shade or light laid from `start` to `end`, within `rect`.
+        func lay(_ colors: [CGColor], at locations: [CGFloat], from start: CGPoint, to end: CGPoint, in rect: CGRect) {
+            guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: locations) else { return }
+            context.saveGState()
+            context.clip(to: rect)
+            context.drawLinearGradient(gradient, start: start, end: end, options: [])
+            context.restoreGState()
+        }
+        let joint: CGFloat = 31
+        // The spine's back rounding away out of sight, darkest at its edge, then its shoulder in the light, dipping
+        // toward the joint.
+        lay([black(0.52), black(0.24), black(0.05), white(0.11), white(0), black(0.08)], at: [0, 0.18, 0.42, 0.66, 0.82, 1],
+            from: CGPoint(x: x(0), y: 0), to: CGPoint(x: x(joint), y: 0), in: band(0, joint))
+        // The joint: its wall on the spine's side in shadow, the trough, and its wall on the board's side lit.
+        context.setFillColor(black(0.3))
+        context.fill(band(joint, joint + 1.8))
+        context.setFillColor(black(0.17))
+        context.fill(band(joint + 1.8, joint + 2.8))
+        context.setFillColor(white(0.2))
+        context.fill(band(joint + 2.8, joint + 4.2))
+        lay([white(0.07), white(0)], at: [0, 1], from: CGPoint(x: x(joint + 4.2), y: 0), to: CGPoint(x: x(joint + 10), y: 0),
+            in: band(joint + 4.2, joint + 10))
+        // The headcaps.
+        let spine = band(0, joint + 1.8)
+        lay([black(0.26), black(0)], at: [0, 1], from: CGPoint(x: 0, y: bounds.minY), to: CGPoint(x: 0, y: bounds.minY + 10),
+            in: CGRect(x: spine.minX, y: bounds.minY, width: spine.width, height: 10))
+        lay([black(0.32), black(0)], at: [0, 1], from: CGPoint(x: 0, y: bounds.maxY), to: CGPoint(x: 0, y: bounds.maxY - 12),
+            in: CGRect(x: spine.minX, y: bounds.maxY - 12, width: spine.width, height: 12))
+        // The board's edges: the light catching the top, shade along the bottom and the fore-edge.
+        lay([white(0.15), white(0)], at: [0, 1], from: CGPoint(x: 0, y: bounds.minY), to: CGPoint(x: 0, y: bounds.minY + 6),
+            in: CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: 6))
+        lay([black(0.18), black(0)], at: [0, 1], from: CGPoint(x: 0, y: bounds.maxY), to: CGPoint(x: 0, y: bounds.maxY - 7),
+            in: CGRect(x: bounds.minX, y: bounds.maxY - 7, width: bounds.width, height: 7))
+        let fore = onLeft ? bounds.maxX : bounds.minX
+        lay([black(0.14), black(0)], at: [0, 1], from: CGPoint(x: fore, y: 0), to: CGPoint(x: fore + (onLeft ? -6 : 6), y: 0),
+            in: CGRect(x: onLeft ? bounds.maxX - 6 : bounds.minX, y: bounds.minY, width: 6, height: bounds.height))
     }
 
     /// A closed binder's cover along its spine: the spine's rounded edge in shade, and the hinge groove beside it.
