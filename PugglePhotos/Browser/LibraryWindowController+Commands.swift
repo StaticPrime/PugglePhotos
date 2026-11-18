@@ -79,9 +79,13 @@ extension LibraryWindowController: NSMenuItemValidation {
                 case "perPage": settings.perPage.rawValue
                 case "notes": settings.noteStyle.rawValue
                 case "handwriting": settings.handwriting ?? ""
+                case "binding": settings.binding.rawValue
+                case "rings": settings.rings.rawValue
                 default: settings.cover.rawValue
                 }
                 menuItem.state = current == value ? .on : .off
+                // The rings' metal matters only for a book on rings.
+                if key == "rings" { return isShowingBook && settings.binding.hasRings }
             }
             return isShowingBook
         case #selector(phShowAllAlbums(_:)):
@@ -248,7 +252,7 @@ extension LibraryWindowController: NSMenuItemValidation {
     @objc func phExportBookPDF(_ sender: Any?) { book.exportPDF() }
     @objc func phPrintBook(_ sender: Any?) { book.printBook() }
 
-    /// Paper, frames, tilt, layout and cover: the menu item carries which setting and which choice.
+    /// Paper, frames, tilt, layout, cover, binding and rings: the menu item carries which setting and which choice.
     @objc func phBookStyle(_ sender: NSMenuItem) {
         guard let (key, value) = sender.representedObject as? (String, String) else { return }
         book.change(sender.title) { settings in
@@ -259,6 +263,8 @@ extension LibraryWindowController: NSMenuItemValidation {
             case "perPage": settings.perPage = BookPerPage(rawValue: value) ?? settings.perPage
             case "notes": settings.notes = BookNoteStyle(rawValue: value) ?? settings.notes
             case "handwriting": settings.handwriting = value.isEmpty ? nil : value
+            case "binding": settings.binding = BookBinding(rawValue: value) ?? settings.binding
+            case "rings": settings.rings = BookRingFinish(rawValue: value) ?? settings.rings
             default: settings.cover = BookCover(rawValue: value) ?? settings.cover
             }
         }

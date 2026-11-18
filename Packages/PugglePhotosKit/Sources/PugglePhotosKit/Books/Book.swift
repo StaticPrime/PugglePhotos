@@ -106,6 +106,61 @@ public enum BookCover: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// How the pages are held: glued into the cover's spine, or punched and held on metal rings in a binder.
+public enum BookBinding: String, Codable, Sendable, CaseIterable {
+    case glued, threeRing, fourRing
+
+    public var displayName: String {
+        switch self {
+        case .glued: "Glued"
+        case .threeRing: "3 Rings"
+        case .fourRing: "4 Rings"
+        }
+    }
+
+    public var hasRings: Bool { self != .glued }
+
+    /// Where the rings go down the page, as shares of its height; none when glued.
+    public var ringPositions: [CGFloat] {
+        switch self {
+        case .glued: []
+        case .threeRing: [0.16, 0.5, 0.84]
+        case .fourRing: [0.13, 0.38, 0.62, 0.87]
+        }
+    }
+
+    /// How wide the binder's spine shows between the open pages, as a share of a page's width; glued pages meet.
+    public var spineShare: CGFloat { hasRings ? 0.085 : 0 }
+
+    /// How far in from a page's inner edge its holes are punched, and how big they are, in page units.
+    public static let holeInset: CGFloat = 26
+    public static let holeRadius: CGFloat = 7
+}
+
+/// The metal of a binder's rings, and of the eyelets around the holes they go through.
+public enum BookRingFinish: String, Codable, Sendable, CaseIterable {
+    case silver, gold, roseGold, black
+
+    public var displayName: String {
+        switch self {
+        case .silver: "Silver"
+        case .gold: "Gold"
+        case .roseGold: "Rose Gold"
+        case .black: "Black"
+        }
+    }
+
+    /// The metal from its shine through its body to its shade.
+    public var tones: (shine: UInt32, body: UInt32, shade: UInt32) {
+        switch self {
+        case .silver: (0xFFFFFF, 0xC4C9D1, 0x666B74)
+        case .gold: (0xFFF3C4, 0xD4AA55, 0x80591B)
+        case .roseGold: (0xFFE6DE, 0xD69683, 0x8A5143)
+        case .black: (0x8C8C93, 0x2E2E33, 0x0D0D0F)
+        }
+    }
+}
+
 /// Where the person put one photo, or how they turned it, and how its note shows, overriding the book's own layout.
 public struct BookPlacementOverride: Codable, Hashable, Sendable {
     /// The middle of the photo's frame, in page coordinates.
@@ -168,10 +223,15 @@ public struct BookSettings: Codable, Hashable, Sendable {
     public var writings: [BookWriting]
     /// Pages added for writing on.
     public var extraPages: [BookExtraPage]
+    /// Glued into the cover, or held on rings.
+    public var binding: BookBinding
+    /// The rings' metal, when there are rings.
+    public var rings: BookRingFinish
 
     public init(paper: BookPaper = .cream, frame: BookFrame = .instant, tilt: BookTilt = .gentle, perPage: BookPerPage = .mixed,
                 cover: BookCover = .rose, seed: UInt64 = 1, overrides: [PhotoID: BookPlacementOverride] = [:], hidden: [PhotoID] = [],
-                notes: BookNoteStyle? = nil, handwriting: String? = nil, writings: [BookWriting] = [], extraPages: [BookExtraPage] = []) {
+                notes: BookNoteStyle? = nil, handwriting: String? = nil, writings: [BookWriting] = [], extraPages: [BookExtraPage] = [],
+                binding: BookBinding = .glued, rings: BookRingFinish = .silver) {
         self.paper = paper
         self.frame = frame
         self.tilt = tilt
@@ -184,9 +244,13 @@ public struct BookSettings: Codable, Hashable, Sendable {
         self.handwriting = handwriting
         self.writings = writings
         self.extraPages = extraPages
+        self.binding = binding
+        self.rings = rings
     }
 
-    enum CodingKeys: String, CodingKey { case paper, frame, tilt, perPage, cover, seed, overrides, hidden, notes, handwriting, writings, extraPages }
+    enum CodingKeys: String, CodingKey {
+        case paper, frame, tilt, perPage, cover, seed, overrides, hidden, notes, handwriting, writings, extraPages, binding, rings
+    }
 
     // Settings saved by a later version with choices this one doesn't know fall back to the defaults.
     public init(from decoder: Decoder) throws {
@@ -204,6 +268,8 @@ public struct BookSettings: Codable, Hashable, Sendable {
         handwriting = try? container.decodeIfPresent(String.self, forKey: .handwriting)
         writings = (try? container.decodeIfPresent([BookWriting].self, forKey: .writings)) ?? []
         extraPages = (try? container.decodeIfPresent([BookExtraPage].self, forKey: .extraPages)) ?? []
+        binding = (try? container.decodeIfPresent(BookBinding.self, forKey: .binding)) ?? defaults.binding
+        rings = (try? container.decodeIfPresent(BookRingFinish.self, forKey: .rings)) ?? defaults.rings
     }
 
     /// How the book's notes show: as chosen, or else by the frames.

@@ -124,6 +124,9 @@ enum DebugLaunchOptions {
             if let value = defaults.string(forKey: "PHBookLayout"), let perPage = BookPerPage(rawValue: value) { book.change("Layout") { $0.perPage = perPage } }
             if let value = defaults.string(forKey: "PHBookNotes"), let notes = BookNoteStyle(rawValue: value) { book.change("Notes") { $0.notes = notes } }
             if let value = defaults.string(forKey: "PHBookHandwriting") { book.change("Handwriting") { $0.handwriting = value } }
+            if let value = defaults.string(forKey: "PHBookBinding"), let binding = BookBinding(rawValue: value) { book.change("Binding") { $0.binding = binding } }
+            if let value = defaults.string(forKey: "PHBookRings"), let rings = BookRingFinish(rawValue: value) { book.change("Rings") { $0.rings = rings } }
+            if let value = defaults.string(forKey: "PHBookCover"), let cover = BookCover(rawValue: value) { book.change("Cover") { $0.cover = cover } }
             let place = defaults.integer(forKey: "PHBookState")
             if place > 0 { book.bookView.go(to: place, animated: false) }
             if defaults.bool(forKey: "PHBookSelect") {

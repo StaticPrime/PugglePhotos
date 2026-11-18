@@ -55,9 +55,11 @@ final class BookRenderer {
         switch page.kind {
         case .cover:
             drawCloth(in: context, bounds: bounds)
+            if settings.binding.hasRings { drawBinderSpine(in: context, bounds: bounds, onLeft: true) }
             drawCoverFront(in: context, bounds: bounds)
         case .back:
             drawCloth(in: context, bounds: bounds)
+            if settings.binding.hasRings { drawBinderSpine(in: context, bounds: bounds, onLeft: false) }
             drawPaw(in: context, center: CGPoint(x: bounds.midX, y: bounds.maxY - 110), size: 46,
                     color: NSColor.black.withAlphaComponent(0.16).cgColor)
         case .insideCover:
@@ -77,7 +79,15 @@ final class BookRenderer {
         }
         // Words written on the page lie over everything on it.
         for writing in page.writings where writing.id != editing { drawWriting(writing, onCloth: page.kind == .cover || page.kind == .back, in: context) }
-        if page.kind != .cover, page.kind != .back { drawGutter(in: context, bounds: bounds, isLeft: isLeft) }
+        if page.kind != .cover, page.kind != .back {
+            // Glued pages curve down into the gutter; a binder's lie flat, punched for its rings (but not the boards'
+            // insides).
+            if !settings.binding.hasRings {
+                drawGutter(in: context, bounds: bounds, isLeft: isLeft)
+            } else if page.kind != .insideCover {
+                drawPunching(in: context, bounds: bounds, isLeft: isLeft)
+            }
+        }
     }
 
     // MARK: Writing
@@ -142,6 +152,74 @@ final class BookRenderer {
         let start = CGPoint(x: isLeft ? bounds.maxX : bounds.minX, y: 0)
         let end = CGPoint(x: isLeft ? bounds.maxX - 46 : bounds.minX + 46, y: 0)
         context.drawLinearGradient(gradient, start: start, end: end, options: [])
+    }
+
+    /// A binder page's inner edge: the crease where it bends at its hinge, and a hole for each ring, punched near the
+    /// edge and lined with a metal eyelet, the board showing through it.
+    private func drawPunching(in context: CGContext, bounds: CGRect, isLeft: Bool) {
+        let dark = settings.paper.isDark
+        let crease = isLeft ? bounds.maxX - 54 : bounds.minX + 54
+        context.saveGState()
+        context.setLineWidth(1)
+        context.setStrokeColor(NSColor.black.withAlphaComponent(dark ? 0.4 : 0.1).cgColor)
+        context.strokeLineSegments(between: [CGPoint(x: crease, y: bounds.minY), CGPoint(x: crease, y: bounds.maxY)])
+        context.setStrokeColor(NSColor.white.withAlphaComponent(dark ? 0.07 : 0.4).cgColor)
+        let shine = crease + (isLeft ? -1 : 1)
+        context.strokeLineSegments(between: [CGPoint(x: shine, y: bounds.minY), CGPoint(x: shine, y: bounds.maxY)])
+        context.restoreGState()
+        let tones = settings.rings.tones
+        let scale = abs(context.ctm.a)
+        let metal = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+                               colors: [Self.color(tones.shine), Self.color(tones.body), Self.color(tones.shade)] as CFArray, locations: [0, 0.45, 1])
+        let x = isLeft ? bounds.maxX - BookBinding.holeInset : bounds.minX + BookBinding.holeInset
+        for share in settings.binding.ringPositions {
+            let center = CGPoint(x: x, y: bounds.minY + bounds.height * share)
+            let hole = BookBinding.holeRadius, rim = hole + 3.5
+            let eyelet = CGRect(x: center.x - rim, y: center.y - rim, width: rim * 2, height: rim * 2)
+            // The eyelet, pressed into the page, a little shadow under it.
+            context.saveGState()
+            context.setShadow(offset: CGSize(width: 0, height: -1.2 * scale), blur: 2 * scale, color: NSColor.black.withAlphaComponent(0.35).cgColor)
+            context.setFillColor(Self.color(tones.body))
+            context.fillEllipse(in: eyelet)
+            context.restoreGState()
+            context.saveGState()
+            context.addEllipse(in: eyelet)
+            context.clip()
+            if let metal { context.drawLinearGradient(metal, start: CGPoint(x: eyelet.minX, y: eyelet.minY), end: CGPoint(x: eyelet.maxX, y: eyelet.maxY), options: []) }
+            context.restoreGState()
+            // Through the hole, the board below, in shade.
+            let through = CGRect(x: center.x - hole, y: center.y - hole, width: hole * 2, height: hole * 2)
+            context.setFillColor(Self.color(settings.cover.color))
+            context.fillEllipse(in: through)
+            context.setFillColor(NSColor.black.withAlphaComponent(0.5).cgColor)
+            context.fillEllipse(in: through)
+            context.setLineWidth(0.8)
+            context.setStrokeColor(Self.color(tones.shade))
+            context.strokeEllipse(in: through)
+        }
+    }
+
+    /// A closed binder's cover along its spine: the spine's rounded edge in shade, and the hinge groove beside it.
+    private func drawBinderSpine(in context: CGContext, bounds: CGRect, onLeft: Bool) {
+        let width: CGFloat = 34
+        let outer = onLeft ? bounds.minX : bounds.maxX
+        let inner = onLeft ? bounds.minX + width : bounds.maxX - width
+        let colors = [NSColor.black.withAlphaComponent(0.3).cgColor, NSColor.black.withAlphaComponent(0.06).cgColor,
+                      NSColor.white.withAlphaComponent(0.12).cgColor]
+        if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: [0, 0.75, 1]) {
+            context.saveGState()
+            context.clip(to: CGRect(x: min(outer, inner), y: bounds.minY, width: width, height: bounds.height))
+            context.drawLinearGradient(gradient, start: CGPoint(x: outer, y: 0), end: CGPoint(x: inner, y: 0), options: [])
+            context.restoreGState()
+        }
+        let groove = onLeft ? inner + 9 : inner - 9
+        context.setLineWidth(1.8)
+        context.setStrokeColor(NSColor.black.withAlphaComponent(0.3).cgColor)
+        context.strokeLineSegments(between: [CGPoint(x: groove, y: bounds.minY), CGPoint(x: groove, y: bounds.maxY)])
+        context.setLineWidth(1)
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.16).cgColor)
+        let light = groove + (onLeft ? 1.6 : -1.6)
+        context.strokeLineSegments(between: [CGPoint(x: light, y: bounds.minY), CGPoint(x: light, y: bounds.maxY)])
     }
 
     private static var grains: [BookPaper: CGImage] = [:]
@@ -460,26 +538,31 @@ final class BookRenderer {
     // MARK: Covers
 
     private func drawCloth(in context: CGContext, bounds: CGRect) {
-        context.setFillColor(Self.color(settings.cover.color))
+        Self.drawCloth(settings.cover, in: context, bounds: bounds)
+    }
+
+    /// The cover's cloth: its color, a fine weave, and light falling across it. A binder's boards are the same cloth.
+    static func drawCloth(_ cover: BookCover, in context: CGContext, bounds: CGRect) {
+        context.setFillColor(color(cover.color))
         context.fill(bounds)
         // The weave.
         context.setLineWidth(0.6)
         context.setStrokeColor(NSColor.black.withAlphaComponent(0.06).cgColor)
-        for line in stride(from: CGFloat(0), to: bounds.maxX, by: 4) {
-            context.move(to: CGPoint(x: line, y: 0))
+        for line in stride(from: bounds.minX, to: bounds.maxX, by: 4) {
+            context.move(to: CGPoint(x: line, y: bounds.minY))
             context.addLine(to: CGPoint(x: line, y: bounds.maxY))
         }
         context.strokePath()
         context.setStrokeColor(NSColor.white.withAlphaComponent(0.05).cgColor)
-        for line in stride(from: CGFloat(0), to: bounds.maxY, by: 4) {
-            context.move(to: CGPoint(x: 0, y: line))
+        for line in stride(from: bounds.minY, to: bounds.maxY, by: 4) {
+            context.move(to: CGPoint(x: bounds.minX, y: line))
             context.addLine(to: CGPoint(x: bounds.maxX, y: line))
         }
         context.strokePath()
         // Light falling across it.
         let colors = [NSColor.white.withAlphaComponent(0.14).cgColor, NSColor.black.withAlphaComponent(0.12).cgColor]
         if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: [0, 1]) {
-            context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: bounds.maxX, y: bounds.maxY), options: [])
+            context.drawLinearGradient(gradient, start: CGPoint(x: bounds.minX, y: bounds.minY), end: CGPoint(x: bounds.maxX, y: bounds.maxY), options: [])
         }
     }
 

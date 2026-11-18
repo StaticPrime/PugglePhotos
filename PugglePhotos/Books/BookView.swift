@@ -117,6 +117,17 @@ final class BookView: NSView, NSTextViewDelegate {
     private let bookShadow = CALayer()
     private let leftPage = CALayer()
     private let rightPage = CALayer()
+    /// A ring binder's open boards, the spine between them, the sheets stacked under each open page, and the rings
+    /// over the pages. Hidden for a glued book.
+    private let leftBoard = CALayer()
+    private let rightBoard = CALayer()
+    private let spinePanel = CALayer()
+    private let leftStack = CALayer()
+    private let rightStack = CALayer()
+    private let rings = CALayer()
+    /// What the binder was last drawn for, so it's drawn again only when that changes.
+    private var binderDrawn: String?
+    private var stacksDrawn: String?
     private let selection = CAShapeLayer()
     private let handle = CAShapeLayer()
     private var leaf: CATransformLayer?
@@ -177,11 +188,20 @@ final class BookView: NSView, NSTextViewDelegate {
         bookShadow.shadowOffset = CGSize(width: 0, height: 10)
         bookShadow.cornerRadius = 4
         book.addSublayer(bookShadow)
+        // A binder's boards, spine and stacked sheets lie under the pages; its rings, over them.
+        for part in [leftBoard, rightBoard, spinePanel, leftStack, rightStack] {
+            part.isHidden = true
+            part.contentsGravity = .resize
+            book.addSublayer(part)
+        }
         for page in [leftPage, rightPage] {
             page.contentsGravity = .resize
             page.masksToBounds = true
             book.addSublayer(page)
         }
+        rings.isHidden = true
+        rings.contentsGravity = .resize
+        book.addSublayer(rings)
         leftPage.cornerRadius = 4
         leftPage.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
         rightPage.cornerRadius = 4
@@ -241,26 +261,35 @@ final class BookView: NSView, NSTextViewDelegate {
 
     // MARK: Geometry
 
-    /// The size of one page on screen.
+    /// How the book is bound.
+    private var binding: BookBinding { delegate?.layout.settings.binding ?? .glued }
+
+    /// The size of one page on screen: two pages side by side, and a binder's spine between them, fit the room, with
+    /// space left around a binder's boards.
     var pageSize: CGSize {
-        let room = bounds.insetBy(dx: 44, dy: 34)
-        let height = max(80, min(room.height, room.width / 2 * BookLayout.pageSize.height / BookLayout.pageSize.width))
+        let boards: CGFloat = binding.hasRings ? 18 : 0
+        let room = bounds.insetBy(dx: 44 + boards, dy: 34 + boards)
+        let height = max(80, min(room.height, room.width / (2 + binding.spineShare) * BookLayout.pageSize.height / BookLayout.pageSize.width))
         return CGSize(width: height * BookLayout.pageSize.width / BookLayout.pageSize.height, height: height)
     }
 
-    /// Where the spine is.
+    /// How wide a binder's spine shows between the open pages; glued pages meet.
+    var spineGap: CGFloat { pageSize.width * binding.spineShare }
+
+    /// Where the spine is: the middle of the binding, which the pages turn about.
     private var spine: CGPoint { CGPoint(x: bounds.midX, y: bounds.midY) }
 
     func pageRect(left: Bool) -> CGRect {
         let size = pageSize
-        return CGRect(x: left ? spine.x - size.width : spine.x, y: spine.y - size.height / 2, width: size.width, height: size.height)
+        let half = spineGap / 2
+        return CGRect(x: left ? spine.x - half - size.width : spine.x + half, y: spine.y - size.height / 2, width: size.width, height: size.height)
     }
 
     /// How far the book slides so a closed cover sits in the middle.
     private func offset(for state: Int) -> CGFloat {
         guard let layout = delegate?.layout else { return 0 }
-        if state == 0 { return -pageSize.width / 2 }
-        if state == layout.stateCount - 1 { return pageSize.width / 2 }
+        if state == 0 { return -(pageSize.width + spineGap) / 2 }
+        if state == layout.stateCount - 1 { return (pageSize.width + spineGap) / 2 }
         return 0
     }
 
@@ -324,6 +353,8 @@ final class BookView: NSView, NSTextViewDelegate {
         leftPage.isHidden = pages.left == nil
         rightPage.isHidden = pages.right == nil
         bookShadow.frame = pages.left == nil ? pageRect(left: false) : (pages.right == nil ? pageRect(left: true) : pageRect(left: true).union(pageRect(left: false)))
+        layoutBinder(pages)
+        if !leftBoard.isHidden { bookShadow.frame = leftBoard.frame.union(rightBoard.frame) }
         CATransaction.commit()
         updateSelection()
         refreshVideos()
@@ -333,6 +364,59 @@ final class BookView: NSView, NSTextViewDelegate {
             NSAccessibility.post(element: self, notification: .valueChanged)
         }
     }
+
+    /// The sizes the stacked sheets were last drawn at, left and right.
+    private var stackSizes = (left: CGSize.zero, right: CGSize.zero)
+
+    /// A ring binder's boards, spine, rings and stacked sheets around the pages showing, shown while it lies open.
+    /// They're drawn again only when the book's look or size changes, and the stacks when the place in it does.
+    private func layoutBinder(_ pages: (left: Int?, right: Int?)) {
+        let open = binding.hasRings && pages.left != nil && pages.right != nil
+        for part in [leftBoard, rightBoard, spinePanel, leftStack, rightStack, rings] { part.isHidden = !open }
+        guard binding.hasRings, let layout = delegate?.layout else { return }
+        let settings = layout.settings
+        let left = pageRect(left: true), right = pageRect(left: false)
+        let margin = left.width * 0.028, gap = spineGap
+        let unit = left.width / BookLayout.pageSize.width
+        let thickness = BookBinding.holeRadius * 1.5 * unit, reach = BookBinding.holeInset * unit
+        let scale = window?.backingScaleFactor ?? 2
+        leftBoard.frame = CGRect(x: left.minX - margin, y: left.minY - margin, width: left.width + margin, height: left.height + margin * 2)
+        rightBoard.frame = CGRect(x: right.minX, y: right.minY - margin, width: right.width + margin, height: right.height + margin * 2)
+        spinePanel.frame = CGRect(x: left.maxX, y: left.minY - margin, width: gap, height: left.height + margin * 2)
+        rings.frame = CGRect(x: left.maxX - reach - thickness * 2, y: left.minY - thickness * 2,
+                             width: gap + (reach + thickness * 2) * 2, height: left.height + thickness * 4)
+        let look = "\(settings.binding)-\(settings.rings)-\(settings.cover)-\(left.size)-\(scale)"
+        if binderDrawn != look {
+            binderDrawn = look
+            let heights = settings.binding.ringPositions.map { $0 * left.height }
+            leftBoard.contents = BinderArt.board(size: leftBoard.bounds.size, cover: settings.cover, spineOnRight: true, scale: scale)
+            rightBoard.contents = BinderArt.board(size: rightBoard.bounds.size, cover: settings.cover, spineOnRight: false, scale: scale)
+            spinePanel.contents = BinderArt.spine(size: spinePanel.bounds.size, cover: settings.cover, finish: settings.rings,
+                                                  rings: heights.map { $0 + margin }, scale: scale)
+            rings.contents = BinderArt.rings(size: rings.bounds.size, finish: settings.rings, rings: heights.map { $0 + thickness * 2 },
+                                             from: thickness * 2, to: rings.bounds.width - thickness * 2, thickness: thickness, scale: scale)
+        }
+        // The sheets already turned lie under the left page; those still to come, under the right.
+        if let leftIndex = pages.left, let rightIndex = pages.right {
+            let before = max(0, (leftIndex - 1) / 2), after = max(0, (layout.pages.count - 2 - rightIndex) / 2)
+            let stacks = "\(look)-\(settings.paper)-\(before)-\(after)"
+            if stacksDrawn != stacks {
+                stacksDrawn = stacks
+                let leftArt = BinderArt.stack(sheets: before, height: left.height, paper: settings.paper, onLeft: true, scale: scale)
+                let rightArt = BinderArt.stack(sheets: after, height: right.height, paper: settings.paper, onLeft: false, scale: scale)
+                leftStack.contents = leftArt?.image
+                rightStack.contents = rightArt?.image
+                stackSizes = (leftArt?.size ?? .zero, rightArt?.size ?? .zero)
+            }
+        }
+        leftStack.frame = CGRect(x: left.minX - stackSizes.left.width, y: left.minY, width: stackSizes.left.width, height: stackSizes.left.height)
+        rightStack.frame = CGRect(x: right.maxX, y: right.minY, width: stackSizes.right.width, height: stackSizes.right.height)
+    }
+
+    #if DEBUG
+    /// How many rings show over the open pages, for the self-test.
+    var ringCountForTesting: Int { rings.isHidden || rings.contents == nil ? 0 : binding.ringPositions.count }
+    #endif
 
     /// Redraws one page in place (after an edit or a photo arriving).
     func reloadPage(_ page: Int) {
@@ -456,17 +540,21 @@ final class BookView: NSView, NSTextViewDelegate {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let rect = pageRect(left: false)
+        // The leaf turns about the middle of the binding: the spine where glued pages meet, or a binder's rings, with
+        // the page held half the spine's width off them.
+        let half = spineGap / 2
         let leaf = CATransformLayer()
         leaf.anchorPoint = CGPoint(x: 0, y: 0.5)
-        leaf.bounds = CGRect(origin: .zero, size: rect.size)
-        leaf.position = CGPoint(x: rect.minX, y: rect.midY)
+        leaf.bounds = CGRect(x: 0, y: 0, width: rect.width + half, height: rect.height)
+        leaf.position = CGPoint(x: spine.x, y: rect.midY)
+        let face = CGRect(x: half, y: 0, width: rect.width, height: rect.height)
         let front = CALayer()
-        front.frame = leaf.bounds
+        front.frame = face
         front.contents = delegate.pageImage(pages.front)
         front.contentsGravity = .resize
         front.isDoubleSided = false
         let back = CALayer()
-        back.frame = leaf.bounds
+        back.frame = face
         back.contents = delegate.pageImage(pages.back)
         back.contentsGravity = .resize
         back.isDoubleSided = false
@@ -484,7 +572,8 @@ final class BookView: NSView, NSTextViewDelegate {
         leaf.addSublayer(front)
         leaf.addSublayer(back)
         leaf.transform = CATransform3DMakeRotation(forward ? 0 : -.pi, 0, 1, 0)
-        book.insertSublayer(leaf, below: selection)
+        // Under a binder's rings, which the pages turn about.
+        book.insertSublayer(leaf, below: rings)
         self.leaf = leaf
         // Under the leaf: going forward, the next spread's right page; going back, the earlier one's left page.
         if forward {
@@ -493,6 +582,15 @@ final class BookView: NSView, NSTextViewDelegate {
         } else {
             leftPage.contents = under.left.flatMap(delegate.pageImage)
             leftPage.isHidden = under.left == nil
+        }
+        // A binder opening or closing: the turning leaf is a board itself, so only the board staying under the pages
+        // shows (the back one under the right page at the front of the book, the front one at the back) until it lands.
+        let from = layout.state(state)
+        if binding.hasRings, [from.left, from.right, under.left, under.right].contains(where: { $0 == nil }) {
+            let atFront = target == 0 || state == 0
+            for part in [leftBoard, spinePanel, leftStack, rightStack, rings, rightBoard] { part.isHidden = true }
+            (atFront ? rightBoard : leftBoard).isHidden = false
+            bookShadow.frame = (atFront ? rightBoard : leftBoard).frame
         }
         CATransaction.commit()
     }

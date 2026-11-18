@@ -181,14 +181,29 @@ import Testing
         var catalog = Catalog()
         let album = catalog.addAlbum(title: "Lake", items: ["a"])
         #expect(catalog.book(album) == BookSettings())
-        var settings = BookSettings(paper: .black, frame: .taped, tilt: .playful, perPage: .three, cover: .navy, seed: 9)
+        var settings = BookSettings(paper: .black, frame: .taped, tilt: .playful, perPage: .three, cover: .navy, seed: 9,
+                                    binding: .fourRing, rings: .roseGold)
         settings.overrides["a"] = BookPlacementOverride(center: CGPoint(x: 10, y: 20), angle: 3)
         settings.hidden = ["b"]
         catalog.setBook(settings, for: album)
         #expect(try CatalogStore.decode(CatalogStore.encode(catalog)).book(album) == settings)
         catalog.setBook(BookSettings(), for: album)
         #expect(catalog.album(album)?.book == nil, "default settings aren't stored")
-        let future = try JSONDecoder().decode(BookSettings.self, from: Data(#"{"paper": "velvet", "frame": "print"}"#.utf8))
-        #expect(future.paper == .cream && future.frame == .print, "choices from a newer version fall back")
+        let future = try JSONDecoder().decode(BookSettings.self, from: Data(#"{"paper": "velvet", "frame": "print", "binding": "spiral"}"#.utf8))
+        #expect(future.paper == .cream && future.frame == .print && future.binding == .glued, "choices from a newer version fall back")
+        let older = try JSONDecoder().decode(BookSettings.self, from: Data(#"{"cover": "sage"}"#.utf8))
+        #expect(older.binding == .glued && older.rings == .silver, "books saved before bindings stay glued")
+    }
+
+    @Test func bindings() {
+        #expect(BookBinding.glued.ringPositions.isEmpty && BookBinding.glued.spineShare == 0 && !BookBinding.glued.hasRings,
+                "glued pages meet in the middle, with no rings")
+        for binding in [BookBinding.threeRing, .fourRing] {
+            let rings = binding.ringPositions
+            #expect(rings.count == (binding == .threeRing ? 3 : 4) && rings == rings.sorted(), "\(binding)")
+            #expect(rings.allSatisfy { $0 > 0.1 && $0 < 0.9 }, "rings stay clear of the page's top and bottom")
+            #expect(zip(rings, rings.reversed()).allSatisfy { abs($0 + $1 - 1) < 0.001 }, "and sit evenly about its middle")
+            #expect(binding.spineShare > 0, "a binder's spine shows between the pages")
+        }
     }
 }

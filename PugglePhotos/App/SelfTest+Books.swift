@@ -317,6 +317,61 @@ extension SelfTest {
             library.undoManager.undo()
             check(settings.seed == seed, "and can be undone")
         }
+
+        // MARK: Bindings
+        // The color of a page's picture at a point on the page.
+        func color(ofPage page: Int, at point: CGPoint) -> [CGFloat] {
+            guard let image = book.pageImage(page) else { return [] }
+            let x = Int(point.x / BookLayout.pageSize.width * CGFloat(image.width))
+            let y = Int(point.y / BookLayout.pageSize.height * CGFloat(image.height))
+            var pixel = [UInt8](repeating: 0, count: 4)
+            pixel.withUnsafeMutableBytes { bytes in
+                guard let context = CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                              space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+                context.draw(image, in: CGRect(x: -CGFloat(x), y: -CGFloat(image.height - 1 - y), width: CGFloat(image.width), height: CGFloat(image.height)))
+            }
+            return pixel.prefix(3).map { CGFloat($0) / 255 }
+        }
+        var glued: [CGFloat] = []
+        step {
+            guard let right = book.layout.state(view.state).right else { return }
+            let hole = CGPoint(x: BookBinding.holeInset, y: BookLayout.pageSize.height * 0.5)
+            glued = color(ofPage: right, at: hole)
+            check(view.ringCountForTesting == 0 && abs(view.pageRect(left: false).minX - view.pageRect(left: true).maxX) < 0.01,
+                  "a glued book's pages meet in the middle, with no rings")
+            check(menuItem("View", "Gold").map { !window.validateMenuItem($0) } == true && settings.rings == .silver,
+                  "the rings' metal can't be chosen for a glued book")
+            check(choose("View", "3 Rings") && settings.binding == .threeRing && view.ringCountForTesting == 3,
+                  "View ▸ Binding ▸ 3 Rings holds the pages on three rings")
+            let left = view.pageRect(left: true), rightRect = view.pageRect(left: false)
+            check(rightRect.minX - left.maxX > 10 && abs((left.minX + rightRect.maxX) / 2 - view.bounds.midX) < 0.5,
+                  "the pages part for the binder's spine, the spread still in the middle")
+            let punched = color(ofPage: right, at: hole)
+            check(punched.count == 3 && glued.count == 3 && zip(punched, glued).map { abs($0 - $1) }.reduce(0, +) > 0.3,
+                  "the pages are punched for the rings", "\(punched) where glued was \(glued)")
+            check(choose("View", "Gold") && settings.rings == .gold, "and the rings can be gold")
+            check(choose("View", "4 Rings") && view.ringCountForTesting == 4, "or there can be four")
+            // Photos are still picked where they're drawn.
+            guard let placement = book.layout.pages[right].placements.first else { return }
+            let point = view.viewPoint(placement.center, onLeft: false)
+            bookMouse(.leftMouseDown, at: point, in: view)
+            bookMouse(.leftMouseUp, at: point, in: view)
+            let drawn = view.drawnHandlesForTesting
+            check(view.selected == placement.id && drawn.knob.map { knob in view.knobForTesting.map { hypot($0.turn.x - knob.x, $0.turn.y - knob.y) < 0.5 } ?? false } == true,
+                  "on rings, a photo is picked where it's drawn, its handles where they take hold")
+            let state = view.state
+            view.next()
+            wait { !view.isTurning && view.state == state + 1 }
+        }
+        step {
+            check(view.ringCountForTesting == 4, "the pages turn on the rings")
+            view.go(to: 0, animated: false)
+            let middle = view.viewPoint(CGPoint(x: BookLayout.pageSize.width / 2, y: BookLayout.pageSize.height / 2), onLeft: false)
+            check(abs(middle.x - view.bounds.midX) < 0.5 && view.ringCountForTesting == 0, "closed, the binder sits in the middle, its rings out of sight")
+            check(choose("View", "Glued") && settings.binding == .glued && abs(view.pageRect(left: false).minX - view.pageRect(left: true).maxX) < 0.01,
+                  "Glued puts the pages back together")
+            view.go(to: 2, animated: false)
+        }
         step {
             // The PDF: the closed covers on pages of their own, the spreads two pages wide.
             let data = book.pdfData()

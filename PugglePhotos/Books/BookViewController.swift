@@ -941,6 +941,30 @@ struct BookControlsView: View {
             picker("Layout", BookPerPage.allCases, \.perPage, \.displayName)
             picker("Cover", BookCover.allCases, \.cover, \.displayName)
             Menu {
+                ForEach(BookBinding.allCases, id: \.self) { binding in
+                    Button {
+                        model.controller?.change("Binding") { $0.binding = binding }
+                    } label: {
+                        if model.settings.binding == binding { Label(binding.displayName, systemImage: "checkmark") } else { Text(binding.displayName) }
+                    }
+                }
+                Section("Rings") {
+                    ForEach(BookRingFinish.allCases, id: \.self) { finish in
+                        Button {
+                            model.controller?.change("Rings") { $0.rings = finish }
+                        } label: {
+                            if model.settings.rings == finish { Label(finish.displayName, systemImage: "checkmark") } else { Text(finish.displayName) }
+                        }
+                        .disabled(!model.settings.binding.hasRings)
+                    }
+                }
+            } label: {
+                Text("Binding")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("How the pages are bound: glued, or held on rings, and the rings’ metal")
+            Menu {
                 ForEach(BookNoteStyle.allCases, id: \.self) { style in
                     Button {
                         model.controller?.change("Notes") { $0.notes = style }
