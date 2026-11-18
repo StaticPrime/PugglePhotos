@@ -30,6 +30,15 @@ final class BookRenderer {
 
     static let pageSize = BookLayout.pageSize
 
+    /// Sets a shadow measured in page units, as at the page's full size a pixel a point (the size a PDF draws it).
+    /// Core Graphics offsets and blurs a shadow in pixels whatever the drawing's scale, so one given in pixels fell short
+    /// on a page drawn sharper than the window's (an EPUB's, three pixels a unit) and long on one drawn smaller: scaled
+    /// here, it falls the same on the page in the window, a PDF or an EPUB, at any size and on any screen.
+    static func setShadow(in context: CGContext, offset: CGSize, blur: CGFloat, color: CGColor) {
+        let scale = hypot(context.ctm.a, context.ctm.b)
+        context.setShadow(offset: CGSize(width: offset.width * scale, height: offset.height * scale), blur: blur * scale, color: color)
+    }
+
     /// A page as a picture, `pixelWidth` pixels wide.
     func render(_ page: BookPage, index: Int, isLeft: Bool, pixelWidth: CGFloat) -> CGImage? {
         let width = Int(pixelWidth.rounded())
@@ -167,7 +176,6 @@ final class BookRenderer {
         context.strokeLineSegments(between: [CGPoint(x: shine, y: bounds.minY), CGPoint(x: shine, y: bounds.maxY)])
         context.restoreGState()
         let tones = settings.rings.tones
-        let scale = abs(context.ctm.a)
         let metal = [Self.color(tones.shine), Self.color(tones.body), Self.color(tones.shade)]
         let x = isLeft ? bounds.maxX - BookBinding.holeInset : bounds.minX + BookBinding.holeInset
         for share in settings.binding.ringPositions {
@@ -176,7 +184,7 @@ final class BookRenderer {
             let eyelet = CGRect(x: center.x - rim, y: center.y - rim, width: rim * 2, height: rim * 2)
             // The eyelet, pressed into the page, a little shadow under it.
             context.saveGState()
-            context.setShadow(offset: CGSize(width: 0, height: -1.2 * scale), blur: 2 * scale, color: NSColor.black.withAlphaComponent(0.35).cgColor)
+            Self.setShadow(in: context, offset: CGSize(width: 0, height: -1.2), blur: 2, color: NSColor.black.withAlphaComponent(0.35).cgColor)
             context.setFillColor(Self.color(tones.body))
             context.fillEllipse(in: eyelet)
             context.restoreGState()
@@ -336,8 +344,8 @@ final class BookRenderer {
         let picture = placement.imageRect(frame)
         // The shadow, then the frame (or the picture alone).
         context.saveGState()
-        context.setShadow(offset: CGSize(width: 0, height: 4), blur: 10,
-                          color: NSColor.black.withAlphaComponent(settings.paper.isDark ? 0.55 : 0.28).cgColor)
+        Self.setShadow(in: context, offset: CGSize(width: 0, height: 4), blur: 10,
+                       color: NSColor.black.withAlphaComponent(settings.paper.isDark ? 0.55 : 0.28).cgColor)
         context.setFillColor(frame == .plain ? NSColor(white: 0.85, alpha: 1).cgColor : CGColor(srgbRed: 0.995, green: 0.993, blue: 0.98, alpha: 1))
         context.fill(outer)
         context.restoreGState()
@@ -362,7 +370,7 @@ final class BookRenderer {
         context.rotate(by: placement.angle * .pi / 180)
         let outer = placement.frameRect(frame)
         context.saveGState()
-        context.setShadow(offset: CGSize(width: 0, height: 4), blur: 10,
+        Self.setShadow(in: context, offset: CGSize(width: 0, height: 4), blur: 10,
                           color: NSColor.black.withAlphaComponent(settings.paper.isDark ? 0.55 : 0.28).cgColor)
         context.setFillColor(PhotoBack.paper.cgColor)
         context.fill(outer)
@@ -384,7 +392,7 @@ final class BookRenderer {
         let previous = NSGraphicsContext.current?.cgContext
         if onPicture {
             previous?.saveGState()
-            previous?.setShadow(offset: CGSize(width: 0, height: 1), blur: 4, color: NSColor.black.withAlphaComponent(0.75).cgColor)
+            if let previous { Self.setShadow(in: previous, offset: CGSize(width: 0, height: 1), blur: 4, color: NSColor.black.withAlphaComponent(0.75).cgColor) }
         }
         drawText(placement.note, font: handwriting(size), color: color, in: rect, lines: max(1, Int(rect.height / (size * 1.2))))
         if onPicture { previous?.restoreGState() }
@@ -412,7 +420,7 @@ final class BookRenderer {
         paper.closeSubpath()
         // The shadow falls more where the paper lifts.
         context.saveGState()
-        context.setShadow(offset: CGSize(width: 1.5, height: 4), blur: 7, color: NSColor.black.withAlphaComponent(0.3).cgColor)
+        Self.setShadow(in: context, offset: CGSize(width: 1.5, height: 4), blur: 7, color: NSColor.black.withAlphaComponent(0.3).cgColor)
         context.addPath(paper)
         context.setFillColor(Self.color(sticky.color.color))
         context.fillPath()
@@ -620,7 +628,7 @@ final class BookRenderer {
     private func drawCoverFront(in context: CGContext, bounds: CGRect) {
         let photoRect = CGRect(x: 120, y: 110, width: 360, height: 360)
         context.saveGState()
-        context.setShadow(offset: CGSize(width: 0, height: 3), blur: 8, color: NSColor.black.withAlphaComponent(0.4).cgColor)
+        Self.setShadow(in: context, offset: CGSize(width: 0, height: 3), blur: 8, color: NSColor.black.withAlphaComponent(0.4).cgColor)
         context.setFillColor(CGColor(srgbRed: 0.98, green: 0.97, blue: 0.94, alpha: 1))
         context.fill(photoRect)
         context.restoreGState()
