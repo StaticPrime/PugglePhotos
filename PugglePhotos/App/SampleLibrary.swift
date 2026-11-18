@@ -4,7 +4,7 @@ import AVFoundation
 import PugglePhotosKit
 
 /// `-PHSampleLibrary YES`: a made-up library of illustrated photos, used by the self-test and for screenshots so
-/// nothing ever touches the real Photos library. It lives in memory; date and favorite changes last until quit.
+/// nothing ever touches the real Photos library. It lives in memory; changes, and files dropped in, last until quit.
 final class SamplePhotoSource: PhotoSource {
     private(set) var items: [PhotoID: MediaItem] = [:]
     private var scenes: [PhotoID: (scene: SampleScene, seed: Int)] = [:]
@@ -13,17 +13,22 @@ final class SamplePhotoSource: PhotoSource {
     private var albumNumber = 0
     private var recent: [PhotoID] = []
     private var videoFiles: [PhotoID: URL] = [:]
+    /// Files dropped in, which the photos made from them are drawn and played from (they're only read, never kept).
+    private(set) var addedFiles: [PhotoID: URL] = [:]
+    private var addedNumber = 0
+    private let today: Date
     var onChange: (() -> Void)?
     var access: LibraryAccess
     /// Counts each change to the library, for the self-test.
     private(set) var changeCount = 0
-    /// Makes the next date or favorite change fail, as if the person said no.
+    /// Makes the next change fail, as if the person said no.
     var refuseNextChange = false
 
     let catalog: Catalog
 
     init(today: Date = Date(), count: Int = 0, access: LibraryAccess = .authorized) {
         self.access = access
+        self.today = today
         let library = SampleLibrary.make(today: today, extra: count)
         for entry in library.entries {
             items[entry.item.id] = entry.item
@@ -47,6 +52,7 @@ final class SamplePhotoSource: PhotoSource {
     func loadFileNames(_ ids: [PhotoID], completion: @escaping @MainActor ([PhotoID: String]) -> Void) {
         var names: [PhotoID: String] = [:]
         for id in ids {
+            if let file = addedFiles[id] { names[id] = file.lastPathComponent }
             guard let item = items[id], let scene = scenes[id] else { continue }
             let number = abs(scene.seed) % 9000 + 1000
             names[id] = switch (scene.scene, item.kind) {
@@ -62,6 +68,16 @@ final class SamplePhotoSource: PhotoSource {
     @discardableResult
     func requestImage(_ id: PhotoID, pixels: CGSize, fit: Bool,
                       completion: @escaping @MainActor (CGImage?, Bool) -> Void) -> ImageRequest? {
+        if let file = addedFiles[id], let item = items[id] {
+            let cancelled = CancelFlag()
+            let maxPixels = min(max(pixels.width, pixels.height) * 2, 2400)
+            Task {
+                let image = await Self.picture(of: file, isVideo: item.kind.isVideo, maxPixels: maxPixels)
+                guard !cancelled.isSet else { return }
+                completion(image?.cgImage, true)
+            }
+            return ImageRequest { cancelled.set() }
+        }
         guard let spec = scenes[id], let item = items[id] else {
             completion(nil, true)
             return nil
@@ -95,6 +111,10 @@ final class SamplePhotoSource: PhotoSource {
     func stopPrefetching() { prefetching = [] }
 
     func requestPlayerItem(_ id: PhotoID, completion: @escaping @MainActor (AVPlayerItem?) -> Void) {
+        if let file = addedFiles[id] {
+            completion(items[id]?.kind == .video ? AVPlayerItem(url: file) : nil)
+            return
+        }
         guard let spec = scenes[id], items[id]?.kind == .video else {
             completion(nil)
             return
@@ -130,6 +150,66 @@ final class SamplePhotoSource: PhotoSource {
         }
         for id in ids { items[id]?.isFavorite = favorite }
         changed(completion)
+    }
+
+    // MARK: Adding files
+
+    /// Makes a photo or video for each file, taken when the file says and added just now, as the Photos library
+    /// would; the file itself is only read.
+    func addFiles(_ files: [ImportFile], progress: @escaping @MainActor @Sendable (Int) -> Void,
+                  completion: @escaping @MainActor (AddedFiles) -> Void) {
+        if refuseNextChange {
+            refuseNextChange = false
+            let refused = files.map { AddedFiles.Refusal(name: $0.name, reason: LibraryError.notAllowed.localizedDescription) }
+            DispatchQueue.main.async { completion(AddedFiles(ids: [], refused: refused)) }
+            return
+        }
+        var added = AddedFiles()
+        for file in files {
+            addedNumber += 1
+            let id = PhotoID("sample-added-\(addedNumber)")
+            items[id] = MediaItem(id: id, kind: file.kind, date: file.date, addedDate: today.addingTimeInterval(TimeInterval(addedNumber)),
+                                  pixelWidth: Int(file.pixelSize.width.rounded()), pixelHeight: Int(file.pixelSize.height.rounded()),
+                                  duration: file.duration)
+            addedFiles[id] = file.url
+            recent.append(id)
+            added.ids.append(id)
+        }
+        changed { _ in
+            progress(files.count)
+            completion(added)
+        }
+    }
+
+    func deleteItems(_ ids: [PhotoID], completion: @escaping @MainActor (Error?) -> Void) {
+        if refuseNextChange {
+            refuseNextChange = false
+            DispatchQueue.main.async { completion(LibraryError.notAllowed) }
+            return
+        }
+        let doomed = Set(ids)
+        for id in ids {
+            items[id] = nil
+            addedFiles[id] = nil
+            scenes[id] = nil
+        }
+        recent.removeAll { doomed.contains($0) }
+        for index in albums.indices { albums[index].items.removeAll { doomed.contains($0) } }
+        changed(completion)
+    }
+
+    /// A picture of a dropped file: a thumbnail of a photo, the first frame of a video.
+    @concurrent nonisolated private static func picture(of file: URL, isVideo: Bool, maxPixels: CGFloat) async -> SendableImage? {
+        if isVideo {
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: file))
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: maxPixels, height: maxPixels)
+            return (try? await generator.image(at: .zero).image).map(SendableImage.init)
+        }
+        guard let source = CGImageSourceCreateWithURL(file as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
+                                        kCGImageSourceThumbnailMaxPixelSize: maxPixels]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map(SendableImage.init)
     }
 
     // MARK: Albums

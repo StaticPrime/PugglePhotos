@@ -39,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         library.start(catalog: initialCatalog)
         memories.start()
+        // Files other apps wrote out for drops last time are in the library by now, or were never wanted.
+        FileDrop.clearDroppedFiles()
         if launchedAtLogin {
             waitInMenuBar()
         } else {

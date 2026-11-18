@@ -13,6 +13,8 @@ protocol SidebarDelegate: AnyObject {
     func sidebarRenameAlbum(_ id: UUID, to title: String)
     func sidebarDrop(_ ids: [PhotoID], on source: LibrarySource) -> Bool
     func sidebarDropOnAlbumsHeading(_ ids: [PhotoID]) -> Bool
+    /// Photos and videos dropped from another app, on a row they can go to.
+    func sidebarDropFiles(_ urls: [URL], on target: FileDropTarget)
     func calendarSelect(_ day: CivilDay)
     func calendarDrop(_ ids: [PhotoID], on day: CivilDay, rect: NSRect, in view: NSView) -> Bool
 }
@@ -39,7 +41,8 @@ final class SidebarNode {
 }
 
 /// The sidebar: the library, albums and labels, with the calendar underneath.
-/// Drop photos on an album, a label or Favorites to add them there.
+/// Drop photos on an album, a label or Favorites to add them there. Photos and videos dragged in from other apps
+/// can be dropped there too, or on Library, Videos or Recently Added, and go into the library as well.
 final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTextFieldDelegate {
     weak var delegate: SidebarDelegate?
     private(set) var outlineView: NSOutlineView!
@@ -78,7 +81,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outlineView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         outlineView.dataSource = self
         outlineView.delegate = self
-        outlineView.registerForDraggedTypes([.photoID])
+        outlineView.registerForDraggedTypes([.photoID] + FileDrop.types)
         outlineView.draggingDestinationFeedbackStyle = .sourceList
         outlineView.autosaveExpandedItems = false
         outlineView.menu = NSMenu()
@@ -335,7 +338,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func outlineView(_ outlineView: NSOutlineView, validateDrop info: any NSDraggingInfo, proposedItem item: Any?,
                      proposedChildIndex index: Int) -> NSDragOperation {
-        guard !PhotoDrag.ids(from: info.draggingPasteboard).isEmpty, let node = item as? SidebarNode else { return [] }
+        guard let node = item as? SidebarNode else { return [] }
+        if PhotoDrag.ids(from: info.draggingPasteboard).isEmpty {
+            // Photos and videos from another app.
+            let count = FileDrop.importableCount(info)
+            guard count > 0, Self.fileTarget(node) != nil else { return [] }
+            outlineView.setDropItem(node, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            info.numberOfValidItemsForDrop = count
+            return .copy
+        }
         switch node.kind {
         case .heading("Albums"):
             outlineView.setDropItem(node, dropChildIndex: NSOutlineViewDropOnItemIndex)
@@ -355,10 +366,32 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     func outlineView(_ outlineView: NSOutlineView, acceptDrop info: any NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
         let ids = PhotoDrag.ids(from: info.draggingPasteboard)
         guard let node = item as? SidebarNode, let delegate else { return false }
+        if ids.isEmpty {
+            guard let target = Self.fileTarget(node), FileDrop.importableCount(info) > 0 else { return false }
+            FileDrop.receive(info.draggingPasteboard) { [weak self] urls in self?.delegate?.sidebarDropFiles(urls, on: target) }
+            return true
+        }
         switch node.kind {
         case .heading: return delegate.sidebarDropOnAlbumsHeading(ids)
         case .source(.allAlbums): return delegate.sidebarDropOnAlbumsHeading(ids)
         case let .source(source): return delegate.sidebarDrop(ids, on: source)
+        }
+    }
+
+    /// Where photos and videos dropped from another app on a row go; nil for rows they can't go to.
+    static func fileTarget(_ node: SidebarNode) -> FileDropTarget? {
+        switch node.kind {
+        case .heading("Albums"): .newAlbum
+        case .heading: nil
+        case let .source(source):
+            switch source {
+            case .library, .videos, .recentlyAdded: .library
+            case .favorites: .favorites
+            case let .album(id): .album(id)
+            case let .label(id): .label(id)
+            case .allAlbums: .newAlbum
+            case .memories, .memory, .journal: nil
+            }
         }
     }
 }

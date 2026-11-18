@@ -28,6 +28,18 @@ final class ImageRequest {
     }
 }
 
+/// What adding files to the library came to: the photos and videos made, in the files' order, and the files it
+/// wouldn't take, with why.
+nonisolated struct AddedFiles: Sendable {
+    nonisolated struct Refusal: Sendable {
+        var name: String
+        var reason: String
+    }
+
+    var ids: [PhotoID] = []
+    var refused: [Refusal] = []
+}
+
 /// An immutable image that can cross threads.
 nonisolated struct SendableImage: @unchecked Sendable {
     let cgImage: CGImage
@@ -77,6 +89,13 @@ protocol PhotoSource: AnyObject {
     func setDates(_ changes: [Redate.Change], completion: @escaping @MainActor (Error?) -> Void)
     /// Marks photos as favorites, or not, all in one change to the library.
     func setFavorite(_ ids: [PhotoID], _ favorite: Bool, completion: @escaping @MainActor (Error?) -> Void)
+    /// Copies photo and video files into the library (the files stay where they are). `progress` hears how many
+    /// files are done as it goes.
+    func addFiles(_ files: [ImportFile], progress: @escaping @MainActor @Sendable (Int) -> Void,
+                  completion: @escaping @MainActor (AddedFiles) -> Void)
+    /// Deletes photos from the library, all in one change (macOS asks the person first; they go to Recently
+    /// Deleted). Only for taking out photos PugglePhotos added, when that's undone.
+    func deleteItems(_ ids: [PhotoID], completion: @escaping @MainActor (Error?) -> Void)
 
     /// Makes an album in the library holding these photos, and answers with its identifier.
     func createAlbum(title: String, items: [PhotoID], completion: @escaping @MainActor (Result<String, Error>) -> Void)

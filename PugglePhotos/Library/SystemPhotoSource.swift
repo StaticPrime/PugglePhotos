@@ -3,8 +3,9 @@ import AVFoundation
 import Photos
 import PugglePhotosKit
 
-/// The Photos library on this Mac, through PhotoKit. PugglePhotos reads it, and writes only two things, both when
-/// the person asks: when photos were taken, and whether they're favorites.
+/// The Photos library on this Mac, through PhotoKit. PugglePhotos reads it, and changes it only when the person
+/// asks: when photos were taken, whether they're favorites, its albums, and photos and videos dragged in (which
+/// Undo deletes again).
 final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserver {
     private let manager = PHCachingImageManager()
     private var assets: [PhotoID: PHAsset] = [:]
@@ -200,6 +201,76 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
         perform({
             for asset in targets { PHAssetChangeRequest(for: asset).isFavorite = favorite }
         }, completion: completion)
+    }
+
+    // MARK: Adding files
+
+    func addFiles(_ files: [ImportFile], progress: @escaping @MainActor @Sendable (Int) -> Void,
+                  completion: @escaping @MainActor (AddedFiles) -> Void) {
+        Task {
+            let added = await Self.add(files, progress: progress)
+            completion(added)
+        }
+    }
+
+    /// In batches, so a big drop can say how far along it is. A batch the library refuses is tried again a file at
+    /// a time, to add the rest and name the files it won't take.
+    @concurrent private nonisolated static func add(_ files: [ImportFile], progress: @escaping @MainActor @Sendable (Int) -> Void) async -> AddedFiles {
+        var added = AddedFiles()
+        var done = 0
+        for start in stride(from: 0, to: files.count, by: 20) {
+            let batch = Array(files[start..<min(start + 20, files.count)])
+            do {
+                added.ids += try await create(batch)
+            } catch {
+                for file in batch {
+                    do {
+                        added.ids += try await create([file])
+                    } catch {
+                        added.refused.append(AddedFiles.Refusal(name: file.name, reason: error.localizedDescription))
+                    }
+                }
+            }
+            done += batch.count
+            await progress(done)
+        }
+        return added
+    }
+
+    /// One change to the library making an asset from each file, copied in under its own name. A file without a
+    /// date inside it is given the date it has on disk.
+    @concurrent private nonisolated static func create(_ files: [ImportFile]) async throws -> [PhotoID] {
+        let made = LockedValue<[String]>([])
+        try await PHPhotoLibrary.shared().performChanges {
+            var ids: [String] = []
+            for file in files {
+                let request = PHAssetCreationRequest.forAsset()
+                let options = PHAssetResourceCreationOptions()
+                options.originalFilename = file.name
+                options.shouldMoveFile = false
+                request.addResource(with: file.kind.isVideo ? .video : .photo, fileURL: file.url, options: options)
+                if !file.dateIsInFile { request.creationDate = file.date }
+                if let id = request.placeholderForCreatedAsset?.localIdentifier { ids.append(id) }
+            }
+            made.value = ids
+        }
+        return made.value.map { PhotoID($0) }
+    }
+
+    func deleteItems(_ ids: [PhotoID], completion: @escaping @MainActor (Error?) -> Void) {
+        let found = PHAsset.fetchAssets(withLocalIdentifiers: ids.map(\.rawValue), options: nil)
+        guard found.count > 0 else {
+            completion(nil)
+            return
+        }
+        let doomed = FetchedAssets(result: found)
+        perform({
+            PHAssetChangeRequest.deleteAssets(doomed.result)
+        }, completion: completion)
+    }
+
+    private nonisolated struct FetchedAssets: @unchecked Sendable {
+        let result: PHFetchResult<PHAsset>
     }
 
     // MARK: Albums

@@ -28,6 +28,14 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     private(set) var inspectorItem: NSSplitViewItem!
     private(set) var sidebarItem: NSSplitViewItem!
     private let container = NSViewController()
+    /// The middle, which takes photos and videos dropped from other apps.
+    let dropZone = DropZoneView()
+    /// What the subtitle says while files dropped in are being added.
+    var addingStatus: String? {
+        didSet { updateTitle() }
+    }
+    /// Photos to select once the middle shows them, and how many times it has looked.
+    var pendingReveal: (ids: [PhotoID], tries: Int)?
     private var shownChild: NSViewController?
     private var welcomeHost: NSHostingController<WelcomeView>?
     private var emptyHost: NSHostingController<EmptyStateView>?
@@ -101,7 +109,12 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         inspectorModel.actions = self
         grid.thumbnailSide = state.thumbnailSide
 
-        container.view = NSView()
+        container.view = dropZone
+        dropZone.target = { [weak self] point in
+            guard let self, let target = fileDropTarget(at: point) else { return nil }
+            return (target, dropTitle(target))
+        }
+        dropZone.onDrop = { [weak self] urls, target in self?.dropFiles(urls, on: target) }
         splitController = NSSplitViewController()
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sidebarItem.minimumThickness = 200
@@ -131,7 +144,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         container.addChild(child)
         let view = child.view
         view.translatesAutoresizingMaskIntoConstraints = false
-        container.view.addSubview(view)
+        dropZone.addContent(view)
         NSLayoutConstraint.activate([
             view.leadingAnchor.constraint(equalTo: container.view.leadingAnchor),
             view.trailingAnchor.constraint(equalTo: container.view.trailingAnchor),
@@ -327,14 +340,15 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         } else {
             view = switch state.source {
             case .favorites: EmptyStateView(symbol: "heart", title: "No Favorites Yet",
-                                            message: "Press period (.) or click the heart in the toolbar to make a photo a favorite. Favorites show here and in your Photos library.")
-            case .videos: EmptyStateView(symbol: "video", title: "No Videos", message: "Videos in your Photos library show here.")
+                                            message: "Press period (.) or click the heart in the toolbar to make a photo a favorite, or drag photos here from anywhere. Favorites show here and in your Photos library.")
+            case .videos: EmptyStateView(symbol: "video", title: "No Videos",
+                                         message: "Videos in your Photos library show here. Drag videos here from anywhere to add them.")
             case .recentlyAdded: EmptyStateView(symbol: "clock", title: "Nothing Added Lately",
-                                                message: "Photos added to your Photos library in the last 30 days show here.")
+                                                message: "Photos added to your Photos library in the last 30 days show here. Drag photos and videos here from anywhere to add them.")
             case .label: EmptyStateView(symbol: "tag", title: "No Photos with This Label",
                                         message: "Drag photos onto the label in the sidebar, or press ⌃ and the label’s number.")
             default: EmptyStateView(symbol: "photo.on.rectangle.angled", title: "No Photos",
-                                    message: "Photos and videos in your Photos library show here.")
+                                    message: "Photos and videos in your Photos library show here. Drag photos and videos here from anywhere to add them.")
             }
         }
         if let emptyHost { emptyHost.rootView = view } else { emptyHost = NSHostingController(rootView: view) }
@@ -355,6 +369,10 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         case .allAlbums: window.title = "Albums"
         case let .album(id): window.title = library.catalog.album(id)?.title ?? "Album"
         case let .label(id): window.title = library.catalog.label(id)?.displayName ?? "Label"
+        }
+        if let addingStatus {
+            window.subtitle = addingStatus
+            return
         }
         if state.source == .allAlbums {
             window.subtitle = library.catalog.albums.count == 1 ? "1 album" : "\(formatting.number(library.catalog.albums.count)) albums"
@@ -408,6 +426,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         default:
             refresh(keepPosition: true)
         }
+        revealPending()
         inspectorModel.ids = state.selection.filter { library.snapshot.contains($0) }
     }
 

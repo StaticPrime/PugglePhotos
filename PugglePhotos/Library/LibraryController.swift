@@ -38,6 +38,8 @@ final class LibraryController {
     @ObservationIgnored private var saveWork: DispatchWorkItem?
     @ObservationIgnored private var reloadWork: DispatchWorkItem?
     @ObservationIgnored private var loadGeneration = 0
+    /// What's waiting for the library to be read again: a newer read takes them over from one it replaces.
+    @ObservationIgnored private var reloadCompletions: [() -> Void] = []
 
     init(source: PhotoSource, store: CatalogStore?) {
         self.source = source
@@ -68,10 +70,11 @@ final class LibraryController {
         }
     }
 
-    /// Reads the whole library again.
+    /// Reads the whole library again. `completion` runs once it has, even if another read started meanwhile.
     func reload(completion: (() -> Void)? = nil) {
         loadGeneration += 1
         let generation = loadGeneration
+        if let completion { reloadCompletions.append(completion) }
         isLoading = true
         source.load { [weak self] contents in
             guard let self, generation == loadGeneration else { return }
@@ -86,7 +89,9 @@ final class LibraryController {
             hasLoaded = true
             post(.items)
             loadMissingFileNames()
-            completion?()
+            let completions = reloadCompletions
+            reloadCompletions = []
+            for completion in completions { completion() }
         }
     }
 
@@ -256,6 +261,73 @@ final class LibraryController {
     func toggleFavorite(_ ids: [PhotoID]) {
         let allFavorites = !ids.isEmpty && ids.allSatisfy { snapshot.item($0)?.isFavorite == true }
         setFavorite(ids, !allFavorites)
+    }
+
+    // MARK: Adding files
+
+    /// Copies photo and video files into the Photos library, then reads it again, so the new photos are in the
+    /// snapshot when `completion` hears them (in the files' order). Files it wouldn't take are reported. Not an
+    /// undo step by itself: the window makes each drop one.
+    func addFiles(_ files: [ImportFile], progress: @escaping @MainActor @Sendable (Int) -> Void = { _ in },
+                  completion: @escaping ([PhotoID]) -> Void) {
+        guard !files.isEmpty else {
+            completion([])
+            return
+        }
+        source.addFiles(files, progress: progress) { [weak self] added in
+            guard let self else { return }
+            if !added.refused.isEmpty { reportRefused(added.refused) }
+            guard !added.ids.isEmpty else {
+                completion([])
+                return
+            }
+            reload { completion(added.ids) }
+        }
+    }
+
+    private func reportRefused(_ refused: [AddedFiles.Refusal]) {
+        guard let first = refused.first else { return }
+        let title = refused.count == 1 ? "“\(first.name)” couldn’t be added." : "\(formatting.number(refused.count)) files couldn’t be added."
+        var names = ""
+        if refused.count > 1 {
+            names = refused.prefix(4).map { "“\($0.name)”" }.joined(separator: ", ") + (refused.count > 4 ? " and others" : "") + ". "
+        }
+        reportProblem?(title, names + "The Photos library didn’t take them: " + first.reason)
+    }
+
+    /// Takes photos added from files out of the Photos library again, when adding them is undone. macOS asks first,
+    /// and they go to Recently Deleted.
+    func deleteAdded(_ ids: [PhotoID], completion: ((Bool) -> Void)? = nil) {
+        guard !ids.isEmpty else {
+            completion?(true)
+            return
+        }
+        source.deleteItems(ids) { [weak self] error in
+            guard let self else { return }
+            if let error {
+                reportProblem?(ids.count == 1 ? "The photo wasn’t taken out of your Photos library." : "The photos weren’t taken out of your Photos library.",
+                               error.localizedDescription)
+                completion?(false)
+                return
+            }
+            reload { completion?(true) }
+        }
+    }
+
+    /// The photos already in the library that look like these files (the same name and size, taken at the same
+    /// moment), by file.
+    func alreadyAdded(_ files: [ImportFile]) -> [URL: PhotoID] {
+        let names = Set(files.map { $0.name.lowercased() })
+        var byName: [String: [MediaItem]] = [:]
+        for item in snapshot.items {
+            guard let name = item.fileName?.lowercased(), names.contains(name) else { continue }
+            byName[name, default: []].append(item)
+        }
+        var found: [URL: PhotoID] = [:]
+        for file in files {
+            if let match = byName[file.name.lowercased()]?.first(where: { FileImport.matches($0, file) }) { found[file.url] = match.id }
+        }
+        return found
     }
 
     // MARK: Albums, mirrored in the Photos library
@@ -472,6 +544,9 @@ nonisolated final class LockedValue<Value>: @unchecked Sendable {
         get { lock.withLock { stored } }
         set { lock.withLock { stored = newValue } }
     }
+
+    /// Changes the value in place, with nothing else changing it meanwhile.
+    func update<Result>(_ change: (inout Value) -> Result) -> Result { lock.withLock { change(&stored) } }
 }
 
 /// Whether a change sent to the library was refused, for its undo step to check.

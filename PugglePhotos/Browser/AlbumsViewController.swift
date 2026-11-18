@@ -47,6 +47,14 @@ final class AlbumsViewController: NSViewController, NSCollectionViewDataSource, 
         collectionView.reloadData()
     }
 
+    /// The album whose cover is at a point in the window, if the covers are showing and one is there.
+    func album(atWindowPoint point: NSPoint) -> UUID? {
+        guard isViewLoaded, view.window != nil,
+              let indexPath = collectionView.indexPathForItem(at: collectionView.convert(point, from: nil)),
+              summaries.indices.contains(indexPath.item) else { return nil }
+        return summaries[indexPath.item].id
+    }
+
     func refreshVisible() {
         guard isViewLoaded else { return }
         for indexPath in collectionView.indexPathsForVisibleItems() {

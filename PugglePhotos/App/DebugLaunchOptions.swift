@@ -178,6 +178,10 @@ enum DebugLaunchOptions {
                 }
             }
         }
+        // `-PHDropHighlight YES` lights up the middle as files dragged in from another app over it do.
+        if defaults.bool(forKey: "PHDropHighlight"), let target = controller.fileDropTarget(at: .zero) {
+            controller.dropZone.showHighlight(controller.dropTitle(target))
+        }
         switch defaults.string(forKey: "PHRedate") {
         case "day":
             let day = CivilDay(year: 2019, month: 7, day: 4)
