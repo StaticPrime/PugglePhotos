@@ -4,6 +4,18 @@ import PugglePhotosKit
 import SwiftUI
 
 extension SelfTest {
+    /// Clicks a point in the book view through the window, as a mouse does.
+    static func bookWindowClick(_ point: CGPoint, in view: BookView) {
+        guard let window = view.window else { return }
+        let location = view.convert(point, to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            if let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                window.sendEvent(event)
+            }
+        }
+    }
+
     /// Notes in photo books: written in an instant photo's white space, on sticky notes moved, stretched, turned and
     /// colored by hand, hidden photo by photo, photos turned over by clicking them twice, and each book's handwriting.
     static func bookNoteSteps(_ app: AppDelegate, window: LibraryWindowController) {
@@ -92,6 +104,33 @@ extension SelfTest {
             check(book.layout.find(placement.id)!.placement.hasSticky, "or show it as the book does")
             book.resetLayout()
             check(settings.overrides[placement.id]?.sticky == nil, "Reset Book Layout puts sticky notes back")
+        }
+        step {
+            // Handles take a click a little off the knob, or on its stalk, without letting go of what's picked.
+            guard let placement = noted else { return }
+            view.select(placement.id)
+            let state = view.state
+            guard let knob = view.knobForTesting else {
+                check(false, "a picked photo has a knob")
+                return
+            }
+            bookWindowClick(CGPoint(x: knob.turn.x + 8, y: knob.turn.y + 6), in: view)
+            check(view.selected == placement.id && view.state == state, "a click just off a photo's knob keeps it picked")
+            bookWindowClick(CGPoint(x: (knob.top.x + knob.turn.x) / 2, y: (knob.top.y + knob.turn.y) / 2), in: view)
+            check(view.selected == placement.id && view.state == state, "and so does one on its stalk")
+            view.pick(.sticky(placement.id))
+            if let knob = view.knobForTesting { bookWindowClick(CGPoint(x: knob.turn.x - 7, y: knob.turn.y - 7), in: view) }
+            check(view.selectedSticky == placement.id, "a sticky note's knob too")
+            // Empty paper, far from anything.
+            let paper = book.layout.state(view.state).left.map { _ in view.viewPoint(CGPoint(x: 300, y: 760), onLeft: true) }
+            if let paper { bookWindowClick(paper, in: view) }
+            check(view.pick == nil && view.state == state, "a click on the paper lets go of what's picked, without turning the page")
+            if let paper { bookWindowClick(paper, in: view) }
+            wait(upTo: 3) { view.state == state - 1 && !view.isTurning }
+        }
+        step {
+            check(view.state == 1, "with nothing picked, a click on the paper turns the page", "\(view.state)")
+            view.go(to: 2, animated: false)
         }
         step {
             // A photo: the first click picks it, a click on it picked turns it over.

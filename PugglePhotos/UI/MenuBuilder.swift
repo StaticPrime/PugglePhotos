@@ -149,7 +149,8 @@ enum MenuBuilder {
             item("Play Slideshow", #selector(LibraryWindowController.phPlaySlideshow(_:)), "p", [.command, .option], symbol: "play.rectangle"),
             .separator(),
         ]
-        if let owner = (NSApp.mainWindow ?? NSApp.keyWindow)?.windowController as? LibraryWindowController, owner.isShowingBook {
+        if let owner = (NSApp.mainWindow ?? NSApp.keyWindow)?.windowController as? LibraryWindowController
+            ?? NSApp.windows.compactMap({ $0.windowController as? LibraryWindowController }).first, owner.isShowingBook {
             items += bookItems()
             items.append(.separator())
         }

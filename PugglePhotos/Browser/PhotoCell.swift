@@ -174,6 +174,9 @@ final class PhotoCellView: NSView {
 
     override var isFlipped: Bool { true }
 
+    /// The self-test clicks while another app may be in front, so its clicks count even then.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { SelfTestMode.isRunning || super.acceptsFirstMouse(for: event) }
+
     override func layout() {
         super.layout()
         CATransaction.begin()

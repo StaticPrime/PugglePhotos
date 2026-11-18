@@ -125,7 +125,8 @@ final class BookView: NSView, NSTextViewDelegate {
         /// `turns`: the photo was already picked, so a click without moving turns it over.
         case photo(id: PhotoID, page: Int, start: NSPoint, center: CGPoint, moved: Bool, turns: Bool)
         case rotate(id: PhotoID, page: Int, center: CGPoint, startAngle: Double, startPointerAngle: Double)
-        case page(forward: Bool, start: NSPoint, progress: CGFloat)
+        /// `clickTurns`: nothing was picked, so a click (not just a drag) turns the page.
+        case page(forward: Bool, start: NSPoint, progress: CGFloat, clickTurns: Bool)
         case sticky(id: PhotoID, page: Int, start: NSPoint, sticky: BookSticky, moved: Bool)
         case stretchSticky(id: PhotoID, page: Int, sticky: BookSticky)
         case turnSticky(id: PhotoID, page: Int, sticky: BookSticky, startPointerAngle: Double)
@@ -168,6 +169,12 @@ final class BookView: NSView, NSTextViewDelegate {
         selection.isHidden = true
         handle.isHidden = true
         handle.lineWidth = 2
+        for layer in [handle, stickyHandle] {
+            layer.shadowColor = NSColor.black.cgColor
+            layer.shadowOpacity = 0.3
+            layer.shadowRadius = 2
+            layer.shadowOffset = CGSize(width: 0, height: 1)
+        }
         book.addSublayer(selection)
         book.addSublayer(handle)
         stickyHandle.isHidden = true
@@ -191,6 +198,9 @@ final class BookView: NSView, NSTextViewDelegate {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+
+    /// The self-test clicks while another app may be in front, so its clicks count even then.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { SelfTestMode.isRunning || super.acceptsFirstMouse(for: event) }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -576,9 +586,76 @@ final class BookView: NSView, NSTextViewDelegate {
     /// Where a sticky note's two handles are: the corner that stretches it, and the knob that turns it.
     private func stickyHandles(_ placement: BookPlacement, left: Bool) -> (stretch: CGPoint, turn: CGPoint, top: CGPoint) {
         let rect = placement.sticky.rect
-        return (viewPoint(placement.stickyPage(CGPoint(x: rect.maxX, y: rect.maxY)), onLeft: left),
-                viewPoint(placement.stickyPage(CGPoint(x: 0, y: rect.minY - 24)), onLeft: left),
-                viewPoint(placement.stickyPage(CGPoint(x: 0, y: rect.minY)), onLeft: left))
+        let knob = knob(from: placement.stickyPage(CGPoint(x: 0, y: rect.minY)), angle: placement.angle + placement.sticky.angle, left: left)
+        return (viewPoint(placement.stickyPage(CGPoint(x: rect.maxX, y: rect.maxY)), onLeft: left), knob.turn, knob.top)
+    }
+
+    // MARK: Handles
+
+    /// How far a turning knob stands off the edge of what it turns, on screen, however big the book is drawn.
+    private static let knobReach: CGFloat = 26
+    private static let knobRadius: CGFloat = 9
+
+    /// A turning knob standing off a point on an edge (in page coordinates), away from the middle of what it turns
+    /// along its lean: where its stalk starts, and where the knob is.
+    private func knob(from edge: CGPoint, angle: Double, left: Bool) -> (top: CGPoint, turn: CGPoint) {
+        let start = viewPoint(edge, onLeft: left)
+        let radians = angle * .pi / 180
+        return (start, CGPoint(x: start.x + sin(radians) * Self.knobReach, y: start.y - cos(radians) * Self.knobReach))
+    }
+
+    /// Whether a point is on a knob: on the knob itself, generously, or along the outer part of its stalk.
+    private static func isOn(_ knob: (top: CGPoint, turn: CGPoint), _ point: NSPoint) -> Bool {
+        if hypot(point.x - knob.turn.x, point.y - knob.turn.y) < knobRadius + 9 { return true }
+        let dx = knob.turn.x - knob.top.x, dy = knob.turn.y - knob.top.y
+        let length = dx * dx + dy * dy
+        guard length > 0 else { return false }
+        let along = ((point.x - knob.top.x) * dx + (point.y - knob.top.y) * dy) / length
+        guard along > 0.25, along <= 1 else { return false }
+        return hypot(point.x - (knob.top.x + along * dx), point.y - (knob.top.y + along * dy)) < 9
+    }
+
+    /// A knob drawn: its stalk and its circle.
+    private static func knobPath(_ knob: (top: CGPoint, turn: CGPoint)) -> CGMutablePath {
+        let path = CGMutablePath()
+        let dx = knob.turn.x - knob.top.x, dy = knob.turn.y - knob.top.y
+        let length = max(hypot(dx, dy), 1)
+        path.move(to: knob.top)
+        path.addLine(to: CGPoint(x: knob.turn.x - dx / length * knobRadius, y: knob.turn.y - dy / length * knobRadius))
+        path.addEllipse(in: CGRect(x: knob.turn.x - knobRadius, y: knob.turn.y - knobRadius, width: knobRadius * 2, height: knobRadius * 2))
+        return path
+    }
+
+    /// The picked photo's knob.
+    private func photoKnob() -> (top: CGPoint, turn: CGPoint)? {
+        guard let (placement, _, left) = selectedPlacement(), let frame = delegate?.layout.settings.frame else { return nil }
+        return knob(from: placement.page(CGPoint(x: 0, y: placement.frameRect(frame).minY)), angle: placement.angle, left: left)
+    }
+
+    #if DEBUG
+    /// The picked thing's knob, for the self-test.
+    var knobForTesting: (top: CGPoint, turn: CGPoint)? {
+        if let knob = photoKnob() { return knob }
+        if let (placement, _, left) = stickyPlacement() {
+            let handles = stickyHandles(placement, left: left)
+            return (handles.top, handles.turn)
+        }
+        return nil
+    }
+    #endif
+
+    /// Whether a point is on any handle of what's picked, to show the pointer can take hold there.
+    private func isOnHandle(_ point: NSPoint) -> Bool {
+        if let knob = photoKnob(), Self.isOn(knob, point) { return true }
+        if let (placement, _, left) = stickyPlacement() {
+            let handles = stickyHandles(placement, left: left)
+            if Self.isOn((handles.top, handles.turn), point) || hypot(point.x - handles.stretch.x, point.y - handles.stretch.y) < 16 { return true }
+        }
+        if let (writing, _, left) = writingPlace(), let size = delegate?.bookWritingSize(writing) {
+            let handles = writingHandles(writing, size: size, left: left)
+            if Self.isOn((handles.top, handles.turn), point) || hypot(point.x - handles.widen.x, point.y - handles.widen.y) < 16 { return true }
+        }
+        return false
     }
 
     private func updateSelection() {
@@ -591,12 +668,9 @@ final class BookView: NSView, NSTextViewDelegate {
             outline.addLines(between: corners)
             outline.closeSubpath()
             let handles = writingHandles(writing, size: size, left: left)
-            let knob = CGMutablePath()
-            knob.move(to: handles.top)
-            knob.addLine(to: handles.turn)
-            knob.addEllipse(in: CGRect(x: handles.turn.x - 7, y: handles.turn.y - 7, width: 14, height: 14))
+            let knob = Self.knobPath((handles.top, handles.turn))
             let widen = CGMutablePath()
-            widen.addRoundedRect(in: CGRect(x: handles.widen.x - 4, y: handles.widen.y - 9, width: 8, height: 18), cornerWidth: 3, cornerHeight: 3)
+            widen.addRoundedRect(in: CGRect(x: handles.widen.x - 5, y: handles.widen.y - 12, width: 10, height: 24), cornerWidth: 4, cornerHeight: 4)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             let offset = offset(for: state)
@@ -618,12 +692,9 @@ final class BookView: NSView, NSTextViewDelegate {
             outline.addLines(between: corners)
             outline.closeSubpath()
             let handles = stickyHandles(placement, left: left)
-            let knob = CGMutablePath()
-            knob.move(to: handles.top)
-            knob.addLine(to: handles.turn)
-            knob.addEllipse(in: CGRect(x: handles.turn.x - 7, y: handles.turn.y - 7, width: 14, height: 14))
+            let knob = Self.knobPath((handles.top, handles.turn))
             let corner = CGMutablePath()
-            corner.addRect(CGRect(x: handles.stretch.x - 6, y: handles.stretch.y - 6, width: 12, height: 12))
+            corner.addRoundedRect(in: CGRect(x: handles.stretch.x - 7, y: handles.stretch.y - 7, width: 14, height: 14), cornerWidth: 3, cornerHeight: 3)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             let offset = offset(for: state)
@@ -646,13 +717,7 @@ final class BookView: NSView, NSTextViewDelegate {
         let outline = CGMutablePath()
         outline.addLines(between: corners)
         outline.closeSubpath()
-        let top = placement.frameRect(frame).minY
-        let knobCenter = viewPoint(placement.page(CGPoint(x: 0, y: top - 28)), onLeft: left)
-        let topMiddle = viewPoint(placement.page(CGPoint(x: 0, y: top)), onLeft: left)
-        let knob = CGMutablePath()
-        knob.move(to: topMiddle)
-        knob.addLine(to: knobCenter)
-        knob.addEllipse(in: CGRect(x: knobCenter.x - 8, y: knobCenter.y - 8, width: 16, height: 16))
+        let knob = Self.knobPath(knob(from: placement.page(CGPoint(x: 0, y: placement.frameRect(frame).minY)), angle: placement.angle, left: left))
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let offset = offset(for: state)
@@ -667,9 +732,7 @@ final class BookView: NSView, NSTextViewDelegate {
 
     /// Whether a point is on the selected photo's turning handle.
     private func onHandle(_ point: NSPoint) -> Bool {
-        guard let (placement, _, left) = selectedPlacement(), let frame = delegate?.layout.settings.frame else { return false }
-        let knob = viewPoint(placement.page(CGPoint(x: 0, y: placement.frameRect(frame).minY - 28)), onLeft: left)
-        return hypot(point.x - knob.x, point.y - knob.y) < 14
+        photoKnob().map { Self.isOn($0, point) } ?? false
     }
 
     // MARK: Sticky notes
@@ -869,9 +932,8 @@ final class BookView: NSView, NSTextViewDelegate {
 
     /// Where writing's handles are: the bar on its right side, and the knob above it.
     private func writingHandles(_ writing: BookWriting, size: CGSize, left: Bool) -> (widen: CGPoint, turn: CGPoint, top: CGPoint) {
-        (viewPoint(writing.page(CGPoint(x: size.width / 2 + 4, y: 0)), onLeft: left),
-         viewPoint(writing.page(CGPoint(x: 0, y: -size.height / 2 - 26)), onLeft: left),
-         viewPoint(writing.page(CGPoint(x: 0, y: -size.height / 2 - 4)), onLeft: left))
+        let knob = knob(from: writing.page(CGPoint(x: 0, y: -size.height / 2 - 4)), angle: writing.angle, left: left)
+        return (viewPoint(writing.page(CGPoint(x: size.width / 2 + 4, y: 0)), onLeft: left), knob.turn, knob.top)
     }
 
     static func moved(_ writing: BookWriting, by delta: CGPoint) -> BookWriting {
@@ -984,11 +1046,11 @@ final class BookView: NSView, NSTextViewDelegate {
         // Picked writing's handles: the knob turns it, the bar on its side changes how wide its lines run.
         if let (writing, page, left) = writingPlace() {
             let handles = writingHandles(writing, size: delegate.bookWritingSize(writing), left: left)
-            if hypot(point.x - handles.widen.x, point.y - handles.widen.y) < 11 {
+            if hypot(point.x - handles.widen.x, point.y - handles.widen.y) < 16 {
                 drag = .widenWriting(page: page, writing: writing)
                 return
             }
-            if hypot(point.x - handles.turn.x, point.y - handles.turn.y) < 13 {
+            if Self.isOn((handles.top, handles.turn), point) {
                 let pagePoint = pageCoordinates(point, onPage: page)
                 drag = .turnWriting(page: page, writing: writing,
                                     startPointerAngle: atan2(pagePoint.y - writing.center.y, pagePoint.x - writing.center.x))
@@ -998,11 +1060,11 @@ final class BookView: NSView, NSTextViewDelegate {
         // A picked sticky note's handles: the corner stretches it, the knob turns it.
         if let (placement, page, left) = stickyPlacement() {
             let handles = stickyHandles(placement, left: left)
-            if hypot(point.x - handles.stretch.x, point.y - handles.stretch.y) < 11 {
+            if hypot(point.x - handles.stretch.x, point.y - handles.stretch.y) < 16 {
                 drag = .stretchSticky(id: placement.id, page: page, sticky: placement.sticky)
                 return
             }
-            if hypot(point.x - handles.turn.x, point.y - handles.turn.y) < 13 {
+            if Self.isOn((handles.top, handles.turn), point) {
                 let middle = placement.stickyPage(.zero)
                 let pagePoint = pagePoint(point)?.point ?? middle
                 drag = .turnSticky(id: placement.id, page: page, sticky: placement.sticky,
@@ -1057,9 +1119,11 @@ final class BookView: NSView, NSTextViewDelegate {
             drag = .photo(id: placement.id, page: hit.page, start: point, center: placement.center, moved: false, turns: turns)
             return
         }
-        select(nil)
-        // The paper: the right page turns forward, the left back.
-        drag = .page(forward: !hit.left, start: point, progress: 0)
+        // The paper: the right page turns forward, the left back. A click on it while something's picked only lets
+        // that go; dragging the paper over still turns the page.
+        let hadPick = pick != nil
+        pick(nil)
+        drag = .page(forward: !hit.left, start: point, progress: 0, clickTurns: !hadPick)
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -1116,10 +1180,10 @@ final class BookView: NSView, NSTextViewDelegate {
             if event.modifierFlags.contains(.shift) { angle = (angle / 15).rounded() * 15 }
             delegate?.bookPreview(id, center: nil, angle: Self.normalized(angle))
             reloadPage(page)
-        case let .page(forward, start, _):
+        case let .page(forward, start, _, clickTurns):
             let distance = forward ? start.x - point.x : point.x - start.x
             let progress = min(max(distance / (pageSize.width * 1.6), 0), 1)
-            drag = .page(forward: forward, start: start, progress: progress)
+            drag = .page(forward: forward, start: start, progress: progress, clickTurns: clickTurns)
             if progress > 0.02 { dragTurn(forward: forward, progress: progress) }
         }
     }
@@ -1165,10 +1229,10 @@ final class BookView: NSView, NSTextViewDelegate {
             var angle = startAngle + (atan2(pagePoint.y - center.y, pagePoint.x - center.x) - startPointerAngle) * 180 / .pi
             if event.modifierFlags.contains(.shift) { angle = (angle / 15).rounded() * 15 }
             delegate?.bookCommit(id, center: nil, angle: Self.normalized(angle))
-        case let .page(forward, _, progress):
+        case let .page(forward, _, progress, clickTurns):
             if leaf != nil {
                 endDragTurn(forward: forward, progress: progress)
-            } else {
+            } else if clickTurns {
                 turn(forward: forward)
             }
         }
@@ -1224,6 +1288,10 @@ final class BookView: NSView, NSTextViewDelegate {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // The pointer shows when it's over a handle it can take hold of.
+        if !isWriting {
+            if isOnHandle(point) { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+        }
         guard !isTurning, let delegate, let hit = pagePoint(point) else {
             hover(nil)
             return
