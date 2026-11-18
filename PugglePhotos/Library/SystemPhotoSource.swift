@@ -278,20 +278,19 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
     func createAlbum(title: String, items: [PhotoID], completion: @escaping @MainActor (Result<String, Error>) -> Void) {
         let assets = items.compactMap { assets[$0] }
         let created = LockedValue<String?>(nil)
-        PHPhotoLibrary.shared().performChanges({
+        perform({
             let request = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: title)
             if !assets.isEmpty { request.addAssets(assets as NSArray) }
             created.value = request.placeholderForCreatedAssetCollection.localIdentifier
-        }) { @Sendable success, error in
-            let id = created.value
-            Task { @MainActor in
-                if success, let id {
-                    completion(.success(id))
-                } else {
-                    completion(.failure(error.map { LibraryError.failed($0.localizedDescription) } ?? LibraryError.notAllowed))
-                }
+        }, completion: { error in
+            if let error {
+                completion(.failure(error))
+            } else if let id = created.value {
+                completion(.success(id))
+            } else {
+                completion(.failure(LibraryError.notAllowed))
             }
-        }
+        })
     }
 
     func updateAlbum(_ id: String, title: String, items: [PhotoID], completion: @escaping @MainActor (Error?) -> Void) {
@@ -369,7 +368,10 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
         let date: Date
     }
 
-    /// One change block for the whole batch, so macOS asks the person at most once.
+    /// One change block for the whole batch, so macOS asks the person at most once. Changes made from the main actor
+    /// go through here: PhotoKit runs the block on a queue of its own, and a block written in place, there, would
+    /// belong to the main actor and stop the app the moment it ran (as making an album once did). This one is
+    /// `@Sendable`, so it runs anywhere.
     private func perform(_ changes: @escaping @Sendable () -> Void, completion: @escaping @MainActor (Error?) -> Void) {
         PHPhotoLibrary.shared().performChanges(changes) { @Sendable success, error in
             Task { @MainActor in
