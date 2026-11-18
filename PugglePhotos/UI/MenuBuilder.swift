@@ -95,6 +95,7 @@ enum MenuBuilder {
             item("Close Window", #selector(NSWindow.performClose(_:)), "w"),
             .separator(),
             item("Export Book as PDF…", #selector(LibraryWindowController.phExportBookPDF(_:)), "e", [.command, .shift]),
+            item("Export Book as EPUB…", #selector(LibraryWindowController.phExportBookEPUB(_:))),
             item("Print Book…", #selector(LibraryWindowController.phPrintBook(_:)), "p"),
         ]
     }

@@ -64,6 +64,8 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(phShuffleBook(_:)), #selector(phResetBookLayout(_:)), #selector(phExportBookPDF(_:)), #selector(phPrintBook(_:)),
              #selector(phAddBookPage(_:)):
             return isShowingBook
+        case #selector(phExportBookEPUB(_:)):
+            return isShowingBook && !book.controls.isBusy
         case #selector(phToggleBookWriting(_:)):
             menuItem.state = isShowingBook && book.bookView.isWriting ? .on : .off
             return isShowingBook
@@ -250,6 +252,7 @@ extension LibraryWindowController: NSMenuItemValidation {
     @objc func phRemoveBookPage(_ sender: Any?) { book.openAddedPage.map(book.removePage) }
     @objc func phResetBookLayout(_ sender: Any?) { book.resetLayout() }
     @objc func phExportBookPDF(_ sender: Any?) { book.exportPDF() }
+    @objc func phExportBookEPUB(_ sender: Any?) { book.exportEPUB() }
     @objc func phPrintBook(_ sender: Any?) { book.printBook() }
 
     /// Paper, frames, tilt, layout, cover, binding and rings: the menu item carries which setting and which choice.

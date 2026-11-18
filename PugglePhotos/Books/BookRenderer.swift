@@ -39,6 +39,15 @@ final class BookRenderer {
         context.setShadow(offset: CGSize(width: offset.width * scale, height: offset.height * scale), blur: blur * scale, color: color)
     }
 
+    /// The same book, drawn as on paper (every photo showing its front, everything written showing) with the pictures
+    /// from `image`: for drawing it to save while this one carries on in the window.
+    func onPaper(image: @escaping (PhotoID) -> CGImage?) -> BookRenderer {
+        let paper = BookRenderer(settings: settings, title: title, subtitle: subtitle, story: story, image: image)
+        paper.coverPhoto = coverPhoto
+        paper.day = day
+        return paper
+    }
+
     /// A page as a picture, `pixelWidth` pixels wide.
     func render(_ page: BookPage, index: Int, isLeft: Bool, pixelWidth: CGFloat) -> CGImage? {
         let width = Int(pixelWidth.rounded())

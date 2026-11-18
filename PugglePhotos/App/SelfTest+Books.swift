@@ -16,13 +16,14 @@ extension SelfTest {
         }
     }
 
-    /// An image's pixels as sRGB, `width` × `height`, four bytes each.
-    static func sRGBPixels(_ image: CGImage, width: Int, height: Int) -> [UInt8] {
+    /// An image's pixels as sRGB, `width` × `height`, four bytes each: the image filling them, or drawn in `rect`.
+    static func sRGBPixels(_ image: CGImage, width: Int, height: Int, in rect: CGRect? = nil) -> [UInt8] {
         var data = [UInt8](repeating: 0, count: width * height * 4)
         data.withUnsafeMutableBytes { bytes in
             guard let context = CGContext(data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
                                           space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
-            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            context.interpolationQuality = .high
+            context.draw(image, in: rect ?? CGRect(x: 0, y: 0, width: width, height: height))
         }
         return data
     }
@@ -39,17 +40,19 @@ extension SelfTest {
         return (Double(total) / Double(max(count, 1)), Double(off) / Double(max(count, 1)))
     }
 
+    /// Just this window as the window server shows it, whatever is in front of it, at its full resolution.
+    static func windowPicture(_ window: NSWindow) -> CGImage? {
+        typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        return unsafeBitCast(symbol, to: Create.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0 | 1 << 3)?.takeRetainedValue()
+    }
+
     /// The book as the window server shows it, against the same place drawn as a PDF page draws it: how far apart they
     /// are over every pixel (edges differ a little: the window stretches pictures of the pages, the PDF draws them
     /// sharp), and along the book's shadow, just under its bottom edge.
     static func bookParity(_ book: BookViewController) -> (mean: Double, off: Double, shadow: Double)? {
         let view = book.bookView
-        typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
-        guard let window = view.window, let scene = book.sceneImageForTesting(),
-              let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
-        let create = unsafeBitCast(symbol, to: Create.self)
-        // Just this window, whatever is in front of it, at its full resolution.
-        guard let shot = create(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0 | 1 << 3)?.takeRetainedValue() else { return nil }
+        guard let window = view.window, let scene = book.sceneImageForTesting(), let shot = windowPicture(window) else { return nil }
         let scale = CGFloat(shot.width) / window.frame.width
         let frame = view.convert(view.bounds, to: nil)
         let crop = CGRect(x: frame.minX * scale, y: (window.frame.height - frame.maxY) * scale, width: frame.width * scale, height: frame.height * scale)
@@ -72,8 +75,52 @@ extension SelfTest {
         return (whole.mean, whole.off, Double(total) / Double(max(count, 1)))
     }
 
+    /// A page of an EPUB against the same page open in the window: how far apart they are, all over but for a few points
+    /// around the edge, where the window rounds the page's corners. The EPUB's page is drawn just where the window draws
+    /// it, to a fraction of a pixel, and both are averaged over squares four points across: the EPUB draws its page
+    /// three times as sharp, so edges and the paper's grain come out a little different pixel by pixel.
+    static func ebookParity(_ book: BookViewController, page picture: CGImage, left: Bool) -> (mean: Double, off: Double)? {
+        let view = book.bookView
+        guard let window = view.window, let shot = windowPicture(window) else { return nil }
+        let scale = CGFloat(shot.width) / window.frame.width
+        let corner = view.viewPoint(.zero, onLeft: left)
+        let across = view.viewPoint(CGPoint(x: BookLayout.pageSize.width, y: BookLayout.pageSize.height), onLeft: left)
+        let inWindow = view.convert(CGRect(x: min(corner.x, across.x), y: min(corner.y, across.y), width: abs(across.x - corner.x),
+                                           height: abs(across.y - corner.y)), to: nil)
+        // The page in the window's picture, in its pixels from the top left, and the part of it compared.
+        let page = CGRect(x: inWindow.minX * scale, y: (window.frame.height - inWindow.maxY) * scale, width: inWindow.width * scale,
+                          height: inWindow.height * scale)
+        let crop = page.insetBy(dx: 4 * scale, dy: 4 * scale).integral
+        guard let screen = shot.cropping(to: crop) else { return nil }
+        let width = screen.width, height = screen.height
+        // Where the page lies in that part, from its bottom left.
+        let placed = CGRect(x: page.minX - crop.minX, y: crop.maxY - page.maxY, width: page.width, height: page.height)
+        let block = Int((4 * scale).rounded())
+        let a = blocks(sRGBPixels(screen, width: width, height: height), width: width, height: height, block: block)
+        let b = blocks(sRGBPixels(picture, width: width, height: height, in: placed), width: width, height: height, block: block)
+        return difference(a, b, count: a.count / 4)
+    }
+
+    /// Pixels averaged over square blocks `block` pixels on a side, whole blocks only.
+    static func blocks(_ pixels: [UInt8], width: Int, height: Int, block: Int) -> [UInt8] {
+        let across = width / block, down = height / block
+        var averaged = [UInt8](repeating: 0, count: across * down * 4)
+        for row in 0..<down {
+            for column in 0..<across {
+                var sums = [0, 0, 0, 0]
+                for y in (row * block)..<((row + 1) * block) {
+                    for x in (column * block)..<((column + 1) * block) {
+                        for channel in 0..<4 { sums[channel] += Int(pixels[(y * width + x) * 4 + channel]) }
+                    }
+                }
+                for channel in 0..<4 { averaged[(row * across + column) * 4 + channel] = UInt8(sums[channel] / (block * block)) }
+            }
+        }
+        return averaged
+    }
+
     /// Photo books: opening one, turning pages by click, key and drag, picking, moving and turning photos, the
-    /// paper and frames, shuffling, leaving photos out, videos on the page, the viewer, PDF and printing.
+    /// paper and frames, shuffling, leaving photos out, videos on the page, the viewer, PDF, EPUB and printing.
     static func bookSteps(_ app: AppDelegate, window: LibraryWindowController) {
         let library = app.library!
         var book: BookViewController { window.book }
@@ -576,6 +623,48 @@ extension SelfTest {
             check(saved.flatMap { $0 } == nil && !photos.isEmpty && jpegs >= photos.count,
                   "saved, the book's photos go in at print size as JPEG data, small enough to send", "\(jpegs) JPEG pictures for \(photos.count) photos")
             try? FileManager.default.removeItem(at: savedPDF)
+        }
+        // Saved as an EPUB, for e-book readers: a picture of every page as the window draws it, set out as in the book.
+        let savedEPUB = FileManager.default.temporaryDirectory.appendingPathComponent("PugglePhotos self-test book.epub")
+        var ebookSaved: Error??
+        step {
+            try? FileManager.default.removeItem(at: savedEPUB)
+            book.saveEPUB(to: savedEPUB) { ebookSaved = .some($0) }
+            wait(upTo: 30) { ebookSaved != nil }
+        }
+        step {
+            let files = (try? Data(contentsOf: savedEPUB)).flatMap(ZipArchive.files) ?? []
+            check(ebookSaved.flatMap { $0 } == nil && files.first?.path == "mimetype" && files.first?.method == 0 && files.first?.extra.isEmpty == true,
+                  "a book saves as an EPUB, saying what it is in its first bytes", "\(files.count) files")
+            let pages = book.layout.pages
+            let pictures = files.filter { $0.path.hasPrefix("EPUB/images/") }.sorted { $0.path < $1.path }
+                .compactMap { CGImageSourceCreateWithData($0.contents as CFData, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) } }
+            check(pictures.count == pages.count && pictures.allSatisfy { $0.width == 1800 && $0.height == 2340 },
+                  "a picture for every page of the book, three pixels to a point and within what e-book readers take",
+                  "\(pictures.count) pictures for \(pages.count) pages, the first \(pictures.first.map { "\($0.width) × \($0.height)" } ?? "missing")")
+            let package = files.first { $0.path.hasSuffix(".opf") }.map { String(decoding: $0.contents, as: UTF8.self) } ?? ""
+            let sides = package.components(separatedBy: "<itemref ").dropFirst()
+                .map { $0.components(separatedBy: #"properties=""#).dropFirst().first?.components(separatedBy: "\"").first ?? "" }
+            let inBook = pages.indices.map { index in
+                index == 0 || index == pages.count - 1 ? "rendition:page-spread-center" : index % 2 == 1 ? "page-spread-left" : "page-spread-right"
+            }
+            check(sides == inBook, "its covers show alone and each left page beside the right page it faces, as in the book")
+            let titlePage = files.first { $0.path == "EPUB/page-003.xhtml" }.map { String(decoding: $0.contents, as: UTF8.self) } ?? ""
+            let title = book.album.flatMap { library.catalog.album($0)?.title } ?? "?"
+            check(pages[2].kind == .title && titlePage.contains(#"alt="The title page: \#(title)."#),
+                  "each page is told in words too, for readers who listen", title)
+            // The open pages, laid over the window: the same drawing, but for its photos at print size and a little lost
+            // to JPEG.
+            let open = book.layout.state(view.state)
+            for (index, left) in [(open.left, true), (open.right, false)] {
+                guard let index, pictures.indices.contains(index), let parity = ebookParity(book, page: pictures[index], left: left) else {
+                    check(false, "an EPUB page is the page as the window shows it", "no picture")
+                    continue
+                }
+                check(parity.mean < 2 && parity.off < 0.005, "an EPUB's \(left ? "left" : "right") page is the page as the window shows it",
+                      String(format: "%.2f apart, %.2f%% far off", parity.mean, parity.off * 100))
+            }
+            try? FileManager.default.removeItem(at: savedEPUB)
         }
         step {
             // Double-click a photo to see it on its own, then come back to the book.

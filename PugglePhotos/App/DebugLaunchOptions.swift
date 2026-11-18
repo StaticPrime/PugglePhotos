@@ -156,6 +156,14 @@ enum DebugLaunchOptions {
                 }
             }
             if defaults.bool(forKey: "PHBookWriteMode") { book.setWriting(true) }
+            // `-PHBookSaveEPUB name.epub` saves the book as an EPUB in the app's temporary folder.
+            if let name = defaults.string(forKey: "PHBookSaveEPUB") {
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+                book.saveEPUB(to: url) { error in
+                    print("PHBookSaveEPUB: \(error.map { "failed: \($0)" } ?? url.path)")
+                    fflush(stdout)
+                }
+            }
             // `-PHBookCarry YES` picks up the right page's first photo and holds it partway across the spread.
             if defaults.bool(forKey: "PHBookCarry"), let right = showing.right, let first = book.layout.pages[right].placements.first {
                 // Once the book has been laid out at the window's size.

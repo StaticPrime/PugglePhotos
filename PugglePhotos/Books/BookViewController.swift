@@ -768,14 +768,15 @@ final class BookViewController: NSViewController, BookViewDelegate {
         controls.showsAddedPage = openAddedPage != nil
     }
 
-    // MARK: PDF and printing
+    // MARK: PDF, EPUB and printing
 
-    /// Every picture in the book at print size, then `body`. For a PDF (`asJPEG`), each is kept as JPEG data, which a PDF
-    /// takes in as it is: a decoded photo goes in losslessly, megabytes a photo, too big a book to send.
-    private func withPrintPictures(asJPEG: Bool = false, _ body: @escaping @MainActor () -> Void) {
+    /// Every picture in the book at print size, then `body`, with the book drawing them and given them too. For a PDF
+    /// (`asJPEG`), each is kept as JPEG data, which a PDF takes in as it is: a decoded photo goes in losslessly,
+    /// megabytes a photo, too big a book to send. An EPUB keeps them that way too, to hold less while it's made.
+    private func withPrintPictures(asJPEG: Bool = false, _ body: @escaping @MainActor ([PhotoID: CGImage]) -> Void) {
         let ids = Array(Set(layout.pages.flatMap { $0.placements.map(\.id) } + [renderer?.coverPhoto].compactMap { $0 }))
         guard !ids.isEmpty else {
-            body()
+            body([:])
             return
         }
         controls.isBusy = true
@@ -793,7 +794,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
                     let previous = renderer?.image
                     let screen = images
                     renderer?.image = { gathering.images[$0] ?? screen[$0] }
-                    body()
+                    body(gathering.images.merging(screen) { print, _ in print })
                     if let previous { renderer?.image = previous }
                 }
             }
@@ -802,11 +803,15 @@ final class BookViewController: NSViewController, BookViewDelegate {
 
     /// A picture as JPEG data, at a quality that looks the same.
     @concurrent private nonisolated static func asJPEG(_ picture: SendableImage) async -> SendableImage? {
+        guard let data = await jpegData(picture, quality: 0.92), let provider = CGDataProvider(data: data as CFData) else { return nil }
+        return CGImage(jpegDataProviderSource: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent).map(SendableImage.init)
+    }
+
+    @concurrent private nonisolated static func jpegData(_ picture: SendableImage, quality: Double) async -> Data? {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, picture.cgImage, [kCGImageDestinationLossyCompressionQuality: 0.92] as CFDictionary)
-        guard CGImageDestinationFinalize(destination), let provider = CGDataProvider(data: data) else { return nil }
-        return CGImage(jpegDataProviderSource: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent).map(SendableImage.init)
+        CGImageDestinationAddImage(destination, picture.cgImage, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+        return CGImageDestinationFinalize(destination) ? data as Data : nil
     }
 
     private final class PrintPictures {
@@ -913,7 +918,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
 
     /// Saves the book as a PDF, its pictures at print size, then calls back with what went wrong, if anything.
     func savePDF(to url: URL, then done: ((Error?) -> Void)? = nil) {
-        withPrintPictures(asJPEG: true) { [weak self] in
+        withPrintPictures(asJPEG: true) { [weak self] _ in
             guard let self else { return }
             do {
                 try pdfData().write(to: url)
@@ -925,9 +930,66 @@ final class BookViewController: NSViewController, BookViewDelegate {
         }
     }
 
+    /// How wide an EPUB's pages are, in pixels: three to each point of the book's page. That's sharp on the biggest
+    /// tablet screens, and well inside the 5.6 million pixels e-book readers take in a picture.
+    static let ebookPageWidth = 1800
+
+    func exportEPUB() {
+        guard let window = view.window, let album, let title = library.catalog.album(album)?.title else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.epub]
+        panel.nameFieldStringValue = "\(title).epub"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { self?.saveEPUB(to: url) }
+        }
+    }
+
+    /// Saves the book as an EPUB, to read in e-book apps, then calls back with what went wrong, if anything. Each page
+    /// is a picture of it drawn just as the window draws it, its photos at print size, as on paper. The pages are drawn
+    /// one at a time, each packed as JPEG while the window carries on, then put together with words for each.
+    func saveEPUB(to url: URL, then done: ((Error?) -> Void)? = nil) {
+        guard let album, let renderer else { return }
+        let layout = layout
+        withPrintPictures(asJPEG: true) { [weak self] pictures in
+            guard let self else { return }
+            let paper = renderer.onPaper { pictures[$0] }
+            let width = Self.ebookPageWidth
+            let height = Int((CGFloat(width) * BookLayout.pageSize.height / BookLayout.pageSize.width).rounded())
+            controls.isBusy = true
+            Task { [weak self] in
+                var pages: [EPUBBook.Page] = []
+                for index in layout.pages.indices {
+                    let isLeft = layout.state(layout.state(showing: index)).left == index
+                    guard let image = paper.render(layout.pages[index], index: index, isLeft: isLeft, pixelWidth: CGFloat(width)),
+                          let picture = await Self.jpegData(SendableImage(cgImage: image), quality: 0.85) else { break }
+                    pages.append(EPUBBook.Page(picture: picture, side: layout.ebookSide(index), contentsTitle: layout.contentsTitle(index),
+                                               number: layout.pages[index].number,
+                                               description: layout.spokenPage(index, title: paper.title, subtitle: paper.subtitle, story: paper.story)))
+                }
+                let book = EPUBBook(title: paper.title, language: Locale.preferredLanguages.first ?? "en", identifier: album, modified: Date(),
+                                    pixelWidth: width, pixelHeight: height, pages: pages)
+                var problem: Error? = CocoaError(.fileWriteUnknown)
+                if pages.count == layout.pages.count { problem = await Self.write(book, to: url) }
+                self?.controls.isBusy = false
+                if let problem { self?.onProblem?("The book couldn’t be saved as an EPUB.", problem.localizedDescription) }
+                done?(problem)
+            }
+        }
+    }
+
+    @concurrent private nonisolated static func write(_ book: EPUBBook, to url: URL) async -> Error? {
+        do {
+            try book.data().write(to: url)
+            return nil
+        } catch {
+            return error
+        }
+    }
+
     func printBook() {
         guard let window = view.window else { return }
-        withPrintPictures { [weak self] in
+        withPrintPictures { [weak self] _ in
             guard let self else { return }
             let info = NSPrintInfo.shared.copy() as! NSPrintInfo
             info.orientation = .landscape
@@ -1062,6 +1124,9 @@ struct BookControlsView: View {
             if model.isBusy { ProgressView().controlSize(.small) }
             Button { model.controller?.exportPDF() } label: { Label("PDF", systemImage: "arrow.down.doc") }
                 .help("Save the book as a PDF")
+            Button { model.controller?.exportEPUB() } label: { Label("EPUB", systemImage: "book") }
+                .help("Save the book as an EPUB, to read in e-book apps")
+                .disabled(model.isBusy)
         }
         .buttonStyle(.borderless)
         .labelStyle(.titleAndIcon)
