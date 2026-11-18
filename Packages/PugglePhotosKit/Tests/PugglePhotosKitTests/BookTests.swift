@@ -81,6 +81,46 @@ import Testing
         #expect(layout.find("p2")!.placement.center == CGPoint(x: 560, y: 40), "a frame's middle stays on the page")
     }
 
+    @Test func photosMovedToAnotherPage() {
+        // Two to a page: p0 p1 | p2 p3 | p4 p5 | p6 p7.
+        let natural = BookLayout(items: items(8), captions: [:], settings: BookSettings(perPage: .two), coverPhoto: nil)
+        let photoPages = natural.pages.indices.filter { natural.pages[$0].kind == .photos }
+        let (first, second) = (photoPages[0], photoPages[1])
+        var settings = BookSettings(perPage: .two)
+        settings.overrides["p3"] = BookPlacementOverride(center: CGPoint(x: 420, y: 600), page: natural.spot(forPhotosOn: first))
+        settings.writings = [BookWriting(text: "Beside p3", spot: .photo("p3"), center: CGPoint(x: 300, y: 740))]
+        let moved = BookLayout(items: items(8), captions: [:], settings: settings, coverPhoto: nil)
+        #expect(moved.find("p3")?.page == first && moved.find("p3")?.placement.center == CGPoint(x: 420, y: 600),
+                "a photo moved to another page is there, where it was put down")
+        #expect(moved.pages[first].placements.map(\.id) == ["p0", "p1", "p3"], "on top of what was there")
+        #expect(moved.pages[second].placements.map(\.id) == ["p2"], "and its own page keeps the rest")
+        #expect(moved.pages[second].placements[0].center == natural.pages[second].placements[0].center, "where they were")
+        #expect(moved.pages.count == natural.pages.count && moved.homePages["p3"] == second, "the pages stay as they were")
+        #expect(moved.pages[second].writings.map(\.text) == ["Beside p3"], "writing beside it stays on its own page")
+        #expect(moved.spot(forWritingAt: CGPoint(x: 420, y: 600), onPage: first) != .photo("p3"),
+                "and writing put on the page it went to belongs to that page's own photos")
+        #expect(moved.anchor(after: first) == .photo("p1"), "a page added after that page still goes after it")
+        #expect(natural.takesPhotos(first) && !natural.takesPhotos(2) && natural.spot(forPhotosOn: 2) == nil,
+                "photos go on pages of photos, not the title page")
+
+        // An added page takes photos too.
+        var withPage = settings
+        let extra = BookExtraPage(after: .photo("p5"))
+        withPage.extraPages = [extra]
+        withPage.overrides["p0"] = BookPlacementOverride(center: CGPoint(x: 300, y: 300), page: .page(extra.id))
+        let onAdded = BookLayout(items: items(8), captions: [:], settings: withPage, coverPhoto: nil)
+        let added = onAdded.pages.firstIndex { $0.spot == .page(extra.id) }
+        #expect(added != nil && onAdded.find("p0")?.page == added && onAdded.takesPhotos(added!), "a photo can go on an added page")
+
+        // A page that's gone sends the photo back to its own; so does being moved "to" its own page.
+        var lost = settings
+        lost.overrides["p3"]?.page = .page(UUID())
+        #expect(BookLayout(items: items(8), captions: [:], settings: lost, coverPhoto: nil).find("p3")?.page == second)
+        var home = settings
+        home.overrides["p3"]?.page = natural.spot(forPhotosOn: second)
+        #expect(BookLayout(items: items(8), captions: [:], settings: home, coverPhoto: nil).pages[second].placements.map(\.id) == ["p2", "p3"])
+    }
+
     @Test func resizingByTheCorner() {
         let placement = BookPlacement(id: "p0", isVideo: false, aspect: 1.5, center: CGPoint(x: 300, y: 360),
                                       imageSize: CGSize(width: 300, height: 200), angle: 12, caption: "")

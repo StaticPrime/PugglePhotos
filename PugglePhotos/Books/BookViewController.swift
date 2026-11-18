@@ -273,6 +273,30 @@ final class BookViewController: NSViewController, BookViewDelegate {
         }
     }
 
+    /// A photo put down on a page: on its own page it just moves; on another it's kept there, found by that page's
+    /// own photos (or an added page's name). The blank page at the end is kept once a photo goes on it, as when it's
+    /// written on.
+    func bookCommitMove(_ id: PhotoID, toPage page: Int, center: CGPoint) {
+        draft = nil
+        guard let album, layout.takesPhotos(page) else { return }
+        var kept: BookExtraPage?
+        if layout.pages[page].kind == .blank {
+            guard let anchor = layout.anchor(after: page) else { return }
+            kept = BookExtraPage(after: anchor)
+        }
+        guard let spot = kept.map({ BookSpot.page($0.id) }) ?? layout.spot(forPhotosOn: page) else { return }
+        let isHome = layout.homePages[id] == page
+        library.edit("Move Photo") { catalog in
+            var settings = catalog.book(album)
+            if let kept { settings.extraPages.append(kept) }
+            settings.changeOverride(id) { override in
+                override.center = center
+                override.page = isHome ? nil : spot
+            }
+            catalog.setBook(settings, for: album)
+        }
+    }
+
     func bookPreviewResize(_ id: PhotoID, from start: BookPlacement, factor: Double) {
         draft = (id, resized(id, from: start, by: factor))
         rebuildKeepingImages()
@@ -693,7 +717,8 @@ final class BookViewController: NSViewController, BookViewDelegate {
 
     func putBackLeftOut() { change("Put Back in Book") { $0.hidden = [] } }
 
-    /// Lays the book out afresh. Photos go to new places; their sticky notes and how their notes show stay with them.
+    /// Lays the book out afresh. Photos go to new places, back on their own pages; their sticky notes and how their
+    /// notes show stay with them.
     func shuffle() {
         change("Shuffle Book") { settings in
             settings.seed = settings.seed &+ 1
@@ -702,6 +727,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
                     override.center = nil
                     override.angle = nil
                     override.scale = nil
+                    override.page = nil
                 }
             }
         }

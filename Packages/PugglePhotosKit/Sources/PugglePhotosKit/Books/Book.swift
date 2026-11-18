@@ -118,19 +118,23 @@ public struct BookPlacementOverride: Codable, Hashable, Sendable {
     public var noteStyle: BookNoteStyle?
     /// Where its sticky note was moved to, how big it was made and its color.
     public var sticky: BookSticky?
+    /// The page it was moved to, when that isn't its own: a page of photos, found by the first photo the book puts
+    /// there, or an added page.
+    public var page: BookSpot?
 
     public init(center: CGPoint? = nil, angle: Double? = nil, scale: Double? = nil, noteStyle: BookNoteStyle? = nil,
-                sticky: BookSticky? = nil) {
+                sticky: BookSticky? = nil, page: BookSpot? = nil) {
         self.center = center
         self.angle = angle
         self.scale = scale
         self.noteStyle = noteStyle
         self.sticky = sticky
+        self.page = page
     }
 
-    public var isEmpty: Bool { center == nil && angle == nil && scale == nil && noteStyle == nil && sticky == nil }
+    public var isEmpty: Bool { center == nil && angle == nil && scale == nil && noteStyle == nil && sticky == nil && page == nil }
 
-    enum CodingKeys: String, CodingKey { case center, angle, scale, noteStyle, sticky }
+    enum CodingKeys: String, CodingKey { case center, angle, scale, noteStyle, sticky, page }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -139,6 +143,7 @@ public struct BookPlacementOverride: Codable, Hashable, Sendable {
         scale = try? container.decodeIfPresent(Double.self, forKey: .scale)
         noteStyle = try? container.decodeIfPresent(BookNoteStyle.self, forKey: .noteStyle)
         sticky = try? container.decodeIfPresent(BookSticky.self, forKey: .sticky)
+        page = try? container.decodeIfPresent(BookSpot.self, forKey: .page)
     }
 }
 

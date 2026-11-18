@@ -170,6 +170,131 @@ extension SelfTest {
             check(photoCorners(id).map { hypot($0.fixed.x - fixed.x, $0.fixed.y - fixed.y) < 1 } == true, "where it is")
             check(book.bookMenu(for: id, sticky: false)?.item(withTitle: "Original Size") == nil, "after which there's no size to give back")
         }
+
+        // MARK: Carrying photos to other pages
+        // Where to press on a photo so that it's the one taken hold of: its middle, or if another photo lies over that,
+        // a spot of its own nearer an edge. In the view.
+        func pressPoint(_ id: PhotoID, onLeft: Bool) -> CGPoint? {
+            guard let found = book.layout.find(id) else { return nil }
+            let rect = found.placement.frameRect(settings.frame)
+            let spots: [(CGFloat, CGFloat)] = [(0, 0), (-0.3, -0.3), (0.3, -0.3), (-0.3, 0.3), (0.3, 0.3), (0, -0.35), (0, 0.35), (-0.35, 0), (0.35, 0)]
+            for (x, y) in spots {
+                let point = found.placement.page(CGPoint(x: rect.width * x, y: rect.height * y))
+                if book.layout.placement(at: point, onPage: found.page)?.id == id, book.layout.sticky(at: point, onPage: found.page) == nil {
+                    return view.viewPoint(point, onLeft: onLeft)
+                }
+            }
+            return nil
+        }
+        // A drag that takes hold of a photo and carries it toward `to` in steps, not letting go. Answers how far its
+        // middle is from the pointer, to work out where it lands.
+        @discardableResult
+        func carry(_ id: PhotoID, onLeft: Bool, to: CGPoint) -> CGPoint {
+            guard let placement = book.layout.find(id)?.placement, let start = pressPoint(id, onLeft: onLeft) else { return .zero }
+            let middle = view.viewPoint(placement.center, onLeft: onLeft)
+            bookMouse(.leftMouseDown, at: start, in: view)
+            for fraction in [0.05, 0.5, 1] as [CGFloat] {
+                bookMouse(.leftMouseDragged, at: CGPoint(x: start.x + (to.x - start.x) * fraction, y: start.y + (to.y - start.y) * fraction), in: view)
+            }
+            return CGPoint(x: middle.x - start.x, y: middle.y - start.y)
+        }
+        var carried: PhotoID?
+        var stayed: (id: PhotoID, center: CGPoint, offset: CGPoint)?
+        step {
+            // Across the spread: put down on the other page, where it was let go.
+            guard let id = picked?.id, let from = book.layout.find(id), let left = book.layout.state(view.state).left else { return }
+            let others = book.layout.pages[from.page].placements.filter { $0.id != id }.map { ($0.id, $0.center) }
+            let target = view.viewPoint(CGPoint(x: 300, y: 420), onLeft: true)
+            let offset = carry(id, onLeft: false, to: target)
+            check(view.isCarryingPhoto && settings.overrides[id]?.page == nil, "a photo dragged in a book is lifted off its page")
+            bookMouse(.leftMouseUp, at: target, in: view)
+            let now = book.layout.find(id)
+            let landed = now.map { view.viewPoint($0.placement.center, onLeft: true) }
+            check(now?.page == left && landed.map { hypot($0.x - (target.x + offset.x), $0.y - (target.y + offset.y)) < 1 } == true,
+                  "and can be put down on the other page, right where it's let go", "\(String(describing: now?.page)) \(String(describing: landed))")
+            check(others.allSatisfy { other in book.layout.find(other.0)?.placement.center == other.1 }, "the photos left on its page stay where they were")
+            check(view.selected == id && !view.isCarryingPhoto && library.undoManager.undoActionName == "Move Photo",
+                  "it's still picked, and the move can be undone", library.undoManager.undoActionName)
+        }
+        step {
+            library.undoManager.undo()
+            guard let id = picked?.id else { return }
+            check(book.layout.find(id)?.page == book.layout.homePages[id] && settings.overrides[id]?.page == nil, "Undo puts it back on its own page")
+            view.go(to: 3, animated: false)
+            // Held at the left page's outer edge, the page turns back.
+            guard let page = book.layout.state(3).left, let placement = book.layout.pages[page].placements.first else { return }
+            carried = placement.id
+            let start = view.viewPoint(placement.center, onLeft: true)
+            carry(placement.id, onLeft: true, to: CGPoint(x: view.pageRect(left: true).minX + 6, y: start.y))
+            wait(upTo: 4) { view.state == 2 && !view.isTurning }
+        }
+        step {
+            check(view.state == 2 && view.isCarryingPhoto, "held at the book's left edge, a photo turns the page back, still in hand")
+            guard let id = carried, let right = book.layout.state(2).right else { return }
+            let target = view.viewPoint(CGPoint(x: 360, y: 330), onLeft: false)
+            bookMouse(.leftMouseDragged, at: target, in: view)
+            bookMouse(.leftMouseUp, at: target, in: view)
+            check(book.layout.find(id)?.page == right && book.layout.homePages[id] != right, "and goes down on the page before")
+            // At the first page of photos there's no page to turn back to.
+            guard let first = book.layout.state(2).left, let placement = book.layout.pages[first].placements.first else { return }
+            let start = view.viewPoint(placement.center, onLeft: true)
+            let offset = carry(placement.id, onLeft: true, to: CGPoint(x: view.pageRect(left: true).minX + 6, y: start.y))
+            stayed = (placement.id, placement.center, offset)
+            wait(upTo: 1.6) { view.state != 2 }
+        }
+        step {
+            check(view.state == 2 && view.isCarryingPhoto, "at the first page of photos, the page doesn't turn back")
+            guard let stayed else { return }
+            let middle = view.viewPoint(stayed.center, onLeft: true)
+            let home = CGPoint(x: middle.x - stayed.offset.x, y: middle.y - stayed.offset.y)
+            bookMouse(.leftMouseDragged, at: home, in: view)
+            bookMouse(.leftMouseUp, at: home, in: view)
+            check(book.layout.find(stayed.id)?.placement.center == stayed.center && settings.overrides[stayed.id] == nil,
+                  "put down where it was, nothing changes")
+            // Held at the right page's outer edge, the page turns forward.
+            guard let right = book.layout.state(2).right, let placement = book.layout.pages[right].placements.first else { return }
+            carried = placement.id
+            let start = view.viewPoint(placement.center, onLeft: false)
+            carry(placement.id, onLeft: false, to: CGPoint(x: view.pageRect(left: false).maxX - 6, y: start.y))
+            wait(upTo: 4) { view.state == 3 && !view.isTurning }
+        }
+        step {
+            check(view.state == 3 && view.isCarryingPhoto, "held at the book's right edge, a photo turns the page forward")
+            guard let id = carried, let left = book.layout.state(3).left else { return }
+            let target = view.viewPoint(CGPoint(x: 260, y: 520), onLeft: true)
+            bookMouse(.leftMouseDragged, at: target, in: view)
+            bookMouse(.leftMouseUp, at: target, in: view)
+            check(book.layout.find(id)?.page == left && book.layout.homePages[id] != left, "and goes down on the next page",
+                  "on \(String(describing: book.layout.find(id)?.page)), its own \(String(describing: book.layout.homePages[id])), left \(left), state \(view.state), carrying \(view.isCarryingPhoto), kept \(String(describing: settings.overrides[id]?.page))")
+            // Let go off the pages, on the desk, it goes back where it was.
+            guard let right = book.layout.state(3).right, let placement = book.layout.pages[right].placements.first else { return }
+            stayed = (placement.id, placement.center, .zero)
+            let below = CGPoint(x: view.pageRect(left: false).midX, y: view.pageRect(left: false).maxY + 14)
+            let offset = carry(placement.id, onLeft: false, to: below)
+            // The photo's middle and the pointer both off the page.
+            let pointer = CGPoint(x: below.x - offset.x, y: max(below.y, below.y - offset.y))
+            bookMouse(.leftMouseDragged, at: pointer, in: view)
+            bookMouse(.leftMouseUp, at: pointer, in: view)
+            wait(upTo: 1) { view.selected == placement.id }
+        }
+        step {
+            guard let stayed else { return }
+            check(!view.isCarryingPhoto && book.layout.find(stayed.id)?.placement.center == stayed.center
+                  && book.layout.find(stayed.id)?.page == book.layout.homePages[stayed.id], "let go off the pages, a photo goes back where it was")
+            book.resetLayout()
+            let moved = settings.overrides.values.contains { $0.page != nil }
+            let pages = book.layout.pages
+            check(!moved && pages.indices.filter { pages[$0].holdsPhotos }.allSatisfy { index in pages[index].placements.allSatisfy { book.layout.homePages[$0.id] == index } },
+                  "Reset Book Layout puts every photo back on its own page")
+        }
+        step {
+            library.undoManager.undo()
+            check(settings.overrides.values.contains { $0.page != nil }, "and Undo carries them back")
+            // Every photo on its own page again for what follows.
+            book.resetLayout()
+            view.go(to: 2, animated: false)
+            if let id = picked?.id { view.select(id) }
+        }
         step {
             choose("Photo", "Leave Out of Book")
             check(settings.hidden == [picked!.id] && book.layout.find(picked!.id) == nil, "a photo can be left out of the book")
@@ -182,6 +307,7 @@ extension SelfTest {
             book.change("Paper") { $0.paper = .black }
             book.change("Frames") { $0.frame = .print }
             check(book.layout.settings.paper == .black && book.layout.settings.frame == .print, "the paper and frames can change")
+            check(library.catalog.album(albumID!)?.book?.paper == .black, "a book's look is saved with its album")
             let print = book.layout.pages.first { $0.kind == .photos }?.placements.first
             check(print.map { abs($0.imageSize.width / $0.imageSize.height - $0.aspect) < 0.01 } == true, "prints keep each photo's shape")
             let before = book.layout.pages
@@ -190,7 +316,6 @@ extension SelfTest {
             check(settings.seed != seed && settings.overrides.isEmpty && book.layout.pages != before, "Shuffle lays the book out afresh")
             library.undoManager.undo()
             check(settings.seed == seed, "and can be undone")
-            check(library.catalog.album(albumID!)?.book != nil, "a book's look is saved with its album")
         }
         step {
             // The PDF: the closed covers on pages of their own, the spreads two pages wide.

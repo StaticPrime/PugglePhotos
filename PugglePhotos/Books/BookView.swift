@@ -18,6 +18,9 @@ protocol BookViewDelegate: AnyObject {
     func bookPreview(_ id: PhotoID, center: CGPoint?, angle: Double?)
     /// When the drag or turn ends.
     func bookCommit(_ id: PhotoID, center: CGPoint?, angle: Double?)
+    /// A photo carried to a page and put down there, its own page or another: where its middle went, in that page's
+    /// coordinates.
+    func bookCommitMove(_ id: PhotoID, toPage page: Int, center: CGPoint)
     /// While a photo is resized by its corner: draw its page with it `factor` times as big as it was (`start`) when
     /// the drag began.
     func bookPreviewResize(_ id: PhotoID, from start: BookPlacement, factor: Double)
@@ -57,8 +60,10 @@ protocol BookViewDelegate: AnyObject {
 
 /// A photo book open on a desk: two pages side by side (or the closed cover), turned with a real-looking page turn.
 /// Click the paper to turn a page, or drag it over; click a photo to pick it, then drag it, its round handle or its
-/// corner to move, turn or resize it, or click it again to turn it over and read its back. Sticky notes move, stretch
-/// and turn the same way, and a double-click writes on one. Videos play while the pointer is over them.
+/// corner to move, turn or resize it, or click it again to turn it over and read its back. A photo dragged is carried
+/// above the pages, to put down on either one, or held at the book's edge, on another spread as the page turns. Sticky
+/// notes move, stretch and turn the same way, and a double-click writes on one. Videos play while the pointer is over
+/// them.
 final class BookView: NSView, NSTextViewDelegate {
     weak var delegate: BookViewDelegate?
     private(set) var state = 0
@@ -503,6 +508,7 @@ final class BookView: NSView, NSTextViewDelegate {
         state = target
         reload()
         delegate?.bookDidChangeState(state)
+        carryOn()
     }
 
     /// Darkens the leaf's faces as it stands upright, as light falls across a curling page.
@@ -524,6 +530,7 @@ final class BookView: NSView, NSTextViewDelegate {
         state = target
         reload()
         delegate?.bookDidChangeState(state)
+        carryOn()
     }
 
     /// Follows a page being dragged over: 0 lying flat where it started, 1 turned all the way.
@@ -639,10 +646,10 @@ final class BookView: NSView, NSTextViewDelegate {
     }
 
     /// Where the handles of what's picked can be taken hold of, in the view: around each knob, and around the corner
-    /// or bar that stretches it (first, so it wins where they meet). None while a photo or a page turns, or while
-    /// writing is being written.
+    /// or bar that stretches it (first, so it wins where they meet). None while a photo or a page turns, while a
+    /// photo is being carried, or while writing is being written.
     private func handleSpots() -> [(handle: Handle, rect: NSRect)] {
-        guard !isTurning, turnLayer == nil else { return [] }
+        guard !isTurning, turnLayer == nil, lift == nil else { return [] }
         if editing == nil, let (writing, _, left) = writingPlace(), let size = delegate?.bookWritingSize(writing) {
             let handles = writingHandles(writing, size: size, left: left)
             return [(.widen, Self.spot(around: handles.widen, width: 22, height: 36))] + Self.knobSpots((handles.top, handles.turn)).map { (.turn, $0) }
@@ -815,6 +822,12 @@ final class BookView: NSView, NSTextViewDelegate {
         spotsOverlay?.rects = handleSpots().map(\.rect)
         #endif
         stretchHandle.isHidden = true
+        // A photo being carried shows no outline or handles: it's in hand.
+        if lift != nil {
+            selection.isHidden = true
+            handle.isHidden = true
+            return
+        }
         if let (writing, _, left) = writingPlace(), editing == nil, let size = delegate?.bookWritingSize(writing) {
             let rect = CGRect(x: -size.width / 2 - 4, y: -size.height / 2 - 4, width: size.width + 8, height: size.height + 8)
             let corners = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY),
@@ -1041,6 +1054,180 @@ final class BookView: NSView, NSTextViewDelegate {
         delegate?.bookSetTurnedOver(nil, hiding: nil)
     }
 
+    // MARK: Carrying a photo to another page
+
+    /// A photo lifted off its page while it's dragged: drawn above the book under the pointer, so it can be put down
+    /// anywhere on either page, or, held at the book's outer edge while the page turns, on another spread.
+    private struct Lift {
+        let id: PhotoID
+        let layer: CALayer
+        /// From the pointer to the photo's middle, in the view, as when it was taken hold of.
+        let grab: CGPoint
+        /// Its page and middle before it was lifted.
+        let page: Int
+        let center: CGPoint
+        let angle: Double
+    }
+
+    private var lift: Lift?
+    /// Which way the page turns while a lifted photo is held at the book's edge; nil away from the edges.
+    private var springForward: Bool?
+    private var springWork: DispatchWorkItem?
+    /// Where the pointer let go of a lifted photo while a page was still turning: it's put down once the turn ends.
+    private var dropAfterTurn: NSPoint?
+
+    /// How long a photo is held at the book's edge before the page turns, and how close to the edge that is.
+    private static let springDelay: TimeInterval = 0.6
+    private static let edgeReach: CGFloat = 24
+
+    /// Whether a photo is being carried, for the self-test.
+    var isCarryingPhoto: Bool { lift != nil }
+
+    /// Picks a photo up off its page: the page is drawn without it, and a picture of it, a little bigger and casting
+    /// a deeper shadow, follows the pointer. False when there's no picture of it to carry.
+    private func liftPhoto(_ id: PhotoID, page: Int, pointer: NSPoint) -> Bool {
+        guard let delegate, let layer, let placement = delegate.layout.find(id)?.placement else { return false }
+        if turnedOver == id { setTurnedOver(nil) }
+        let left = delegate.layout.state(state).left == page
+        let scale = pageRect(left: left).width / BookLayout.pageSize.width
+        guard let side = delegate.bookPhotoSide(id, back: false, scale: scale * (window?.backingScaleFactor ?? 2)) else { return false }
+        let middle = viewPoint(placement.center, onLeft: left)
+        let picture = CALayer()
+        picture.contents = side.image
+        picture.bounds = CGRect(x: 0, y: 0, width: side.size.width * scale, height: side.size.height * scale)
+        picture.position = middle
+        picture.setAffineTransform(CGAffineTransform(rotationAngle: placement.angle * .pi / 180).scaledBy(x: 1.03, y: 1.03))
+        picture.shadowColor = NSColor.black.cgColor
+        picture.shadowOpacity = 0.3
+        picture.shadowRadius = 12
+        picture.shadowOffset = CGSize(width: 0, height: 8)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.addSublayer(picture)
+        CATransaction.commit()
+        lift = Lift(id: id, layer: picture, grab: CGPoint(x: middle.x - pointer.x, y: middle.y - pointer.y), page: page,
+                    center: placement.center, angle: placement.angle)
+        stopVideo(id)
+        delegate.bookSetTurnedOver(turnedOver, hiding: id)
+        reloadPage(page)
+        updateSelection()
+        return true
+    }
+
+    private func moveLift(to pointer: NSPoint) {
+        guard let lift else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        lift.layer.position = CGPoint(x: pointer.x + lift.grab.x, y: pointer.y + lift.grab.y)
+        CATransaction.commit()
+        springLoad(at: pointer)
+    }
+
+    /// Held at the book's outer edge, a lifted photo turns the page after a moment, and again as long as it's held
+    /// there, while there's a page it can go on that way.
+    private func springLoad(at pointer: NSPoint) {
+        let forward = edge(at: pointer)
+        guard forward != springForward else { return }
+        springForward = forward
+        springWork?.cancel()
+        springWork = nil
+        if let forward { scheduleSpring(forward) }
+    }
+
+    private func scheduleSpring(_ forward: Bool) {
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, lift != nil, springForward == forward, !isTurning, canCarry(forward: forward) else { return }
+            turn(forward: forward)
+        }
+        springWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.springDelay, execute: work)
+    }
+
+    /// Which way the page turns for a photo held at the book's outer edge: back at the left page's, forward at the
+    /// right page's; nil anywhere else.
+    private func edge(at pointer: NSPoint) -> Bool? {
+        guard let pages = delegate?.layout.state(state) else { return nil }
+        let slide = offset(for: state)
+        if pages.left != nil, pointer.x < pageRect(left: true).minX + slide + Self.edgeReach { return false }
+        if pages.right != nil, pointer.x > pageRect(left: false).maxX + slide - Self.edgeReach { return true }
+        return nil
+    }
+
+    /// Whether turning that way opens a page a photo can be put down on, next to the pointer: going back, the earlier
+    /// spread's right page; going forward, the next spread's left page. At the first page of photos (or the last),
+    /// there's none, and the page stays.
+    private func canCarry(forward: Bool) -> Bool {
+        guard let layout = delegate?.layout else { return false }
+        let target = forward ? state + 1 : state - 1
+        guard (0..<layout.stateCount).contains(target) else { return false }
+        let pages = layout.state(target)
+        return (forward ? pages.left : pages.right).map(layout.takesPhotos) ?? false
+    }
+
+    /// After a page turns with a photo in hand: put it down if the pointer let go meanwhile, or turn again after a
+    /// moment if it's still held at the edge.
+    private func carryOn() {
+        guard lift != nil else { return }
+        if let point = dropAfterTurn {
+            dropAfterTurn = nil
+            dropLift(at: point)
+        } else if let forward = springForward {
+            scheduleSpring(forward)
+        }
+    }
+
+    /// Puts a lifted photo down where it is, on the page under it (or under the pointer) if photos can go there.
+    /// Anywhere else, off the pages, it goes back where it came from.
+    private func dropLift(at pointer: NSPoint) {
+        guard let lift, let delegate else { return }
+        if isTurning {
+            dropAfterTurn = pointer
+            return
+        }
+        springWork?.cancel()
+        springWork = nil
+        springForward = nil
+        self.lift = nil
+        let middle = CGPoint(x: pointer.x + lift.grab.x, y: pointer.y + lift.grab.y)
+        let layout = delegate.layout
+        if let target = [pagePoint(middle), pagePoint(pointer)].compactMap({ $0 }).first(where: { layout.takesPhotos($0.page) }) {
+            let center = BookLayout.clamp(pageCoordinates(middle, onPage: target.page))
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            delegate.bookSetTurnedOver(nil, hiding: nil)
+            if target.page != lift.page || hypot(center.x - lift.center.x, center.y - lift.center.y) > 0.5 {
+                delegate.bookCommitMove(lift.id, toPage: target.page, center: center)
+            }
+            reload()
+            lift.layer.removeFromSuperlayer()
+            CATransaction.commit()
+            select(lift.id)
+            return
+        }
+        // Back where it came from: onto its page if that's showing, otherwise it fades.
+        let pages = layout.state(state)
+        let homeLeft = pages.left == lift.page
+        let homeShowing = homeLeft || pages.right == lift.page
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(Motion.isReduced ? 0 : 0.22)
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.delegate?.bookSetTurnedOver(nil, hiding: nil)
+                self.reload()
+                lift.layer.removeFromSuperlayer()
+                if homeShowing { self.select(lift.id) }
+            }
+        }
+        if homeShowing {
+            lift.layer.position = viewPoint(lift.center, onLeft: homeLeft)
+            lift.layer.setAffineTransform(CGAffineTransform(rotationAngle: lift.angle * .pi / 180))
+        } else {
+            lift.layer.opacity = 0
+        }
+        CATransaction.commit()
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         guard let delegate, !isTurning, let hit = pagePoint(point) else { return nil }
@@ -1048,7 +1235,7 @@ final class BookView: NSView, NSTextViewDelegate {
             pick(.writing(writing.id))
             return delegate.bookWritingMenu(writing.id)
         }
-        guard delegate.layout.pages[hit.page].kind == .photos else { return delegate.bookPageMenu(hit.page) }
+        guard delegate.layout.pages[hit.page].holdsPhotos else { return delegate.bookPageMenu(hit.page) }
         if let placement = delegate.layout.sticky(at: hit.point, onPage: hit.page), placement.id != turnedOver {
             pick(.sticky(placement.id))
             return delegate.bookMenu(for: placement.id, sticky: true)
@@ -1222,7 +1409,7 @@ final class BookView: NSView, NSTextViewDelegate {
             return
         }
         // Sticky notes lie over the photos.
-        if layout.pages[hit.page].kind == .photos, let placement = layout.sticky(at: hit.point, onPage: hit.page), placement.id != turnedOver {
+        if layout.pages[hit.page].holdsPhotos, let placement = layout.sticky(at: hit.point, onPage: hit.page), placement.id != turnedOver {
             if event.clickCount == 2 {
                 delegate.bookWriteNote(placement.id, at: viewRect(of: placement.stickyCorners(), left: hit.left))
                 return
@@ -1231,7 +1418,7 @@ final class BookView: NSView, NSTextViewDelegate {
             drag = .sticky(id: placement.id, page: hit.page, start: point, sticky: placement.sticky, moved: false)
             return
         }
-        if layout.pages[hit.page].kind == .photos, let placement = layout.placement(at: hit.point, onPage: hit.page) {
+        if layout.pages[hit.page].holdsPhotos, let placement = layout.placement(at: hit.point, onPage: hit.page) {
             if event.clickCount == 2 {
                 delegate.bookOpenPhoto(placement.id)
                 return
@@ -1256,8 +1443,14 @@ final class BookView: NSView, NSTextViewDelegate {
         switch current {
         case let .photo(id, page, start, center, moved, turns):
             guard moved || hypot(point.x - start.x, point.y - start.y) > 3 else { return }
-            let to = CGPoint(x: center.x + (point.x - start.x) * scale, y: center.y + (point.y - start.y) * scale)
             drag = .photo(id: id, page: page, start: start, center: center, moved: true, turns: turns)
+            // Lifted off the page as it starts to move, it can go to any page.
+            if !moved, lift == nil { _ = liftPhoto(id, page: page, pointer: start) }
+            if lift != nil {
+                moveLift(to: point)
+                return
+            }
+            let to = CGPoint(x: center.x + (point.x - start.x) * scale, y: center.y + (point.y - start.y) * scale)
             if turnedOver == id { setTurnedOver(nil) }
             delegate?.bookPreview(id, center: BookLayout.clamp(to), angle: nil)
             reloadPage(page)
@@ -1326,6 +1519,10 @@ final class BookView: NSView, NSTextViewDelegate {
         case let .photo(id, _, start, center, moved, turns):
             guard moved else {
                 if turns { turnOver(id) }
+                return
+            }
+            if lift != nil {
+                dropLift(at: point)
                 return
             }
             let final = CGPoint(x: center.x + (point.x - start.x) * scale, y: center.y + (point.y - start.y) * scale)
@@ -1425,7 +1622,7 @@ final class BookView: NSView, NSTextViewDelegate {
             hover(nil)
             return
         }
-        let placement = delegate.layout.pages[hit.page].kind == .photos ? delegate.layout.placement(at: hit.point, onPage: hit.page) : nil
+        let placement = delegate.layout.pages[hit.page].holdsPhotos ? delegate.layout.placement(at: hit.point, onPage: hit.page) : nil
         hover(placement?.isVideo == true ? placement?.id : nil)
     }
 
@@ -1456,7 +1653,7 @@ final class BookView: NSView, NSTextViewDelegate {
         stopVideos()
         guard let delegate, delegate.alwaysPlaysVideos, !isTurning else { return }
         let pages = delegate.layout.state(state)
-        for page in [pages.left, pages.right].compactMap({ $0 }) where delegate.layout.pages[page].kind == .photos {
+        for page in [pages.left, pages.right].compactMap({ $0 }) where delegate.layout.pages[page].holdsPhotos {
             for placement in delegate.layout.pages[page].placements where placement.isVideo {
                 startVideo(placement.id, muted: true)
             }

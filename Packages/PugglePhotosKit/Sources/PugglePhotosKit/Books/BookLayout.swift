@@ -252,6 +252,9 @@ public struct BookPage: Hashable, Sendable {
         self.spot = spot
         self.writings = writings
     }
+
+    /// Pages that photos are put on and picked up from: pages of photos, and pages the person added.
+    public var holdsPhotos: Bool { kind == .photos || kind == .added }
 }
 
 /// A photo book laid out page by page: the cover, the inside cover, a title page, pages of photos (one, two or
@@ -262,6 +265,9 @@ public struct BookLayout: Sendable {
     public static let pageSize = CGSize(width: 600, height: 780)
     public let pages: [BookPage]
     public let settings: BookSettings
+    /// The page of photos the book puts each photo on, before any is moved to another page by hand. Writing beside
+    /// photos, and photos moved to a page of photos, find their page by these.
+    public let homePages: [PhotoID: Int]
 
     public init(items: [BookItem], captions: [PhotoID: String], notes: [PhotoID: String] = [:], settings: BookSettings,
                 coverPhoto: PhotoID?) {
@@ -312,14 +318,30 @@ public struct BookLayout: Sendable {
             number += 1
             addExtras(after: .page(extra.id))
         }
+        // Each photo's own page. Photos moved by hand to another page go there, on top of what's on it, and the rest
+        // stay where they are; they're laid on in the album's order, so a book comes out the same every time.
+        var home: [PhotoID: Int] = [:]
+        for (index, page) in pages.enumerated() where page.kind == .photos {
+            for placement in page.placements { home[placement.id] = index }
+        }
+        for item in shown {
+            guard let spot = settings.overrides[item.id]?.page, let from = home[item.id] else { continue }
+            let target: Int? = switch spot {
+            case let .photo(other): home[other]
+            default: pages.firstIndex { $0.kind == .added && $0.spot == spot }
+            }
+            guard let target, target != from, let at = pages[from].placements.firstIndex(where: { $0.id == item.id }) else { continue }
+            pages[target].placements.append(pages[from].placements.remove(at: at))
+        }
+        homePages = home
         // Two cover pages follow, and every sheet has two sides, so the pages so far must come out even.
         if pages.count % 2 == 1 { pages.append(BookPage(kind: .blank)) }
         pages.append(BookPage(kind: .insideCover, spot: .insideBack))
         pages.append(BookPage(kind: .back, spot: .back))
-        // Writing goes on its page: a page of photos is found by any photo on it.
+        // Writing goes on its page: a page of photos is found by any photo of its own.
         for writing in settings.writings {
             let target: Int? = switch writing.spot {
-            case let .photo(id): pages.firstIndex { $0.kind == .photos && $0.placements.contains { $0.id == id } }
+            case let .photo(id): home[id]
             default: pages.firstIndex { $0.spot == writing.spot }
             }
             if let target { pages[target].writings.append(writing) }
@@ -434,12 +456,25 @@ public struct BookLayout: Sendable {
         page == 0 ? 0 : (page + 1) / 2
     }
 
-    /// Where a photo is, if it's in the book.
+    /// Where a photo is, if it's in the book: on its own page, or one it was moved to.
     public func find(_ id: PhotoID) -> (page: Int, placement: BookPlacement)? {
-        for (index, page) in pages.enumerated() where page.kind == .photos {
+        for (index, page) in pages.enumerated() where page.holdsPhotos {
             if let placement = page.placements.first(where: { $0.id == id }) { return (index, placement) }
         }
         return nil
+    }
+
+    /// Whether a photo can be put down on a page: a page of photos, an added page, or the blank page at the end (which
+    /// is kept once something's on it).
+    public func takesPhotos(_ page: Int) -> Bool {
+        pages.indices.contains(page) && (pages[page].holdsPhotos || pages[page].kind == .blank)
+    }
+
+    /// How a photo moved to a page finds it again: a page of photos by the first photo the book puts there, an added
+    /// page by its name. Nil for pages photos can't go on, and for the blank page at the end, until it's kept.
+    public func spot(forPhotosOn page: Int) -> BookSpot? {
+        guard pages.indices.contains(page), pages[page].holdsPhotos else { return nil }
+        return pages[page].spot
     }
 
     /// The photo on a page under a point, the topmost first.
@@ -454,19 +489,20 @@ public struct BookLayout: Sendable {
         return pages[page].placements.reversed().first { $0.stickyContains(point) }
     }
 
-    /// The page a spot is on.
+    /// The page a spot is on: for a photo, its own page, wherever it has been moved to.
     public func page(of spot: BookSpot) -> Int? {
-        if case let .photo(id) = spot { return find(id)?.page }
+        if case let .photo(id) = spot { return homePages[id] }
         return pages.firstIndex { $0.spot == spot }
     }
 
-    /// Where writing put at a point on a page belongs: the page itself, or for a page of photos, the photo nearest
-    /// the point, so the writing stays with it if the book is laid out afresh. Nil for a blank page.
+    /// Where writing put at a point on a page belongs: the page itself, or for a page of photos, the photo of its own
+    /// nearest the point, so the writing stays with it if the book is laid out afresh. Nil for a blank page.
     public func spot(forWritingAt point: CGPoint, onPage page: Int) -> BookSpot? {
         guard pages.indices.contains(page) else { return nil }
         let target = pages[page]
         if target.kind == .photos {
-            let nearest = target.placements.min { hypot($0.center.x - point.x, $0.center.y - point.y) < hypot($1.center.x - point.x, $1.center.y - point.y) }
+            let own = target.placements.filter { homePages[$0.id] == page }
+            let nearest = own.min { hypot($0.center.x - point.x, $0.center.y - point.y) < hypot($1.center.x - point.x, $1.center.y - point.y) }
             return nearest.map { .photo($0.id) } ?? target.spot
         }
         return target.spot
@@ -479,7 +515,11 @@ public struct BookLayout: Sendable {
         let target = pages[page]
         switch target.kind {
         case .title: return .title
-        case .photos: return target.placements.last.map { .photo($0.id) }
+        case .photos:
+            // After the page's own photos, which find it however the photos on it are moved about.
+            if let own = target.placements.last(where: { homePages[$0.id] == page }) { return .photo(own.id) }
+            if case let .photo(id)? = target.spot { return .photo(id) }
+            return nil
         case .added:
             if case let .page(id) = target.spot { return .page(id) }
             return nil

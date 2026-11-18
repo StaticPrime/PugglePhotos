@@ -153,6 +153,17 @@ enum DebugLaunchOptions {
                 }
             }
             if defaults.bool(forKey: "PHBookWriteMode") { book.setWriting(true) }
+            // `-PHBookCarry YES` picks up the right page's first photo and holds it partway across the spread.
+            if defaults.bool(forKey: "PHBookCarry"), let right = showing.right, let first = book.layout.pages[right].placements.first {
+                // Once the book has been laid out at the window's size.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    let view = book.bookView
+                    let start = view.viewPoint(first.center, onLeft: false)
+                    SelfTest.bookMouse(.leftMouseDown, at: start, in: view)
+                    SelfTest.bookMouse(.leftMouseDragged, at: CGPoint(x: start.x - 10, y: start.y), in: view)
+                    SelfTest.bookMouse(.leftMouseDragged, at: CGPoint(x: start.x - view.pageSize.width * 0.55, y: start.y + 40), in: view)
+                }
+            }
             let turn = defaults.double(forKey: "PHBookTurn")
             if turn > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { book.bookView.holdTurn(at: turn) } }
         }
