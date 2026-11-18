@@ -659,6 +659,31 @@ extension SelfTest {
                       String(format: "%.2f apart, %.2f%% far off", parity.mean, parity.off * 100))
             }
             try? FileManager.default.removeItem(at: savedEPUB)
+            // Saving starts from the pink button over the desk's top right corner: just below the toolbar, clear of the
+            // pages.
+            let button = book.downloadButtonForTesting
+            let buttonFrame = button.convert(button.bounds, to: nil)
+            let corner = view.viewPoint(.zero, onLeft: true)
+            let across = view.viewPoint(CGPoint(x: BookLayout.pageSize.width, y: BookLayout.pageSize.height), onLeft: false)
+            let pagesFrame = view.convert(CGRect(x: min(corner.x, across.x), y: min(corner.y, across.y), width: abs(across.x - corner.x),
+                                                 height: abs(across.y - corner.y)), to: nil)
+            let bookFrame = book.view.convert(book.view.bounds, to: nil)
+            let underToolbar = window.window?.contentLayoutRect.maxY ?? 0
+            check(buttonFrame.width > 20 && buttonFrame.maxY <= underToolbar && buttonFrame.maxY > underToolbar - 50
+                  && bookFrame.maxX - buttonFrame.maxX < 30 && !buttonFrame.intersects(pagesFrame),
+                  "the download button sits in the top right corner, just below the toolbar and clear of the pages",
+                  "\(buttonFrame) under a toolbar ending at \(underToolbar), pages at \(pagesFrame)")
+            check(button.choices.items.filter { !$0.isSectionHeader }.map(\.title) == ["PDF…", "EPUB…"], "it offers a PDF or an EPUB")
+            var pink = false
+            button.effectiveAppearance.performAsCurrentDrawingAppearance {
+                let fill = button.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }?.usingColorSpace(.sRGB)
+                let accent = Theme.accent.usingColorSpace(.sRGB)
+                if let fill, let accent {
+                    pink = abs(fill.redComponent - accent.redComponent) < 0.02 && abs(fill.greenComponent - accent.greenComponent) < 0.02
+                        && abs(fill.blueComponent - accent.blueComponent) < 0.02
+                }
+            }
+            check(pink, "and it's pink, the window active or not")
         }
         step {
             // Double-click a photo to see it on its own, then come back to the book.

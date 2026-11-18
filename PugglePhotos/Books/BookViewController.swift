@@ -79,8 +79,10 @@ final class BookViewController: NSViewController, BookViewDelegate {
         bookView.translatesAutoresizingMaskIntoConstraints = false
         let bar = NSHostingView(rootView: BookControlsView(model: controls))
         bar.translatesAutoresizingMaskIntoConstraints = false
+        download.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(bookView)
         root.addSubview(bar)
+        root.addSubview(download)
         NSLayoutConstraint.activate([
             bookView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             bookView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -90,8 +92,25 @@ final class BookViewController: NSViewController, BookViewDelegate {
             bar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             bar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             bar.heightAnchor.constraint(equalToConstant: 52),
+            // Over the desk in the top right corner, just below the toolbar, which the window's content runs under.
+            download.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 12),
+            download.trailingAnchor.constraint(equalTo: root.safeAreaLayoutGuide.trailingAnchor, constant: -14),
         ])
+        download.onPDF = { [weak self] in self?.exportPDF() }
+        download.onEPUB = { [weak self] in self?.exportEPUB() }
         view = root
+    }
+
+    /// The pink button for saving the book as a PDF or an EPUB.
+    private let download = BookDownloadButton()
+
+    /// Whether the book's pictures are being gathered, or it's being saved: a spinner on the download button shows it.
+    private var isBusy: Bool {
+        get { controls.isBusy }
+        set {
+            controls.isBusy = newValue
+            download.isBusy = newValue
+        }
     }
 
     /// Leaving the book finishes any writing and puts the pen down.
@@ -763,7 +782,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
             body([:])
             return
         }
-        controls.isBusy = true
+        isBusy = true
         let gathering = PrintPictures(count: ids.count)
         for id in ids {
             library.source.requestImage(id, pixels: CGSize(width: 1800, height: 1800), fit: true) { [weak self] image, isFinal in
@@ -774,7 +793,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
                     }
                     gathering.remaining -= 1
                     guard gathering.remaining == 0, let self else { return }
-                    controls.isBusy = false
+                    isBusy = false
                     let previous = renderer?.image
                     let screen = images
                     renderer?.image = { gathering.images[$0] ?? screen[$0] }
@@ -847,6 +866,9 @@ final class BookViewController: NSViewController, BookViewDelegate {
     }
 
     #if DEBUG
+    /// The download button, where it sits in the window.
+    var downloadButtonForTesting: BookDownloadButton { download }
+
     /// The open place in the book drawn as a PDF page draws it, at the window's size and scale, for the self-test to lay
     /// over what the window shows.
     func sceneImageForTesting() -> CGImage? {
@@ -940,7 +962,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
             let paper = renderer.onPaper { pictures[$0] }
             let width = Self.ebookPageWidth
             let height = Int((CGFloat(width) * BookLayout.pageSize.height / BookLayout.pageSize.width).rounded())
-            controls.isBusy = true
+            isBusy = true
             Task { [weak self] in
                 var pages: [EPUBBook.Page] = []
                 for index in layout.pages.indices {
@@ -955,7 +977,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
                                     pixelWidth: width, pixelHeight: height, pages: pages)
                 var problem: Error? = CocoaError(.fileWriteUnknown)
                 if pages.count == layout.pages.count { problem = await Self.write(book, to: url) }
-                self?.controls.isBusy = false
+                self?.isBusy = false
                 if let problem { self?.onProblem?("The book couldn’t be saved as an EPUB.", problem.localizedDescription) }
                 done?(problem)
             }
@@ -1024,11 +1046,25 @@ final class BookPrintView: NSView {
     }
 }
 
-/// The bar under the book.
+/// The bar under the book. In a window too narrow for every button's title beside its icon, the buttons show just
+/// their icons rather than titles squeezed onto several lines.
 struct BookControlsView: View {
     @Bindable var model: BookControlsModel
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            bar(titled: true)
+            bar(titled: false)
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .lineLimit(1)
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.bar)
+    }
+
+    private func bar(titled: Bool) -> some View {
         HStack(spacing: 14) {
             Button { model.controller?.previous() } label: { Image(systemName: "chevron.left") }
                 .disabled(!model.canGoBack)
@@ -1086,6 +1122,7 @@ struct BookControlsView: View {
             .fixedSize()
             .help("How the photos’ notes show in this book")
             Button { model.choosingHandwriting = true } label: { Label("Handwriting", systemImage: "pencil.and.scribble") }
+                .titled(titled)
                 .help("The handwriting this book is written in")
                 .popover(isPresented: $model.choosingHandwriting) {
                     BookHandwritingView(model: model).padding(14).frame(width: 440)
@@ -1095,27 +1132,17 @@ struct BookControlsView: View {
                 Label("Write", systemImage: "pencil.line")
             }
             .toggleStyle(.button)
+            .titled(titled)
             .help("Click anywhere on a page to write there")
             Button { model.controller?.addPage() } label: { Label("Add Page", systemImage: "doc.badge.plus") }
+                .titled(titled)
                 .help("Add a blank page to write on")
             if model.hiddenCount > 0 {
                 Button("Put Back \(model.hiddenCount)") { model.controller?.putBackLeftOut() }
                     .help("Put back the photos left out of the book")
             }
-            Spacer()
-            if model.isBusy { ProgressView().controlSize(.small) }
-            Button { model.controller?.exportPDF() } label: { Label("PDF", systemImage: "arrow.down.doc") }
-                .help("Save the book as a PDF")
-            Button { model.controller?.exportEPUB() } label: { Label("EPUB", systemImage: "book") }
-                .help("Save the book as an EPUB, to read in e-book apps")
-                .disabled(model.isBusy)
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.borderless)
-        .labelStyle(.titleAndIcon)
-        .controlSize(.small)
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.bar)
     }
 
     private func picker<Value: Hashable>(_ title: String, _ values: [Value], _ path: WritableKeyPath<BookSettings, Value>,
@@ -1133,6 +1160,13 @@ struct BookControlsView: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+    }
+}
+
+private extension View {
+    /// A button's title beside its icon, or just its icon (VoiceOver still reads the title).
+    @ViewBuilder func titled(_ titled: Bool) -> some View {
+        if titled { labelStyle(.titleAndIcon) } else { labelStyle(.iconOnly) }
     }
 }
 
