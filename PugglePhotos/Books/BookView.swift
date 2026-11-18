@@ -184,10 +184,10 @@ final class BookView: NSView, NSTextViewDelegate {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.masksToBounds = true
-        desk.colors = [NSColor(srgbRed: 0.86, green: 0.83, blue: 0.79, alpha: 1).cgColor, NSColor(srgbRed: 0.72, green: 0.68, blue: 0.63, alpha: 1).cgColor]
+        desk.colors = BookScene.deskColors(dark: false)
         desk.type = .radial
-        desk.startPoint = CGPoint(x: 0.5, y: 0.45)
-        desk.endPoint = CGPoint(x: 1.25, y: 1.3)
+        desk.startPoint = BookScene.deskCenter
+        desk.endPoint = BookScene.deskEdge
         layer?.addSublayer(desk)
         var perspective = CATransform3DIdentity
         perspective.m34 = -1.0 / 2400
@@ -195,10 +195,10 @@ final class BookView: NSView, NSTextViewDelegate {
         layer?.addSublayer(book)
         bookShadow.backgroundColor = NSColor.black.cgColor
         bookShadow.shadowColor = NSColor.black.cgColor
-        bookShadow.shadowOpacity = 0.45
-        bookShadow.shadowRadius = 22
-        bookShadow.shadowOffset = CGSize(width: 0, height: 10)
-        bookShadow.cornerRadius = 4
+        bookShadow.shadowOpacity = BookStage.shadowOpacity
+        bookShadow.shadowRadius = BookStage.shadowRadius
+        bookShadow.shadowOffset = CGSize(width: 0, height: BookStage.shadowDrop)
+        bookShadow.cornerRadius = BookStage.pageCornerRadius
         book.addSublayer(bookShadow)
         // A binder's boards, spine and stacked sheets lie under the pages; its rings, over them.
         for part in [leftBoard, rightBoard, spinePanel, leftStack, rightStack] {
@@ -260,12 +260,12 @@ final class BookView: NSView, NSTextViewDelegate {
     /// The self-test clicks while another app may be in front, so its clicks count even then.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { SelfTestMode.isRunning || super.acceptsFirstMouse(for: event) }
 
+    /// Whether the book lies on the desk by night.
+    var isDark: Bool { effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        desk.colors = dark
-            ? [NSColor(srgbRed: 0.2, green: 0.19, blue: 0.2, alpha: 1).cgColor, NSColor(srgbRed: 0.1, green: 0.1, blue: 0.11, alpha: 1).cgColor]
-            : [NSColor(srgbRed: 0.88, green: 0.85, blue: 0.81, alpha: 1).cgColor, NSColor(srgbRed: 0.73, green: 0.69, blue: 0.64, alpha: 1).cgColor]
+        desk.colors = BookScene.deskColors(dark: isDark)
         effectiveAppearance.performAsCurrentDrawingAppearance {
             selection.strokeColor = Theme.accent.cgColor
             handle.strokeColor = Theme.accent.cgColor
@@ -280,32 +280,25 @@ final class BookView: NSView, NSTextViewDelegate {
     /// How the book is bound.
     private var binding: BookBinding { delegate?.layout.settings.binding ?? .glued }
 
+    /// Where everything lies on the desk: worked out the same way for a PDF page, so the book looks the same there.
+    var stage: BookStage { BookStage(size: bounds.size, binding: binding) }
+
     /// The size of one page on screen: two pages side by side, and a binder's spine between them, fit the room, with
     /// space left around the cover's boards.
-    var pageSize: CGSize {
-        let room = bounds.insetBy(dx: 62, dy: 52)
-        let height = max(80, min(room.height, room.width / (2 + binding.spineShare) * BookLayout.pageSize.height / BookLayout.pageSize.width))
-        return CGSize(width: height * BookLayout.pageSize.width / BookLayout.pageSize.height, height: height)
-    }
+    var pageSize: CGSize { stage.pageSize }
 
     /// How wide a binder's spine shows between the open pages; glued pages meet.
-    var spineGap: CGFloat { pageSize.width * binding.spineShare }
+    var spineGap: CGFloat { stage.spineGap }
 
     /// Where the spine is: the middle of the binding, which the pages turn about.
-    private var spine: CGPoint { CGPoint(x: bounds.midX, y: bounds.midY) }
+    private var spine: CGPoint { stage.spine }
 
-    func pageRect(left: Bool) -> CGRect {
-        let size = pageSize
-        let half = spineGap / 2
-        return CGRect(x: left ? spine.x - half - size.width : spine.x + half, y: spine.y - size.height / 2, width: size.width, height: size.height)
-    }
+    func pageRect(left: Bool) -> CGRect { stage.pageRect(left: left) }
 
     /// How far the book slides so a closed cover sits in the middle.
     private func offset(for state: Int) -> CGFloat {
         guard let layout = delegate?.layout else { return 0 }
-        if state == 0 { return -(pageSize.width + spineGap) / 2 }
-        if state == layout.stateCount - 1 { return (pageSize.width + spineGap) / 2 }
-        return 0
+        return stage.offset(state: state, stateCount: layout.stateCount)
     }
 
     /// A point on a page (page coordinates) in the view.
@@ -369,9 +362,11 @@ final class BookView: NSView, NSTextViewDelegate {
         rightPage.contents = pages.right.flatMap(delegate.pageImage)
         leftPage.isHidden = pages.left == nil
         rightPage.isHidden = pages.right == nil
-        bookShadow.frame = pages.left == nil ? pageRect(left: false) : (pages.right == nil ? pageRect(left: true) : pageRect(left: true).union(pageRect(left: false)))
         layoutBinder(pages)
-        if !leftBoard.isHidden { bookShadow.frame = leftBoard.frame.union(rightBoard.frame) }
+        // Its corners as round as those of what casts it, so none shows past them.
+        let shadow = stage.shadow(open: pages.left != nil && pages.right != nil, closedOnLeft: pages.left != nil)
+        bookShadow.frame = shadow.rect
+        bookShadow.cornerRadius = shadow.radius
         CATransaction.commit()
         updateSelection()
         refreshVideos()
@@ -402,22 +397,20 @@ final class BookView: NSView, NSTextViewDelegate {
         }
         guard let layout = delegate?.layout else { return }
         let settings = layout.settings
-        let left = pageRect(left: true), right = pageRect(left: false)
-        let margin = left.width * 0.028, gap = spineGap
-        let unit = left.width / BookLayout.pageSize.width
-        let thickness = BookBinding.holeRadius * 1.5 * unit, reach = BookBinding.holeInset * unit
+        let stage = stage
+        let left = stage.pageRect(left: true), right = stage.pageRect(left: false)
+        let thickness = stage.ringThickness
         let scale = window?.backingScaleFactor ?? 2
-        leftBoard.frame = CGRect(x: left.minX - margin, y: left.minY - margin, width: left.width + margin, height: left.height + margin * 2)
-        rightBoard.frame = CGRect(x: right.minX, y: right.minY - margin, width: right.width + margin, height: right.height + margin * 2)
-        spinePanel.frame = CGRect(x: left.maxX, y: left.minY - margin, width: gap, height: left.height + margin * 2)
+        leftBoard.frame = stage.leftBoard
+        rightBoard.frame = stage.rightBoard
+        spinePanel.frame = stage.spinePanel
         // Their middle is the middle of the binding, which the pages turn about. (Placed by bounds and position, as
         // they're tipped in depth while a page turns.)
-        let ringBox = CGRect(x: left.maxX - reach - thickness * 2, y: left.minY - thickness * 2,
-                             width: gap + (reach + thickness * 2) * 2, height: left.height + thickness * 4)
+        let ringBox = stage.ringBox
         rings.bounds = CGRect(origin: .zero, size: ringBox.size)
         rings.position = CGPoint(x: ringBox.midX, y: ringBox.midY)
         ringsUnder.bounds = rings.bounds
-        ringReach = gap / 2 + reach
+        ringReach = stage.ringReach
         let look = "\(settings.binding)-\(settings.rings)-\(settings.cover)-\(left.size)-\(scale)"
         if binderDrawn != look {
             binderDrawn = look
@@ -425,10 +418,9 @@ final class BookView: NSView, NSTextViewDelegate {
             leftBoard.contents = BinderArt.board(size: leftBoard.bounds.size, cover: settings.cover, spineOnRight: true, folds: folds, scale: scale)
             rightBoard.contents = BinderArt.board(size: rightBoard.bounds.size, cover: settings.cover, spineOnRight: false, folds: folds, scale: scale)
             if settings.binding.hasRings {
-                let heights = settings.binding.ringPositions.map { $0 * left.height }
                 spinePanel.contents = BinderArt.spine(size: spinePanel.bounds.size, cover: settings.cover, finish: settings.rings,
-                                                      rings: heights.map { $0 + margin }, scale: scale)
-                rings.contents = BinderArt.rings(size: rings.bounds.size, finish: settings.rings, rings: heights.map { $0 + thickness * 2 },
+                                                      rings: stage.spineRingHeights, scale: scale)
+                rings.contents = BinderArt.rings(size: rings.bounds.size, finish: settings.rings, rings: stage.ringHeights,
                                                  from: thickness * 2, to: rings.bounds.width - thickness * 2, thickness: thickness, scale: scale)
             } else {
                 spinePanel.contents = nil
@@ -436,8 +428,8 @@ final class BookView: NSView, NSTextViewDelegate {
             }
         }
         // The sheets already turned lie under the left page; those still to come, under the right.
-        if let leftIndex = pages.left, let rightIndex = pages.right {
-            let before = max(0, (leftIndex - 1) / 2), after = max(0, (layout.pages.count - 2 - rightIndex) / 2)
+        if pages.left != nil, pages.right != nil {
+            let (before, after) = BookScene.sheets(under: pages, in: layout)
             let stacks = "\(look)-\(settings.paper)-\(before)-\(after)"
             if stacksDrawn != stacks {
                 stacksDrawn = stacks
@@ -791,6 +783,7 @@ final class BookView: NSView, NSTextViewDelegate {
             for part in [leftBoard, spinePanel, leftStack, rightStack, rings, rightBoard] { part.isHidden = true }
             (atFront ? rightBoard : leftBoard).isHidden = false
             bookShadow.frame = (atFront ? rightBoard : leftBoard).frame
+            bookShadow.cornerRadius = stage.boardRadius
         } else if !rings.isHidden {
             // Turning on a binder's rings, which go on through its holes: the copy under it in the leaf, its middle
             // on the leaf's hinge, which is the rings' middle too.

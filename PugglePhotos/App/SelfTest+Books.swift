@@ -16,6 +16,62 @@ extension SelfTest {
         }
     }
 
+    /// An image's pixels as sRGB, `width` × `height`, four bytes each.
+    static func sRGBPixels(_ image: CGImage, width: Int, height: Int) -> [UInt8] {
+        var data = [UInt8](repeating: 0, count: width * height * 4)
+        data.withUnsafeMutableBytes { bytes in
+            guard let context = CGContext(data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        return data
+    }
+
+    /// How far apart two pictures the same size are: the mean difference of their most different channel (out of 255),
+    /// and the share of pixels off by more than 24.
+    static func difference(_ a: [UInt8], _ b: [UInt8], count: Int) -> (mean: Double, off: Double) {
+        var total = 0, off = 0
+        for i in 0..<count {
+            let d = max(abs(Int(a[i * 4]) - Int(b[i * 4])), abs(Int(a[i * 4 + 1]) - Int(b[i * 4 + 1])), abs(Int(a[i * 4 + 2]) - Int(b[i * 4 + 2])))
+            total += d
+            if d > 24 { off += 1 }
+        }
+        return (Double(total) / Double(max(count, 1)), Double(off) / Double(max(count, 1)))
+    }
+
+    /// The book as the window server shows it, against the same place drawn as a PDF page draws it: how far apart they
+    /// are over every pixel (edges differ a little: the window stretches pictures of the pages, the PDF draws them
+    /// sharp), and along the book's shadow, just under its bottom edge.
+    static func bookParity(_ book: BookViewController) -> (mean: Double, off: Double, shadow: Double)? {
+        let view = book.bookView
+        typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let window = view.window, let scene = book.sceneImageForTesting(),
+              let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        let create = unsafeBitCast(symbol, to: Create.self)
+        // Just this window, whatever is in front of it, at its full resolution.
+        guard let shot = create(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0 | 1 << 3)?.takeRetainedValue() else { return nil }
+        let scale = CGFloat(shot.width) / window.frame.width
+        let frame = view.convert(view.bounds, to: nil)
+        let crop = CGRect(x: frame.minX * scale, y: (window.frame.height - frame.maxY) * scale, width: frame.width * scale, height: frame.height * scale)
+        guard let screen = shot.cropping(to: crop.integral) else { return nil }
+        let width = min(scene.width, screen.width), height = min(scene.height, screen.height)
+        let a = sRGBPixels(screen, width: width, height: height), b = sRGBPixels(scene, width: width, height: height)
+        let whole = difference(a, b, count: width * height)
+        // The shadow: the rows under what casts it, across its middle.
+        let stage = view.stage, pages = book.layout.state(view.state)
+        let caster = stage.shadow(open: pages.left != nil && pages.right != nil, closedOnLeft: pages.left != nil).rect
+            .offsetBy(dx: stage.offset(state: view.state, stateCount: book.layout.stateCount), dy: 0)
+        var total = 0, count = 0
+        for y in Int((caster.maxY + 1) * scale)..<min(height, Int((caster.maxY + 44) * scale)) {
+            for x in stride(from: Int((caster.minX + 20) * scale), to: min(width, Int((caster.maxX - 20) * scale)), by: 3) {
+                let i = (y * width + x) * 4
+                total += abs(Int(a[i]) - Int(b[i]))
+                count += 1
+            }
+        }
+        return (whole.mean, whole.off, Double(total) / Double(max(count, 1)))
+    }
+
     /// Photo books: opening one, turning pages by click, key and drag, picking, moving and turning photos, the
     /// paper and frames, shuffling, leaving photos out, videos on the page, the viewer, PDF and printing.
     static func bookSteps(_ app: AppDelegate, window: LibraryWindowController) {
@@ -435,27 +491,91 @@ extension SelfTest {
                 return !view.isTurning && view.state == state + 1
             }
         }
+        // A PDF page draws the book as the window shows it: laid over the window, it matches but for a little at the
+        // edges (the window stretches pictures of the pages; the PDF draws them sharp), its shadow and all.
+        func matches(_ parity: (mean: Double, off: Double, shadow: Double)) -> Bool {
+            parity.mean < 2.5 && parity.off < 0.02 && parity.shadow < 3
+        }
+        func looksAsShown(_ what: String) {
+            guard let parity = bookParity(book) else {
+                check(false, "a PDF page draws \(what) as the window shows it", "no picture of the window")
+                return
+            }
+            check(matches(parity), "a PDF page draws \(what) as the window shows it",
+                  String(format: "%.2f apart, %.2f%% far off, shadow %.2f apart", parity.mean, parity.off * 100, parity.shadow))
+        }
+        // The window server shows a change a moment after it's made, or longer on a busy Mac: looking too soon saw the
+        // pages before it.
+        func shown() -> Bool { bookParity(book).map(matches) ?? false }
         step {
             check(ringsSeen >= 4 && ringsStrayed < 1, "the rings keep through the holes all the way over", "\(ringsSeen) looks, \(ringsStrayed) pt off at most")
             check(view.ringCountForTesting == 4, "the pages turn on the rings")
+            view.select(nil)
+            view.hover(nil)
             view.go(to: 0, animated: false)
             let middle = view.viewPoint(CGPoint(x: BookLayout.pageSize.width / 2, y: BookLayout.pageSize.height / 2), onLeft: false)
             check(abs(middle.x - view.bounds.midX) < 0.5 && view.ringCountForTesting == 0, "closed, the binder sits in the middle, its rings out of sight")
+            wait(upTo: 4) { shown() }
+        }
+        step {
+            looksAsShown("a binder closed on its front cover")
+            view.go(to: 2, animated: false)
+            wait(upTo: 4) { shown() }
+        }
+        step {
+            looksAsShown("a binder open on four gold rings")
             check(choose("View", "Glued") && settings.binding == .glued && abs(view.pageRect(left: false).minX - view.pageRect(left: true).maxX) < 0.01,
                   "Glued puts the pages back together")
             view.go(to: 2, animated: false)
+            wait(upTo: 4) { shown() }
         }
         step {
-            // The PDF: the closed covers on pages of their own, the spreads two pages wide.
+            looksAsShown("a glued book open, its cover around the pages")
+            // The PDF: a page for each place in the book, every one the book lying on the desk, the same size and wide
+            // like the open book, the closed covers too.
             let data = book.pdfData()
             let document = CGDataProvider(data: data as CFData).flatMap(CGPDFDocument.init)
             check(document?.numberOfPages == book.layout.stateCount, "a book saves as a PDF, a page for each spread",
                   "\(document?.numberOfPages ?? 0) of \(book.layout.stateCount)")
-            check(document?.page(at: 1)?.getBoxRect(.mediaBox).width == 600 && document?.page(at: 2)?.getBoxRect(.mediaBox).width == 1200,
-                  "covers are a page wide, spreads two")
+            let full = BookStage.fullSize(for: settings.binding)
+            let sizes = (0..<(document?.numberOfPages ?? 0)).compactMap { document?.page(at: $0 + 1)?.getBoxRect(.mediaBox).size }
+            check(!sizes.isEmpty && sizes.allSatisfy { $0 == full } && full.width > full.height,
+                  "every page of it is the same size and wide, the covers too", "\(sizes.first.map { "\($0)" } ?? "none")")
+            // Its page for the open spread, drawn into pixels, is the scene: see-through shading and all, which Quartz
+            // once dropped from a PDF's gradients (covers came out grey, sticky notes too).
+            if let page = document?.page(at: view.state + 1),
+               let scene = book.sceneImageForTesting(view.state, size: full, scale: 1, dark: false),
+               let context = CGContext(data: nil, width: scene.width, height: scene.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                       space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+                context.drawPDFPage(page)
+                let drawn = context.makeImage().map { sRGBPixels($0, width: scene.width, height: scene.height) } ?? []
+                let apart = drawn.isEmpty ? (mean: 255.0, off: 1.0) : difference(drawn, sRGBPixels(scene, width: scene.width, height: scene.height),
+                                                                                  count: scene.width * scene.height)
+                check(apart.mean < 1.5 && apart.off < 0.005, "and its page for the open spread is that book, see-through shading and all",
+                      String(format: "%.2f apart, %.2f%% far off", apart.mean, apart.off * 100))
+            } else {
+                check(false, "and its page for the open spread is that book", "no page")
+            }
             var range = NSRange()
             _ = BookPrintView(controller: book).knowsPageRange(&range)
             check(range.length == book.layout.stateCount, "printing prints every spread")
+        }
+        // Saved to send: its photos at print size, kept as JPEG data, which a PDF takes as it is (decoded, a photo goes
+        // in losslessly, megabytes each).
+        let savedPDF = FileManager.default.temporaryDirectory.appendingPathComponent("PugglePhotos self-test book.pdf")
+        var saved: Error??
+        step {
+            try? FileManager.default.removeItem(at: savedPDF)
+            book.savePDF(to: savedPDF) { saved = .some($0) }
+            wait(upTo: 15) { saved != nil }
+        }
+        step {
+            let photos = Set(book.layout.pages.flatMap { $0.placements.map(\.id) })
+            let text = (try? Data(contentsOf: savedPDF)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+            let jpegs = text.components(separatedBy: "/DCTDecode").count - 1
+            check(saved.flatMap { $0 } == nil && !photos.isEmpty && jpegs >= photos.count,
+                  "saved, the book's photos go in at print size as JPEG data, small enough to send", "\(jpegs) JPEG pictures for \(photos.count) photos")
+            try? FileManager.default.removeItem(at: savedPDF)
         }
         step {
             // Double-click a photo to see it on its own, then come back to the book.

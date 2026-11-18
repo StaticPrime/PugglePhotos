@@ -770,8 +770,9 @@ final class BookViewController: NSViewController, BookViewDelegate {
 
     // MARK: PDF and printing
 
-    /// Every picture in the book at print size, then `body`.
-    private func withPrintPictures(_ body: @escaping @MainActor () -> Void) {
+    /// Every picture in the book at print size, then `body`. For a PDF (`asJPEG`), each is kept as JPEG data, which a PDF
+    /// takes in as it is: a decoded photo goes in losslessly, megabytes a photo, too big a book to send.
+    private func withPrintPictures(asJPEG: Bool = false, _ body: @escaping @MainActor () -> Void) {
         let ids = Array(Set(layout.pages.flatMap { $0.placements.map(\.id) } + [renderer?.coverPhoto].compactMap { $0 }))
         guard !ids.isEmpty else {
             body()
@@ -782,17 +783,30 @@ final class BookViewController: NSViewController, BookViewDelegate {
         for id in ids {
             library.source.requestImage(id, pixels: CGSize(width: 1800, height: 1800), fit: true) { [weak self] image, isFinal in
                 guard isFinal else { return }
-                if let image { gathering.images[id] = image }
-                gathering.remaining -= 1
-                guard gathering.remaining == 0, let self else { return }
-                controls.isBusy = false
-                let previous = renderer?.image
-                let screen = images
-                renderer?.image = { gathering.images[$0] ?? screen[$0] }
-                body()
-                if let previous { renderer?.image = previous }
+                Task { [weak self] in
+                    if let image {
+                        gathering.images[id] = asJPEG ? await Self.asJPEG(SendableImage(cgImage: image))?.cgImage ?? image : image
+                    }
+                    gathering.remaining -= 1
+                    guard gathering.remaining == 0, let self else { return }
+                    controls.isBusy = false
+                    let previous = renderer?.image
+                    let screen = images
+                    renderer?.image = { gathering.images[$0] ?? screen[$0] }
+                    body()
+                    if let previous { renderer?.image = previous }
+                }
             }
         }
+    }
+
+    /// A picture as JPEG data, at a quality that looks the same.
+    @concurrent private nonisolated static func asJPEG(_ picture: SendableImage) async -> SendableImage? {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, picture.cgImage, [kCGImageDestinationLossyCompressionQuality: 0.92] as CFDictionary)
+        guard CGImageDestinationFinalize(destination), let provider = CGDataProvider(data: data) else { return nil }
+        return CGImage(jpegDataProviderSource: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent).map(SendableImage.init)
     }
 
     private final class PrintPictures {
@@ -801,28 +815,36 @@ final class BookViewController: NSViewController, BookViewDelegate {
         init(count: Int) { remaining = count }
     }
 
-    /// The book as a PDF: the front cover, each spread, the back cover.
+    /// The book as a PDF, to look through as it lies open in the window: a page for each place in it, the front cover,
+    /// each spread and the back cover, all the same size and wide like the open book. Each is the book on the desk as
+    /// the window shows it, at its pages' full size: the same stage, binding, pages and sticky notes, drawn the same
+    /// way, but sharp at any size, with the photos at print size.
     func pdfData() -> Data {
         let data = NSMutableData()
         guard let renderer, let consumer = CGDataConsumer(data: data as CFMutableData) else { return Data() }
-        var box = CGRect(origin: .zero, size: CGSize(width: BookLayout.pageSize.width * 2, height: BookLayout.pageSize.height))
-        guard let context = CGContext(consumer: consumer, mediaBox: &box, [kCGPDFContextTitle as String: renderer.title] as CFDictionary) else { return Data() }
-        for state in 0..<layout.stateCount {
-            let pages = layout.state(state)
-            let single = pages.left == nil || pages.right == nil
-            var media = CGRect(origin: .zero, size: CGSize(width: BookLayout.pageSize.width * (single ? 1 : 2), height: BookLayout.pageSize.height))
-            context.beginPage(mediaBox: &media)
-            drawSpread(state, in: context, height: media.height)
-            context.endPage()
+        let size = BookStage.fullSize(for: layout.settings.binding)
+        var box = CGRect(origin: .zero, size: size)
+        let info = [kCGPDFContextTitle as String: renderer.title, kCGPDFContextCreator as String: "PugglePhotos"]
+        guard let context = CGContext(consumer: consumer, mediaBox: &box, info as CFDictionary) else { return Data() }
+        let scene = BookScene(layout: layout, renderer: renderer)
+        onPaper(renderer) {
+            for state in 0..<layout.stateCount {
+                context.beginPage(mediaBox: &box)
+                context.saveGState()
+                context.translateBy(x: 0, y: size.height)
+                context.scaleBy(x: 1, y: -1)
+                // By day: the desk shouldn't turn dark for whoever the book's sent to.
+                scene.draw(state, in: context, size: size, dark: false, deviceScale: 1)
+                context.restoreGState()
+                context.endPage()
+            }
         }
         context.closePDF()
         return data as Data
     }
 
-    /// Draws one place in the book with its pages side by side, from the top left of a page `height` tall.
-    func drawSpread(_ state: Int, in context: CGContext, height: CGFloat) {
-        guard let renderer else { return }
-        // On paper, every photo shows its front, and everything written shows.
+    /// Draws as on paper: every photo showing its front, and everything written showing.
+    private func onPaper(_ renderer: BookRenderer, _ draw: () -> Void) {
         let turned = renderer.turnedOver, hidden = renderer.hiding, writing = renderer.editing
         renderer.turnedOver = nil
         renderer.hiding = nil
@@ -832,6 +854,39 @@ final class BookViewController: NSViewController, BookViewDelegate {
             renderer.hiding = hidden
             renderer.editing = writing
         }
+        draw()
+    }
+
+    #if DEBUG
+    /// The open place in the book drawn as a PDF page draws it, at the window's size and scale, for the self-test to lay
+    /// over what the window shows.
+    func sceneImageForTesting() -> CGImage? {
+        sceneImageForTesting(bookView.state, size: bookView.bounds.size, scale: view.window?.backingScaleFactor ?? 2, dark: bookView.isDark)
+    }
+
+    /// A place in the book drawn as a PDF page draws it, `size` points big at `scale` pixels a point.
+    func sceneImageForTesting(_ state: Int, size: CGSize, scale: CGFloat, dark: Bool) -> CGImage? {
+        guard let renderer else { return nil }
+        let width = Int((size.width * scale).rounded()), height = Int((size.height * scale).rounded())
+        guard width > 0, height > 0,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: scale, y: -scale)
+        BookScene(layout: layout, renderer: renderer).draw(state, in: context, size: size, dark: dark, deviceScale: scale)
+        return context.makeImage()
+    }
+    #endif
+
+    /// Draws one place in the book with its pages side by side, from the top left of a page `height` tall: printing's
+    /// sheets.
+    func drawSpread(_ state: Int, in context: CGContext, height: CGFloat) {
+        guard let renderer else { return }
+        onPaper(renderer) { drawPages(state, in: context, height: height, renderer: renderer) }
+    }
+
+    private func drawPages(_ state: Int, in context: CGContext, height: CGFloat, renderer: BookRenderer) {
         let pages = layout.state(state)
         var x: CGFloat = 0
         for (page, left) in [(pages.left, true), (pages.right, false)] {
@@ -852,15 +907,20 @@ final class BookViewController: NSViewController, BookViewDelegate {
         panel.nameFieldStringValue = "\(title).pdf"
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            MainActor.assumeIsolated {
-                self?.withPrintPictures {
-                    guard let self else { return }
-                    do {
-                        try self.pdfData().write(to: url)
-                    } catch {
-                        self.onProblem?("The book couldn’t be saved as a PDF.", error.localizedDescription)
-                    }
-                }
+            MainActor.assumeIsolated { self?.savePDF(to: url) }
+        }
+    }
+
+    /// Saves the book as a PDF, its pictures at print size, then calls back with what went wrong, if anything.
+    func savePDF(to url: URL, then done: ((Error?) -> Void)? = nil) {
+        withPrintPictures(asJPEG: true) { [weak self] in
+            guard let self else { return }
+            do {
+                try pdfData().write(to: url)
+                done?(nil)
+            } catch {
+                onProblem?("The book couldn’t be saved as a PDF.", error.localizedDescription)
+                done?(error)
             }
         }
     }

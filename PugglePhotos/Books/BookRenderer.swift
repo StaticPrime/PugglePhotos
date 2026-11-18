@@ -148,10 +148,9 @@ final class BookRenderer {
     /// Shade along the spine, as a page curves into the binding.
     private func drawGutter(in context: CGContext, bounds: CGRect, isLeft: Bool) {
         let colors = [NSColor.black.withAlphaComponent(settings.paper.isDark ? 0.35 : 0.16).cgColor, NSColor.black.withAlphaComponent(0).cgColor]
-        guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: [0, 1]) else { return }
         let start = CGPoint(x: isLeft ? bounds.maxX : bounds.minX, y: 0)
         let end = CGPoint(x: isLeft ? bounds.maxX - 46 : bounds.minX + 46, y: 0)
-        context.drawLinearGradient(gradient, start: start, end: end, options: [])
+        context.drawGradient(colors, locations: [0, 1], from: start, to: end)
     }
 
     /// A binder page's inner edge: the crease where it bends at its hinge, and a hole for each ring, punched near the
@@ -169,8 +168,7 @@ final class BookRenderer {
         context.restoreGState()
         let tones = settings.rings.tones
         let scale = abs(context.ctm.a)
-        let metal = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
-                               colors: [Self.color(tones.shine), Self.color(tones.body), Self.color(tones.shade)] as CFArray, locations: [0, 0.45, 1])
+        let metal = [Self.color(tones.shine), Self.color(tones.body), Self.color(tones.shade)]
         let x = isLeft ? bounds.maxX - BookBinding.holeInset : bounds.minX + BookBinding.holeInset
         for share in settings.binding.ringPositions {
             let center = CGPoint(x: x, y: bounds.minY + bounds.height * share)
@@ -185,7 +183,7 @@ final class BookRenderer {
             context.saveGState()
             context.addEllipse(in: eyelet)
             context.clip()
-            if let metal { context.drawLinearGradient(metal, start: CGPoint(x: eyelet.minX, y: eyelet.minY), end: CGPoint(x: eyelet.maxX, y: eyelet.maxY), options: []) }
+            context.drawGradient(metal, locations: [0, 0.45, 1], from: CGPoint(x: eyelet.minX, y: eyelet.minY), to: CGPoint(x: eyelet.maxX, y: eyelet.maxY))
             context.restoreGState()
             // Through the hole, the board below, in shade.
             let through = CGRect(x: center.x - hole, y: center.y - hole, width: hole * 2, height: hole * 2)
@@ -222,10 +220,9 @@ final class BookRenderer {
         func x(_ inward: CGFloat) -> CGFloat { onLeft ? bounds.minX + inward : bounds.maxX - inward }
         // Shade or light laid from `start` to `end`, within `rect`.
         func lay(_ colors: [CGColor], at locations: [CGFloat], from start: CGPoint, to end: CGPoint, in rect: CGRect) {
-            guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: locations) else { return }
             context.saveGState()
             context.clip(to: rect)
-            context.drawLinearGradient(gradient, start: start, end: end, options: [])
+            context.drawGradient(colors, locations: locations, from: start, to: end)
             context.restoreGState()
         }
         let joint: CGFloat = 31
@@ -265,12 +262,10 @@ final class BookRenderer {
         let inner = onLeft ? bounds.minX + width : bounds.maxX - width
         let colors = [NSColor.black.withAlphaComponent(0.3).cgColor, NSColor.black.withAlphaComponent(0.06).cgColor,
                       NSColor.white.withAlphaComponent(0.12).cgColor]
-        if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: [0, 0.75, 1]) {
-            context.saveGState()
-            context.clip(to: CGRect(x: min(outer, inner), y: bounds.minY, width: width, height: bounds.height))
-            context.drawLinearGradient(gradient, start: CGPoint(x: outer, y: 0), end: CGPoint(x: inner, y: 0), options: [])
-            context.restoreGState()
-        }
+        context.saveGState()
+        context.clip(to: CGRect(x: min(outer, inner), y: bounds.minY, width: width, height: bounds.height))
+        context.drawGradient(colors, locations: [0, 0.75, 1], from: CGPoint(x: outer, y: 0), to: CGPoint(x: inner, y: 0))
+        context.restoreGState()
         let groove = onLeft ? inner + 9 : inner - 9
         context.setLineWidth(1.8)
         context.setStrokeColor(NSColor.black.withAlphaComponent(0.3).cgColor)
@@ -427,9 +422,7 @@ final class BookRenderer {
         context.clip()
         let colors = [NSColor.white.withAlphaComponent(0.22).cgColor, NSColor.white.withAlphaComponent(0).cgColor,
                       NSColor.black.withAlphaComponent(0.07).cgColor]
-        if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: [0, 0.3, 1]) {
-            context.drawLinearGradient(gradient, start: CGPoint(x: rect.minX, y: rect.minY), end: CGPoint(x: rect.maxX, y: rect.maxY), options: [])
-        }
+        context.drawGradient(colors, locations: [0, 0.3, 1], from: CGPoint(x: rect.minX, y: rect.minY), to: CGPoint(x: rect.maxX, y: rect.maxY))
         // The sticky strip along the top.
         context.setFillColor(NSColor.black.withAlphaComponent(0.035).cgColor)
         context.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * 0.17))
@@ -620,9 +613,7 @@ final class BookRenderer {
         context.strokePath()
         // Light falling across it.
         let colors = [NSColor.white.withAlphaComponent(0.14).cgColor, NSColor.black.withAlphaComponent(0.12).cgColor]
-        if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: [0, 1]) {
-            context.drawLinearGradient(gradient, start: CGPoint(x: bounds.minX, y: bounds.minY), end: CGPoint(x: bounds.maxX, y: bounds.maxY), options: [])
-        }
+        context.drawGradient(colors, locations: [0, 1], from: CGPoint(x: bounds.minX, y: bounds.minY), to: CGPoint(x: bounds.maxX, y: bounds.maxY))
     }
 
     /// The front: the cover photo in a white border and the title stamped below it.
