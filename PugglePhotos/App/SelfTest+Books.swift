@@ -333,12 +333,15 @@ extension SelfTest {
             return pixel.prefix(3).map { CGFloat($0) / 255 }
         }
         var glued: [CGFloat] = []
+        // How far the rings strayed from the holes they go through, at most, through a turn, and how often they were seen.
+        var ringsStrayed: CGFloat = 0, ringsSeen = 0
         step {
             guard let right = book.layout.state(view.state).right else { return }
             let hole = CGPoint(x: BookBinding.holeInset, y: BookLayout.pageSize.height * 0.5)
             glued = color(ofPage: right, at: hole)
             check(view.ringCountForTesting == 0 && abs(view.pageRect(left: false).minX - view.pageRect(left: true).maxX) < 0.01,
                   "a glued book's pages meet in the middle, with no rings")
+            check(view.coverShowsForTesting, "and its cover shows around them")
             check(menuItem("View", "Gold").map { !window.validateMenuItem($0) } == true && settings.rings == .silver,
                   "the rings' metal can't be chosen for a glued book")
             check(choose("View", "3 Rings") && settings.binding == .threeRing && view.ringCountForTesting == 3,
@@ -359,11 +362,35 @@ extension SelfTest {
             let drawn = view.drawnHandlesForTesting
             check(view.selected == placement.id && drawn.knob.map { knob in view.knobForTesting.map { hypot($0.turn.x - knob.x, $0.turn.y - knob.y) < 0.5 } ?? false } == true,
                   "on rings, a photo is picked where it's drawn, its handles where they take hold")
-            let state = view.state
-            view.next()
-            wait { !view.isTurning && view.state == state + 1 }
+            // A page held partway over: the rings go through its holes, over it from the pages it's leaving, and on
+            // under it to the pages it's going to; past upright, the other way about.
+            view.holdTurn(at: 0.3)
+            let lifting = view.ringsThroughHolesForTesting()
+            view.holdTurn(at: 0.7)
+            let over = view.ringsThroughHolesForTesting()
+            check(lifting.map { $0.miss < 0.5 && $0.overFromLeft } == true && over.map { $0.miss < 0.5 && !$0.overFromLeft } == true,
+                  "as a page turns on rings, they go on through its holes, over it from the pages it lifts from and under it to the others",
+                  "\(String(describing: lifting)) then \(String(describing: over))")
+            view.holdTurn(at: 0.1)
+            view.letGoOfTurn(at: 0.1)
+            wait { !view.isTurning }
         }
         step {
+            check(view.ringsThroughHolesForTesting() == nil && view.ringCountForTesting == 4, "let go early, the page lies back down on the rings")
+            // Turned all the way, watched as it goes.
+            let state = view.state
+            view.next()
+            wait(upTo: 4) {
+                // Looked at only partway over, as drawn then.
+                if let shown = view.shownTurnForTesting, shown > 0.1, shown < 0.9, let through = view.ringsThroughHolesForTesting(presented: true) {
+                    ringsStrayed = max(ringsStrayed, through.miss)
+                    ringsSeen += 1
+                }
+                return !view.isTurning && view.state == state + 1
+            }
+        }
+        step {
+            check(ringsSeen >= 4 && ringsStrayed < 1, "the rings keep through the holes all the way over", "\(ringsSeen) looks, \(ringsStrayed) pt off at most")
             check(view.ringCountForTesting == 4, "the pages turn on the rings")
             view.go(to: 0, animated: false)
             let middle = view.viewPoint(CGPoint(x: BookLayout.pageSize.width / 2, y: BookLayout.pageSize.height / 2), onLeft: false)

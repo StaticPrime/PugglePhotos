@@ -117,14 +117,26 @@ final class BookView: NSView, NSTextViewDelegate {
     private let bookShadow = CALayer()
     private let leftPage = CALayer()
     private let rightPage = CALayer()
-    /// A ring binder's open boards, the spine between them, the sheets stacked under each open page, and the rings
-    /// over the pages. Hidden for a glued book.
+    /// The open cover's boards around the pages and the sheets stacked under each open page; for a ring binder, the
+    /// spine between the pages and the rings over them.
     private let leftBoard = CALayer()
     private let rightBoard = CALayer()
     private let spinePanel = CALayer()
     private let leftStack = CALayer()
     private let rightStack = CALayer()
     private let rings = CALayer()
+    /// While a page turns on the rings, the rings go through its holes: this copy of them runs on from the holes to
+    /// the pages on the side it leans over, under it, while `rings` runs from the other side's pages to the holes.
+    /// It goes in the turning leaf itself, in depth with the page.
+    private let ringsUnder = CALayer()
+    /// The turning leaf and the rings, seen in perspective among themselves and then laid flat over the pages. The
+    /// book sorts what's in it by depth, and tipped in among the pages lying flat, the rings cut across them and
+    /// muddled which of them went on top (the book's shadow came through where the spine should be).
+    private let hinge = CALayer()
+    /// How far the holes the rings go through are from the middle of the binding.
+    private var ringReach: CGFloat = 0
+    /// The turning page's angle about the binding: 0 lying on the right, -π lying on the left.
+    private var leafAngle: CGFloat = 0
     /// What the binder was last drawn for, so it's drawn again only when that changes.
     private var binderDrawn: String?
     private var stacksDrawn: String?
@@ -199,9 +211,13 @@ final class BookView: NSView, NSTextViewDelegate {
             page.masksToBounds = true
             book.addSublayer(page)
         }
+        // A turning page goes under the rings, and over the copy of them that goes in it.
+        hinge.sublayerTransform = perspective
+        book.addSublayer(hinge)
         rings.isHidden = true
         rings.contentsGravity = .resize
-        book.addSublayer(rings)
+        hinge.addSublayer(rings)
+        ringsUnder.contentsGravity = .resize
         leftPage.cornerRadius = 4
         leftPage.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
         rightPage.cornerRadius = 4
@@ -265,10 +281,9 @@ final class BookView: NSView, NSTextViewDelegate {
     private var binding: BookBinding { delegate?.layout.settings.binding ?? .glued }
 
     /// The size of one page on screen: two pages side by side, and a binder's spine between them, fit the room, with
-    /// space left around a binder's boards.
+    /// space left around the cover's boards.
     var pageSize: CGSize {
-        let boards: CGFloat = binding.hasRings ? 18 : 0
-        let room = bounds.insetBy(dx: 44 + boards, dy: 34 + boards)
+        let room = bounds.insetBy(dx: 62, dy: 52)
         let height = max(80, min(room.height, room.width / (2 + binding.spineShare) * BookLayout.pageSize.height / BookLayout.pageSize.width))
         return CGSize(width: height * BookLayout.pageSize.width / BookLayout.pageSize.height, height: height)
     }
@@ -333,6 +348,8 @@ final class BookView: NSView, NSTextViewDelegate {
         // opening) everything was drawn off to one side of where it's clicked.
         book.bounds = CGRect(origin: .zero, size: bounds.size)
         book.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        hinge.bounds = book.bounds
+        hinge.position = CGPoint(x: book.bounds.midX, y: book.bounds.midY)
         CATransaction.commit()
         reload()
     }
@@ -368,12 +385,22 @@ final class BookView: NSView, NSTextViewDelegate {
     /// The sizes the stacked sheets were last drawn at, left and right.
     private var stackSizes = (left: CGSize.zero, right: CGSize.zero)
 
-    /// A ring binder's boards, spine, rings and stacked sheets around the pages showing, shown while it lies open.
-    /// They're drawn again only when the book's look or size changes, and the stacks when the place in it does.
+    /// The open cover's boards around the pages, a little bigger than them, and the sheets stacked under each open
+    /// page; for a ring binder, the spine between the pages and the rings over them. Shown while the book lies open,
+    /// and drawn again only when its look or size changes (the stacks, when the place in it does).
     private func layoutBinder(_ pages: (left: Int?, right: Int?)) {
-        let open = binding.hasRings && pages.left != nil && pages.right != nil
-        for part in [leftBoard, rightBoard, spinePanel, leftStack, rightStack, rings] { part.isHidden = !open }
-        guard binding.hasRings, let layout = delegate?.layout else { return }
+        let open = pages.left != nil && pages.right != nil
+        for part in [leftBoard, rightBoard, leftStack, rightStack] { part.isHidden = !open }
+        for part in [spinePanel, rings] { part.isHidden = !(open && binding.hasRings) }
+        // The rings lie flat again, all over the pages, once no page is turning on them.
+        if leaf == nil {
+            for part in [rings, ringsUnder] {
+                part.removeAnimation(forKey: "turn")
+                part.transform = CATransform3DIdentity
+            }
+            ringsUnder.removeFromSuperlayer()
+        }
+        guard let layout = delegate?.layout else { return }
         let settings = layout.settings
         let left = pageRect(left: true), right = pageRect(left: false)
         let margin = left.width * 0.028, gap = spineGap
@@ -383,18 +410,30 @@ final class BookView: NSView, NSTextViewDelegate {
         leftBoard.frame = CGRect(x: left.minX - margin, y: left.minY - margin, width: left.width + margin, height: left.height + margin * 2)
         rightBoard.frame = CGRect(x: right.minX, y: right.minY - margin, width: right.width + margin, height: right.height + margin * 2)
         spinePanel.frame = CGRect(x: left.maxX, y: left.minY - margin, width: gap, height: left.height + margin * 2)
-        rings.frame = CGRect(x: left.maxX - reach - thickness * 2, y: left.minY - thickness * 2,
+        // Their middle is the middle of the binding, which the pages turn about. (Placed by bounds and position, as
+        // they're tipped in depth while a page turns.)
+        let ringBox = CGRect(x: left.maxX - reach - thickness * 2, y: left.minY - thickness * 2,
                              width: gap + (reach + thickness * 2) * 2, height: left.height + thickness * 4)
+        rings.bounds = CGRect(origin: .zero, size: ringBox.size)
+        rings.position = CGPoint(x: ringBox.midX, y: ringBox.midY)
+        ringsUnder.bounds = rings.bounds
+        ringReach = gap / 2 + reach
         let look = "\(settings.binding)-\(settings.rings)-\(settings.cover)-\(left.size)-\(scale)"
         if binderDrawn != look {
             binderDrawn = look
-            let heights = settings.binding.ringPositions.map { $0 * left.height }
-            leftBoard.contents = BinderArt.board(size: leftBoard.bounds.size, cover: settings.cover, spineOnRight: true, scale: scale)
-            rightBoard.contents = BinderArt.board(size: rightBoard.bounds.size, cover: settings.cover, spineOnRight: false, scale: scale)
-            spinePanel.contents = BinderArt.spine(size: spinePanel.bounds.size, cover: settings.cover, finish: settings.rings,
-                                                  rings: heights.map { $0 + margin }, scale: scale)
-            rings.contents = BinderArt.rings(size: rings.bounds.size, finish: settings.rings, rings: heights.map { $0 + thickness * 2 },
-                                             from: thickness * 2, to: rings.bounds.width - thickness * 2, thickness: thickness, scale: scale)
+            let folds = !settings.binding.hasRings
+            leftBoard.contents = BinderArt.board(size: leftBoard.bounds.size, cover: settings.cover, spineOnRight: true, folds: folds, scale: scale)
+            rightBoard.contents = BinderArt.board(size: rightBoard.bounds.size, cover: settings.cover, spineOnRight: false, folds: folds, scale: scale)
+            if settings.binding.hasRings {
+                let heights = settings.binding.ringPositions.map { $0 * left.height }
+                spinePanel.contents = BinderArt.spine(size: spinePanel.bounds.size, cover: settings.cover, finish: settings.rings,
+                                                      rings: heights.map { $0 + margin }, scale: scale)
+                rings.contents = BinderArt.rings(size: rings.bounds.size, finish: settings.rings, rings: heights.map { $0 + thickness * 2 },
+                                                 from: thickness * 2, to: rings.bounds.width - thickness * 2, thickness: thickness, scale: scale)
+            } else {
+                spinePanel.contents = nil
+                rings.contents = nil
+            }
         }
         // The sheets already turned lie under the left page; those still to come, under the right.
         if let leftIndex = pages.left, let rightIndex = pages.right {
@@ -413,9 +452,165 @@ final class BookView: NSView, NSTextViewDelegate {
         rightStack.frame = CGRect(x: right.maxX, y: right.minY, width: stackSizes.right.width, height: stackSizes.right.height)
     }
 
+    /// The rings while a page turns on them, at `angle` about the binding (0 lying on the right, -π on the left).
+    ///
+    /// Each ring goes round the middle of the binding, through the holes of the pages lying on either side and of
+    /// the page turning, which has carried its holes up round the rings with it: at a lift of θ, to (R cos θ, R sin θ)
+    /// across and up from the middle, R being how far the holes are from it. So one copy of the rings runs from the
+    /// left page's holes up to the turning page's, the straight way, 2R cos(θ/2) long and tipped up θ/2, and
+    /// another runs on down to the right page's, 2R sin(θ/2) long and tipped π/2 - θ/2; squeezed to those lengths
+    /// about the holes they stay in, and tipped up about them, the book's perspective draws each where its ends
+    /// meet the holes. The copy on the side the page leans away from lies over it; the other, under it.
+    private func ringPlacement(at angle: CGFloat, leaningRight: Bool) -> (over: CATransform3D, under: CATransform3D) {
+        let lift = min(.pi, max(0, -angle))
+        func laid(from hole: CGFloat, squeeze: CGFloat, tip: CGFloat) -> CATransform3D {
+            var laid = CATransform3DMakeTranslation(-hole, 0, 0)
+            laid = CATransform3DConcat(laid, CATransform3DMakeScale(max(0.002, squeeze), 1, 1))
+            laid = CATransform3DConcat(laid, CATransform3DMakeRotation(tip, 0, 1, 0))
+            return CATransform3DConcat(laid, CATransform3DMakeTranslation(hole, 0, 0))
+        }
+        let fromLeft = laid(from: -ringReach, squeeze: cos(lift / 2), tip: -lift / 2)
+        let toRight = laid(from: ringReach, squeeze: sin(lift / 2), tip: .pi / 2 - lift / 2)
+        return leaningRight ? (fromLeft, toRight) : (toRight, fromLeft)
+    }
+
+    /// Whether a page is turning on the rings, with the rings going through it.
+    private var ringsTurning: Bool { leaf != nil && ringsUnder.superlayer === leaf }
+
+    /// The rings under the turning page, laid as `under` but inside the leaf, so turned back by the leaf's own angle.
+    private func inLeaf(_ under: CATransform3D, at angle: CGFloat) -> CATransform3D {
+        CATransform3DConcat(under, CATransform3DMakeRotation(-angle, 0, 1, 0))
+    }
+
+    /// Lays the rings through the turning page's holes, the page at `angle`.
+    private func placeRings(at angle: CGFloat) {
+        guard ringsTurning else { return }
+        let placement = ringPlacement(at: angle, leaningRight: angle >= -.pi / 2)
+        rings.transform = placement.over
+        ringsUnder.transform = inLeaf(placement.under, at: angle)
+    }
+
+    /// Keeps the rings through the turning page's holes while it turns from `start` to `end`, with the same timing,
+    /// laid as they should be at points along the way.
+    private func animateRings(from start: CGFloat, to end: CGFloat, duration: CFTimeInterval, timing: CAMediaTimingFunction?) {
+        guard ringsTurning, start != end else { return }
+        var times: [NSNumber] = [], over: [NSValue] = [], under: [NSValue] = []
+        func add(_ share: CGFloat, leaningRight: Bool) {
+            let angle = start + (end - start) * share
+            let placement = ringPlacement(at: angle, leaningRight: leaningRight)
+            times.append(NSNumber(value: Double(share)))
+            over.append(NSValue(caTransform3D: placement.over))
+            under.append(NSValue(caTransform3D: inLeaf(placement.under, at: angle)))
+        }
+        let steps = 36
+        var leaned: Bool?
+        for step in 0...steps {
+            let share = CGFloat(step) / CGFloat(steps)
+            let angle = start + (end - start) * share
+            let right = angle == -.pi / 2 ? end > -.pi / 2 : angle > -.pi / 2
+            // Where it stands upright, the rings over and under it trade places all at once.
+            if let leaned, leaned != right {
+                let upright = (-.pi / 2 - start) / (end - start)
+                add(upright, leaningRight: leaned)
+                add(upright, leaningRight: right)
+            }
+            add(share, leaningRight: right)
+            leaned = right
+        }
+        for (part, values) in [(rings, over), (ringsUnder, under)] {
+            let follow = CAKeyframeAnimation(keyPath: "transform")
+            follow.values = values
+            follow.keyTimes = times
+            follow.duration = duration
+            follow.timingFunction = timing
+            if let last = values.last { part.transform = last.caTransform3DValue }
+            part.add(follow, forKey: "turn")
+        }
+    }
+
     #if DEBUG
     /// How many rings show over the open pages, for the self-test.
     var ringCountForTesting: Int { rings.isHidden || rings.contents == nil ? 0 : binding.ringPositions.count }
+
+    /// A point `z` up from a layer that draws what's in it flat, as it's drawn there: through the layer's
+    /// perspective, about its middle.
+    private func flattenedForTesting(_ p: (x: CGFloat, y: CGFloat, z: CGFloat), in layer: CALayer) -> CGPoint {
+        let s = layer.sublayerTransform
+        let x = p.x - layer.bounds.midX, y = p.y - layer.bounds.midY
+        let w = x * s.m14 + y * s.m24 + p.z * s.m34 + s.m44
+        return CGPoint(x: layer.bounds.midX + (x * s.m11 + y * s.m21 + p.z * s.m31 + s.m41) / w,
+                       y: layer.bounds.midY + (x * s.m12 + y * s.m22 + p.z * s.m32 + s.m42) / w)
+    }
+
+    /// Where a point in the book, `z` up from its pages, shows in the view: through its perspective, and its slide.
+    /// With `presented`, as it shows right now, partway through a turn.
+    private func seenForTesting(_ p: (x: CGFloat, y: CGFloat, z: CGFloat), presented: Bool) -> CGPoint {
+        let book = presented ? book.presentation() ?? book : book
+        let flat = flattenedForTesting(p, in: book)
+        return CGPoint(x: flat.x - book.bounds.midX + book.position.x + book.transform.m41,
+                       y: flat.y - book.bounds.midY + book.position.y + book.transform.m42)
+    }
+
+    /// Where a point on a layer in the book shows in the view: through its transform about its anchor, and those of
+    /// the layers it's in, up to the book, each but a transform layer drawing what's in it flat.
+    private func shownForTesting(_ point: CGPoint, on part: CALayer, presented: Bool) -> CGPoint {
+        var p = (x: point.x, y: point.y, z: CGFloat(0))
+        var layer = part
+        while layer !== book, let parent = layer.superlayer {
+            let shown = presented ? layer.presentation() ?? layer : layer
+            let x = p.x - shown.bounds.minX - shown.anchorPoint.x * shown.bounds.width
+            let y = p.y - shown.bounds.minY - shown.anchorPoint.y * shown.bounds.height
+            let t = shown.transform
+            let w = x * t.m14 + y * t.m24 + p.z * t.m34 + t.m44
+            p = (x: shown.position.x + (x * t.m11 + y * t.m21 + p.z * t.m31 + t.m41) / w,
+                 y: shown.position.y + (x * t.m12 + y * t.m22 + p.z * t.m32 + t.m42) / w,
+                 z: shown.zPosition + (x * t.m13 + y * t.m23 + p.z * t.m33 + t.m43) / w)
+            layer = parent
+            if parent !== book, !(parent is CATransformLayer) {
+                let flat = flattenedForTesting(p, in: presented ? parent.presentation() ?? parent : parent)
+                p = (x: flat.x, y: flat.y, z: 0)
+            }
+        }
+        return seenForTesting(p, presented: presented)
+    }
+
+    /// While a page turns on rings: how far, at most, the ends of the rings over and under it miss the holes they
+    /// go through (the turning page's, and those of the pages lying either side), and whether the rings over it come
+    /// from the left page's holes. With `presented`, as they show right now, partway through an animated turn.
+    func ringsThroughHolesForTesting(presented: Bool = false) -> (miss: CGFloat, overFromLeft: Bool)? {
+        guard let leaf, ringsTurning, !binding.ringPositions.isEmpty else { return nil }
+        let height = leaf.bounds.height, inset = (rings.bounds.height - height) / 2
+        func apart(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
+        var miss: CGFloat = 0, overFromLeft = true
+        for share in binding.ringPositions {
+            let y = inset + share * height
+            let turning = shownForTesting(CGPoint(x: ringReach, y: share * height), on: leaf, presented: presented)
+            let lying = [-ringReach, ringReach].map {
+                seenForTesting((x: rings.position.x + $0, y: rings.position.y - rings.bounds.height / 2 + y, z: 0), presented: presented)
+            }
+            let over = [-ringReach, ringReach].map { shownForTesting(CGPoint(x: rings.bounds.midX + $0, y: y), on: rings, presented: presented) }
+            let under = [-ringReach, ringReach].map { shownForTesting(CGPoint(x: rings.bounds.midX + $0, y: y), on: ringsUnder, presented: presented) }
+            overFromLeft = apart(over[1], turning) < apart(over[0], turning)
+            let pairs = overFromLeft ? [(over[0], lying[0]), (over[1], turning), (under[0], turning), (under[1], lying[1])]
+                : [(over[0], turning), (over[1], lying[1]), (under[0], lying[0]), (under[1], turning)]
+            miss = max(miss, pairs.map { apart($0.0, $0.1) }.max() ?? 0)
+        }
+        return (miss, overFromLeft)
+    }
+
+    /// How far over the turning page shows right now, 0 lying where it started to 1 turned all the way, from its
+    /// angle as drawn partway through an animated turn; nil when no page is turning.
+    var shownTurnForTesting: CGFloat? {
+        guard let leaf, let shown = leaf.presentation() else { return nil }
+        let over = acos(max(-1, min(1, shown.transform.m11))) / .pi
+        return turningForward ? over : 1 - over
+    }
+
+    /// Whether the open cover shows around the pages, a margin of it past their outer edges.
+    var coverShowsForTesting: Bool {
+        !leftBoard.isHidden && !rightBoard.isHidden && leftBoard.contents != nil
+            && leftBoard.frame.minX < pageRect(left: true).minX - 4 && rightBoard.frame.maxX > pageRect(left: false).maxX + 4
+    }
     #endif
 
     /// Redraws one page in place (after an edit or a photo arriving).
@@ -506,14 +701,18 @@ final class BookView: NSView, NSTextViewDelegate {
         CATransaction.setCompletionBlock { [weak self] in
             MainActor.assumeIsolated { self?.finishTurn(to: target) }
         }
+        // Turned through the angle between, so it always lifts toward the eye and over.
         let rotation = CABasicAnimation(keyPath: "transform")
-        rotation.fromValue = CATransform3DMakeRotation(start, 0, 1, 0)
-        rotation.toValue = CATransform3DMakeRotation(end, 0, 1, 0)
+        rotation.valueFunction = CAValueFunction(name: .rotateY)
+        rotation.fromValue = Double(start)
+        rotation.toValue = Double(end)
         let remaining = duration * Double(1 - progress)
         rotation.duration = max(0.15, remaining)
         rotation.timingFunction = CAMediaTimingFunction(name: progress > 0 ? .easeOut : .easeInEaseOut)
         leaf.transform = CATransform3DMakeRotation(end, 0, 1, 0)
         leaf.add(rotation, forKey: "turn")
+        leafAngle = end
+        animateRings(from: start, to: end, duration: rotation.duration, timing: rotation.timingFunction)
         shade(leaf, duration: rotation.duration)
         // A closed book slides to the middle as it opens, and back as it closes.
         let slide = CABasicAnimation(keyPath: "transform")
@@ -571,9 +770,10 @@ final class BookView: NSView, NSTextViewDelegate {
         }
         leaf.addSublayer(front)
         leaf.addSublayer(back)
-        leaf.transform = CATransform3DMakeRotation(forward ? 0 : -.pi, 0, 1, 0)
-        // Under a binder's rings, which the pages turn about.
-        book.insertSublayer(leaf, below: rings)
+        leafAngle = forward ? 0 : -.pi
+        leaf.transform = CATransform3DMakeRotation(leafAngle, 0, 1, 0)
+        // Between a binder's rings under it and over it, as it turns on them.
+        hinge.insertSublayer(leaf, below: rings)
         self.leaf = leaf
         // Under the leaf: going forward, the next spread's right page; going back, the earlier one's left page.
         if forward {
@@ -583,14 +783,21 @@ final class BookView: NSView, NSTextViewDelegate {
             leftPage.contents = under.left.flatMap(delegate.pageImage)
             leftPage.isHidden = under.left == nil
         }
-        // A binder opening or closing: the turning leaf is a board itself, so only the board staying under the pages
+        // The book opening or closing: the turning leaf is a cover itself, so only the board staying under the pages
         // shows (the back one under the right page at the front of the book, the front one at the back) until it lands.
         let from = layout.state(state)
-        if binding.hasRings, [from.left, from.right, under.left, under.right].contains(where: { $0 == nil }) {
+        if [from.left, from.right, under.left, under.right].contains(where: { $0 == nil }) {
             let atFront = target == 0 || state == 0
             for part in [leftBoard, spinePanel, leftStack, rightStack, rings, rightBoard] { part.isHidden = true }
             (atFront ? rightBoard : leftBoard).isHidden = false
             bookShadow.frame = (atFront ? rightBoard : leftBoard).frame
+        } else if !rings.isHidden {
+            // Turning on a binder's rings, which go on through its holes: the copy under it in the leaf, its middle
+            // on the leaf's hinge, which is the rings' middle too.
+            ringsUnder.contents = rings.contents
+            ringsUnder.position = CGPoint(x: 0, y: leaf.bounds.height / 2)
+            leaf.insertSublayer(ringsUnder, at: 0)
+            placeRings(at: leafAngle)
         }
         CATransaction.commit()
     }
@@ -642,14 +849,17 @@ final class BookView: NSView, NSTextViewDelegate {
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let angle = forward ? -CGFloat.pi * progress : -CGFloat.pi * (1 - progress)
-        leaf?.transform = CATransform3DMakeRotation(angle, 0, 1, 0)
+        leafAngle = forward ? -CGFloat.pi * progress : -CGFloat.pi * (1 - progress)
+        leaf?.transform = CATransform3DMakeRotation(leafAngle, 0, 1, 0)
+        placeRings(at: leafAngle)
         CATransaction.commit()
     }
 
     #if DEBUG
     /// Holds a page partway through turning, for screenshots.
     func holdTurn(at progress: CGFloat) { dragTurn(forward: true, progress: progress) }
+    /// Lets go of a page held partway through turning, as a drag let go there.
+    func letGoOfTurn(at progress: CGFloat) { endDragTurn(forward: true, progress: progress) }
     #endif
 
     /// A drag let go: finish the turn past a third of the way, otherwise lay the page back.
@@ -672,11 +882,14 @@ final class BookView: NSView, NSTextViewDelegate {
             }
             let flat: CGFloat = forward ? 0 : -.pi
             let rotation = CABasicAnimation(keyPath: "transform")
-            rotation.fromValue = leaf.presentation()?.transform ?? leaf.transform
-            rotation.toValue = CATransform3DMakeRotation(flat, 0, 1, 0)
+            rotation.valueFunction = CAValueFunction(name: .rotateY)
+            rotation.fromValue = Double(leafAngle)
+            rotation.toValue = Double(flat)
             rotation.duration = 0.25
             leaf.transform = CATransform3DMakeRotation(flat, 0, 1, 0)
             leaf.add(rotation, forKey: "settle")
+            animateRings(from: leafAngle, to: flat, duration: rotation.duration, timing: nil)
+            leafAngle = flat
             CATransaction.commit()
         }
     }

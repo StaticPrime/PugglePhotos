@@ -31,8 +31,9 @@ enum BinderArt {
     // MARK: The boards
 
     /// One open board: the cover's cloth over padding that rounds off at the edges, its outer corners rounded. The
-    /// side along the spine is straight, where the board meets the spine at its hinge.
-    static func board(size: CGSize, cover: BookCover, spineOnRight: Bool, scale: CGFloat) -> CGImage? {
+    /// side along the spine is straight, where the board meets the spine at its hinge; a glued book's cover folds
+    /// there, into the shade under the pages.
+    static func board(size: CGSize, cover: BookCover, spineOnRight: Bool, folds: Bool, scale: CGFloat) -> CGImage? {
         picture(size, scale: scale) { context in
             let bounds = CGRect(origin: .zero, size: size)
             let radius = min(size.width, size.height) * 0.02
@@ -49,6 +50,10 @@ enum BinderArt {
             }
             if let light = gradient([NSColor.white.withAlphaComponent(0.18).cgColor, NSColor.white.withAlphaComponent(0).cgColor], [0, 1]) {
                 context.drawLinearGradient(light, start: CGPoint(x: 0, y: bounds.minY), end: CGPoint(x: 0, y: bounds.minY + band), options: [])
+            }
+            if folds, let fold = gradient([NSColor.black.withAlphaComponent(0.38).cgColor, NSColor.black.withAlphaComponent(0).cgColor], [0, 1]) {
+                let spineX = spineOnRight ? bounds.maxX : bounds.minX
+                context.drawLinearGradient(fold, start: CGPoint(x: spineX, y: 0), end: CGPoint(x: spineX + (spineOnRight ? -band * 1.6 : band * 1.6), y: 0), options: [])
             }
         }
     }
