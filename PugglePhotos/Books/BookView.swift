@@ -795,6 +795,16 @@ final class BookView: NSView, NSTextViewDelegate {
         CATransaction.commit()
     }
 
+    /// Takes the turned leaf away, there and then: left to Core Animation, it faded out over the pages laid where it
+    /// landed, a picture of it lingering for as long as seconds while the app was busy.
+    private func removeLeaf() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        leaf?.removeFromSuperlayer()
+        CATransaction.commit()
+        leaf = nil
+    }
+
     /// Crossfades to another place in the book, for Reduce Motion.
     private func fade(to target: Int) {
         select(nil)
@@ -822,8 +832,7 @@ final class BookView: NSView, NSTextViewDelegate {
     }
 
     private func finishTurn(to target: Int) {
-        leaf?.removeFromSuperlayer()
-        leaf = nil
+        removeLeaf()
         isTurning = false
         state = target
         reload()
@@ -867,8 +876,7 @@ final class BookView: NSView, NSTextViewDelegate {
             CATransaction.setCompletionBlock { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.leaf?.removeFromSuperlayer()
-                    self.leaf = nil
+                    self.removeLeaf()
                     self.isTurning = false
                     self.reload()
                 }
