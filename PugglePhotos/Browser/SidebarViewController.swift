@@ -339,7 +339,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     func outlineView(_ outlineView: NSOutlineView, validateDrop info: any NSDraggingInfo, proposedItem item: Any?,
                      proposedChildIndex index: Int) -> NSDragOperation {
         guard let node = item as? SidebarNode else { return [] }
-        if PhotoDrag.ids(from: info.draggingPasteboard).isEmpty {
+        if !PhotoDrag.holdsPhotos(info.draggingPasteboard) {
             // Photos and videos from another app.
             let count = FileDrop.importableCount(info)
             guard count > 0, Self.fileTarget(node) != nil else { return [] }

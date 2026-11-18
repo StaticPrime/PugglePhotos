@@ -11,6 +11,12 @@ enum PhotoDrag {
         (pasteboard.pasteboardItems ?? []).compactMap { $0.string(forType: .photoID) }.map { PhotoID($0) }
     }
 
+    /// Whether a drag carries photos, without reading their IDs: targets ask this every time the pointer moves, and
+    /// a whole library selected and dragged holds tens of thousands of them.
+    static func holdsPhotos(_ pasteboard: NSPasteboard) -> Bool {
+        pasteboard.availableType(from: [.photoID]) != nil
+    }
+
     static func item(_ id: PhotoID) -> NSPasteboardItem {
         let item = NSPasteboardItem()
         item.setString(id.rawValue, forType: .photoID)
@@ -164,7 +170,7 @@ final class SectionHeaderView: NSView, NSCollectionViewElement {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard drop != nil, !PhotoDrag.ids(from: sender.draggingPasteboard).isEmpty else { return [] }
+        guard drop != nil, PhotoDrag.holdsPhotos(sender.draggingPasteboard) else { return [] }
         isTargeted = true
         return .move
     }
@@ -191,6 +197,25 @@ final class SectionHeaderView: NSView, NSCollectionViewElement {
             highlight.layer?.borderColor = Theme.accent.cgColor
         }
         highlight.layer?.borderWidth = isTargeted ? 2 : 0
+    }
+}
+
+/// The line in the gap where photos dragged over the grid will land when dropped between others.
+final class DropGapView: NSView, NSCollectionViewElement {
+    static let identifier = NSUserInterfaceItemIdentifier("DropGap")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 2
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = Theme.accent.cgColor
     }
 }
 

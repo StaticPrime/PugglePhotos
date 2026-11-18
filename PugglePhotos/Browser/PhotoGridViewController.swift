@@ -65,7 +65,8 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
     private var scrollView: NSScrollView!
     private(set) var content = BrowserContent()
     private var isUpdatingSelection = false
-    private var draggedIDs: [PhotoID] = []
+    /// The photos being dragged out of the grid, while they are.
+    private var dragged: Set<PhotoID> = []
 
     var thumbnailSide: CGFloat {
         get { layout.targetSide }
@@ -86,6 +87,8 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
                                 withIdentifier: SectionHeaderView.identifier)
         collectionView.register(AlbumBannerView.self, forSupplementaryViewOfKind: PhotoGridLayout.bannerKind,
                                 withIdentifier: AlbumBannerView.identifier)
+        collectionView.register(DropGapView.self, forSupplementaryViewOfKind: NSCollectionView.elementKindInterItemGapIndicator,
+                                withIdentifier: DropGapView.identifier)
         collectionView.registerForDraggedTypes([.photoID])
         collectionView.setDraggingSourceOperationMask([.move, .copy], forLocal: true)
         collectionView.setDraggingSourceOperationMask([], forLocal: false)
@@ -322,6 +325,11 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
 
     func collectionView(_ collectionView: NSCollectionView, viewForSupplementaryElementOfKind kind: NSCollectionView.SupplementaryElementKind,
                         at indexPath: IndexPath) -> NSView {
+        // Asked for while photos are dragged over a grid that takes drops between photos. Anything that can't be
+        // made here ends the drag, wherever it was headed.
+        if kind == NSCollectionView.elementKindInterItemGapIndicator {
+            return collectionView.makeSupplementaryView(ofKind: kind, withIdentifier: DropGapView.identifier, for: indexPath)
+        }
         if kind == PhotoGridLayout.bannerKind {
             let banner = collectionView.makeSupplementaryView(ofKind: kind, withIdentifier: AlbumBannerView.identifier, for: indexPath) as! AlbumBannerView
             if let album = content.album {
@@ -375,19 +383,30 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
 
     func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint,
                         forItemsAt indexPaths: Set<IndexPath>) {
-        draggedIDs = indexPaths.sorted().compactMap(content.id(at:))
+        dragged = Set(indexPaths.compactMap(content.id(at:)))
         (collectionView as? PhotoCollectionView)?.pendingClick = nil
     }
 
     func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint,
                         dragOperation operation: NSDragOperation) {
-        draggedIDs = []
+        dragged = []
     }
+
+    #if DEBUG
+    /// Stands in for a drag of these photos starting in the grid (a real one follows the real mouse).
+    func pretendDragging(_ ids: [PhotoID]) { dragged = Set(ids) }
+    #endif
 
     func collectionView(_ collectionView: NSCollectionView, validateDrop draggingInfo: any NSDraggingInfo,
                         proposedIndexPath proposedDropIndexPath: AutoreleasingUnsafeMutablePointer<NSIndexPath>,
                         dropOperation proposedDropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>) -> NSDragOperation {
-        guard content.dropsBetween, !PhotoDrag.ids(from: draggingInfo.draggingPasteboard).isEmpty else { return [] }
+        guard content.dropsBetween, PhotoDrag.holdsPhotos(draggingInfo.draggingPasteboard) else { return [] }
+        // Dropped photos land beside one that stays put. With every photo of a section picked up (Select All picks
+        // up all of them), there's nothing there to land beside, so the drag passes over on its way to the sidebar.
+        let section = (proposedDropIndexPath.pointee as IndexPath).section
+        if !dragged.isEmpty, content.sections.indices.contains(section), content.sections[section].items.allSatisfy(dragged.contains) {
+            return []
+        }
         proposedDropOperation.pointee = .before
         return .move
     }

@@ -358,6 +358,71 @@ extension SelfTest {
                       "a photo dragged from \(name) onto an album in the sidebar goes into it")
             }
         }
+        // MARK: Dragging photos across the gallery, and everything at once
+        // The drags above were dropped straight on the sidebar. A real one starts over the gallery, which in date order
+        // shows where photos would land between others; making that marker once ended every drag from there.
+        var everything: [PhotoID] = []
+        var favoritesBefore: Set<PhotoID> = []
+        var favorites: Set<PhotoID> { Set(library.snapshot.items.filter(\.isFavorite).map(\.id)) }
+        step {
+            window.go(to: .library)
+            window.setViewMode(.gallery)
+            let grid = window.grid, view = grid.collectionView!
+            guard let section = window.content.sections.firstIndex(where: { $0.items.count >= 3 }), let favoriteRow = node(.favorites) else {
+                check(false, "the library has a day of three photos, and Favorites")
+                return
+            }
+            grid.scroll(toSection: section)
+            view.layoutSubtreeIfNeeded()
+            let second = grid.layout.frameForItem(at: IndexPath(item: 1, section: section))
+            let gap = view.convert(NSPoint(x: second.minX - grid.layout.spacing / 2, y: second.midY), to: nil)
+            let one = TestDrag.photos([window.content.sections[section].items[2]], at: gap, in: nsWindow)
+            let offered = view.draggingEntered(one)
+            view.layoutSubtreeIfNeeded()
+            let marker = view.subviews.first { $0 is DropGapView && !$0.isHidden }
+            check(offered == .move && marker.map { abs($0.frame.midX - (second.minX - grid.layout.spacing / 2)) < 3 } == true,
+                  "a photo dragged over the gallery is shown where it would land", "\(offered.rawValue), \(String(describing: marker?.frame))")
+            view.draggingExited(one)
+
+            // Select All, then drag the lot.
+            view.selectAll(nil)
+            everything = grid.selectedIDs
+            check(!everything.isEmpty && everything.count == Set(window.content.allIDs).count, "Select All picks every photo in the gallery",
+                  "\(everything.count)")
+            grid.pretendDragging(everything)
+            let writers = view.selectionIndexPaths.sorted().compactMap { grid.collectionView(view, pasteboardWriterForItemAt: $0) as? NSPasteboardItem }
+            let all = TestDrag(writing: writers, at: gap, in: nsWindow)
+            check(view.draggingEntered(all) == [], "every photo dragged at once passes over the gallery, with nothing left to land between")
+            view.draggingExited(all)
+            let header = view.supplementaryView(forElementKind: PhotoGridLayout.headerKind, at: IndexPath(item: 0, section: section)) as? SectionHeaderView
+            check(header?.draggingEntered(all) == .move, "and can go to a day's heading")
+            header?.draggingExited(all)
+            let calendar = window.sidebar.calendar!
+            let day = CivilDay(year: 2019, month: 7, day: 4)
+            calendar.show(day)
+            if let rect = calendar.rect(for: day) {
+                let onDay = TestDrag.photos(everything, at: calendar.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil), in: nsWindow)
+                check(calendar.draggingUpdated(onDay) == .move, "or a day on the calendar")
+                calendar.draggingExited(onDay)
+            } else {
+                check(false, "the calendar shows July 2019")
+            }
+            favoritesBefore = favorites
+            let taken = window.sidebar.outlineView(outline, validateDrop: all, proposedItem: favoriteRow, proposedChildIndex: -1) == .copy
+                && window.sidebar.outlineView(outline, acceptDrop: all, item: favoriteRow, childIndex: -1)
+            grid.pretendDragging([])
+            check(taken, "or Favorites")
+            wait { everything.allSatisfy { library.snapshot.item($0)?.isFavorite == true } }
+        }
+        step {
+            check(everything.allSatisfy { library.snapshot.item($0)?.isFavorite == true }, "which makes every one a favorite")
+            library.undoManager.undo()
+            wait { favorites == favoritesBefore }
+        }
+        step {
+            check(favorites == favoritesBefore, "and Undo puts the favorites back as they were")
+        }
+
         step {
             window.go(to: .library)
             TestDrag.releasePasteboards()

@@ -118,7 +118,7 @@ final class AlbumsViewController: NSViewController, NSCollectionViewDataSource, 
                         dropOperation proposedDropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>) -> NSDragOperation {
         let indexPath = proposedDropIndexPath.pointee as IndexPath
         guard proposedDropOperation.pointee == .on, indexPath.item < summaries.count,
-              !PhotoDrag.ids(from: draggingInfo.draggingPasteboard).isEmpty else { return [] }
+              PhotoDrag.holdsPhotos(draggingInfo.draggingPasteboard) else { return [] }
         return .copy
     }
 

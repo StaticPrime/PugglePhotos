@@ -304,7 +304,7 @@ final class MiniCalendarView: NSView {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard !PhotoDrag.ids(from: sender.draggingPasteboard).isEmpty else { return [] }
+        guard PhotoDrag.holdsPhotos(sender.draggingPasteboard) else { return [] }
         let point = convert(sender.draggingLocation, from: nil)
         let direction = previousRect.insetBy(dx: -4, dy: -4).contains(point) ? -1 : (nextRect.insetBy(dx: -4, dy: -4).contains(point) ? 1 : 0)
         if direction != springDirection {

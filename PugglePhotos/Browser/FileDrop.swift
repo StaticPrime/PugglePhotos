@@ -42,7 +42,7 @@ enum FileDrop {
     /// How many of the things dragged are photos or videos, or folders with some in them. Photos dragged inside
     /// PugglePhotos don't count: they're already in the library.
     static func importableCount(_ pasteboard: NSPasteboard) -> Int {
-        guard PhotoDrag.ids(from: pasteboard).isEmpty else { return 0 }
+        guard !PhotoDrag.holdsPhotos(pasteboard) else { return 0 }
         return dragged(pasteboard).filter { thing in
             switch thing {
             case let .file(url): FileImport.isFolder(url) ? FileImport.folderHasMedia(url) : FileImport.kind(of: url) != nil
