@@ -48,6 +48,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
             item.isNavigational = true
             item.target = self
             item.action = #selector(back(_:))
+            item.autovalidates = false
             backItem = item
             return item
         case Self.mode:
@@ -59,6 +60,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
                                            action: #selector(modeChanged(_:)))
             group.label = "View"
             group.toolTip = "Show as a gallery (⌘1), a list (⌘2) or, for an album, a photo book (⌘3)"
+            group.autovalidates = false
             modeGroup = group
             return group
         case Self.zoom:
@@ -89,6 +91,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
             item.toolTip = "Favorite (.)"
             item.target = self
             item.action = #selector(favorite(_:))
+            item.autovalidates = false
             favoriteItem = item
             return item
         case Self.search:
@@ -107,7 +110,8 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
         }
     }
 
-    /// Brings every control up to date with the window.
+    /// Brings every control up to date with the window. Back, the view switch and the heart are turned on and off
+    /// only here: left to check themselves, the toolbar turns on anything with an action, Book even outside an album.
     func update() {
         let state = owner.state
         // Memories and the Journal are pages of their own: no way of showing photos is chosen there.

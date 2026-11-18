@@ -26,6 +26,37 @@ extension SelfTest {
         var settings: BookSettings { library.catalog.book(albumID!) }
         var windowFrame: NSRect?
 
+        // A little after the window updates, the toolbar checks the items that check themselves, which once turned on
+        // every button with an action.
+        func toolbarItem(_ identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
+            window.window?.toolbar?.items.first { $0.itemIdentifier == identifier }
+        }
+        var bookButton: NSToolbarItem? { (toolbarItem(ToolbarController.mode) as? NSToolbarItemGroup)?.subitems.last }
+        var heart: NSToolbarItem? { toolbarItem(ToolbarController.favorite) }
+        step {
+            window.go(to: .library)
+            window.setViewMode(.gallery)
+            window.grid.select([])
+            window.window?.update()
+            wait(upTo: 1) { bookButton?.isEnabled != false || heart?.isEnabled != false }
+        }
+        step {
+            check(bookButton?.label == "Book" && bookButton?.isEnabled == false, "the toolbar's Book button is off outside an album")
+            check(heart?.isEnabled == false, "and the heart, with nothing chosen")
+            if let first = window.content.allIDs.first { window.grid.select([first]) }
+            check(heart?.isEnabled == true, "which comes on for a chosen photo")
+            if let album = library.catalog.albums.first {
+                window.go(to: .album(album.id))
+                check(bookButton?.isEnabled == true, "Book is on in an album")
+            }
+            window.go(to: .allAlbums)
+            window.window?.update()
+            wait(upTo: 1) { bookButton?.isEnabled != false }
+        }
+        step {
+            check(bookButton?.isEnabled == false, "and off again among the album covers")
+        }
+
         step {
             guard let album = library.catalog.albums.first(where: { $0.title == "Beach Trips" }) else {
                 check(false, "the Beach Trips album is there")
