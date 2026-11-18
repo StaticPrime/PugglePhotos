@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         library = makeLibrary()
         let notifications = makeNotificationCenter()
-        memories = MemoriesController(library: library, notifications: notifications, defaults: Self.memoryDefaults)
+        memories = MemoriesController(library: library, notifications: notifications, defaults: Self.memoryDefaults, clock: Self.memoryClock)
         notifications.onOpen = { [weak self] id in self?.openMemory(id) }
         loginItem = makeLoginItem()
         settings = SettingsModel(loginItem: loginItem)
@@ -91,6 +91,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if DebugLaunchOptions.usesSampleLibrary { return DebugLaunchOptions.sampleDefaults }
         #endif
         return .standard
+    }
+
+    private static var memoryClock: () -> Date {
+        #if DEBUG
+        if DebugLaunchOptions.usesSampleLibrary { return DebugLaunchOptions.sampleClock }
+        #endif
+        return Date.init
     }
 
     /// Application Support/PugglePhotos in the app's container.

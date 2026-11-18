@@ -43,7 +43,8 @@ extension SelfTest {
             check(shown?.title == "Memories from This Day" && shown?.body.contains("Click to watch them as a slideshow") == true,
                   "today's memories are announced once their time has come", shown?.body ?? "none")
             check(notifications.authorizations >= 1, "PugglePhotos asks before showing notifications")
-            check(notifications.scheduled.allSatisfy { $0.date > Date() && $0.day != memories.today }, "only days still to come are scheduled")
+            let now = DebugLaunchOptions.sampleClock()
+            check(notifications.scheduled.allSatisfy { $0.date > now && $0.day != memories.today }, "only days still to come are scheduled")
             let count = notifications.shown.count
             memories.scheduleNotifications()
             wait(upTo: 1) { notifications.shown.count > count }

@@ -27,6 +27,14 @@ enum DebugLaunchOptions {
         return Date()
     }
 
+    /// The sample library's clock: its today, at the real time of day. Memories and their notifications go by it, so
+    /// they find the days the sample library made up whatever day it runs on.
+    static var sampleClock: () -> Date {
+        let calendar = Calendar.current
+        let shift = calendar.startOfDay(for: sampleToday).timeIntervalSince(calendar.startOfDay(for: Date()))
+        return { Date().addingTimeInterval(shift) }
+    }
+
     static func makeSampleSource() -> SamplePhotoSource {
         let access: LibraryAccess = switch defaults.string(forKey: "PHAccess") {
         case "ask": .notDetermined
