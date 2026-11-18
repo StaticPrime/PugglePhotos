@@ -87,13 +87,15 @@ struct BookScene {
             }
         }
 
-        // The pages, their outer corners rounded.
+        // The pages, their outer corners rounded; a closed cover is its whole board, past the page, rounded as it is.
         for (index, left) in [(pages.left, true), (pages.right, false)] {
             guard let index else { continue }
             let rect = stage.pageRect(left: left)
             context.saveGState()
-            context.addPath(BinderArt.outline(rect, radius: BookStage.pageCornerRadius, straightRight: left))
-            context.clip()
+            if open {
+                context.addPath(BinderArt.outline(rect, radius: BookStage.pageCornerRadius, straightRight: left))
+                context.clip()
+            }
             context.translateBy(x: rect.minX, y: rect.minY)
             context.scaleBy(x: stage.unit, y: stage.unit)
             renderer.draw(layout.pages[index], index: index, isLeft: left, in: context)

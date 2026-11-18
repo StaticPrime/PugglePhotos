@@ -64,22 +64,57 @@ final class BookRenderer {
         return context.makeImage()
     }
 
-    /// Draws a page in page coordinates (600 × 780, from the top left) into a context already set up that way.
+    /// A cover's whole board, in its page's coordinates: the page, and past it at the top, the bottom and the outer edge
+    /// (the front cover's right, the back's left) as far as the open boards reach past the pages.
+    static func board(front: Bool) -> CGRect {
+        let margin = pageSize.width * BookStage.boardShare
+        return CGRect(x: front ? 0 : -margin, y: -margin, width: pageSize.width + margin, height: pageSize.height + margin * 2)
+    }
+
+    /// A cover as a picture of its whole board, `pixelWidth` pixels for its page's width: what shows of a closed book,
+    /// and the outside of a cover as it opens and closes.
+    func renderCover(_ page: BookPage, index: Int, pixelWidth: CGFloat) -> CGImage? {
+        let board = Self.board(front: page.kind == .cover)
+        let scale = pixelWidth / Self.pageSize.width
+        let width = Int((board.width * scale).rounded()), height = Int((board.height * scale).rounded())
+        guard width > 0, height > 0,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        // The page's coordinates, from its top left, with the board around it.
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: CGFloat(width) / board.width, y: -CGFloat(height) / board.height)
+        context.translateBy(x: -board.minX, y: -board.minY)
+        draw(page, index: index, isLeft: page.kind == .back, in: context)
+        return context.makeImage()
+    }
+
+    /// Draws a page in page coordinates (600 × 780, from the top left) into a context already set up that way. A cover
+    /// is drawn as its whole board, reaching past the page.
     func draw(_ page: BookPage, index: Int, isLeft: Bool, in context: CGContext) {
         let previous = NSGraphicsContext.current
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
         defer { NSGraphicsContext.current = previous }
         let bounds = CGRect(origin: .zero, size: Self.pageSize)
         switch page.kind {
-        case .cover:
-            drawCloth(in: context, bounds: bounds)
-            drawSpine(in: context, bounds: bounds, onLeft: true)
-            drawCoverFront(in: context, bounds: bounds)
-        case .back:
-            drawCloth(in: context, bounds: bounds)
-            drawSpine(in: context, bounds: bounds, onLeft: false)
-            drawPaw(in: context, center: CGPoint(x: bounds.midX, y: bounds.maxY - 110), size: 46,
-                    color: NSColor.black.withAlphaComponent(0.16).cgColor)
+        case .cover, .back:
+            // The cloth over the whole board, its outer corners rounded as the open boards' are, the spine along its
+            // side; what's on the front is placed on the page within.
+            let front = page.kind == .cover
+            let board = Self.board(front: front)
+            context.saveGState()
+            context.addPath(BinderArt.outline(board, radius: BinderArt.boardRadius(board.size), straightRight: !front))
+            context.clip()
+            drawCloth(in: context, bounds: board)
+            drawSpine(in: context, bounds: board, onLeft: front)
+            if front {
+                drawCoverFront(in: context, bounds: bounds)
+            } else {
+                drawPaw(in: context, center: CGPoint(x: bounds.midX, y: bounds.maxY - 110), size: 46,
+                        color: NSColor.black.withAlphaComponent(0.16).cgColor)
+            }
+            context.restoreGState()
         case .insideCover:
             drawEndpaper(in: context, bounds: bounds)
         case .title:

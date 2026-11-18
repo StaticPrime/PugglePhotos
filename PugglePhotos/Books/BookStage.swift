@@ -40,18 +40,22 @@ struct BookStage {
         return CGRect(x: left ? spine.x - half - page.width : spine.x + half, y: spine.y - page.height / 2, width: page.width, height: page.height)
     }
 
-    /// How far the book slides sideways so a closed cover sits in the middle: the front cover is a right page, the back
-    /// cover a left one.
+    /// How far the book slides sideways so a closed cover sits in the middle: the front cover lies where the right
+    /// board does, the back cover where the left one does.
     func offset(state: Int, stateCount: Int) -> CGFloat {
-        if state == 0 { return -(pageSize.width + spineGap) / 2 }
-        if state == stateCount - 1 { return (pageSize.width + spineGap) / 2 }
+        let closed = (rightBoard.width + spineGap) / 2
+        if state == 0 { return -closed }
+        if state == stateCount - 1 { return closed }
         return 0
     }
 
     // MARK: The open cover
 
-    /// How far the boards reach past the pages.
-    var boardMargin: CGFloat { pageSize.width * 0.028 }
+    /// How far the boards reach past the pages, as a share of a page's width.
+    static let boardShare: CGFloat = 0.028
+
+    /// How far the boards reach past the pages: at the top, the bottom and the outer edge.
+    var boardMargin: CGFloat { pageSize.width * Self.boardShare }
 
     var leftBoard: CGRect {
         let page = pageRect(left: true), margin = boardMargin
@@ -99,10 +103,10 @@ struct BookStage {
 
     // MARK: The book's shadow
 
-    /// What casts the book's shadow: the open boards, or the closed cover (a right page in front, a left page at the
-    /// back), with the same corners.
+    /// What casts the book's shadow: the open boards, or the closed cover, a whole board itself (the right one in front,
+    /// the left at the back), with the same corners.
     func shadow(open: Bool, closedOnLeft: Bool) -> (rect: CGRect, radius: CGFloat) {
-        open ? (leftBoard.union(rightBoard), boardRadius) : (pageRect(left: closedOnLeft), Self.pageCornerRadius)
+        (open ? leftBoard.union(rightBoard) : (closedOnLeft ? leftBoard : rightBoard), boardRadius)
     }
 
     static let shadowOpacity: Float = 0.45

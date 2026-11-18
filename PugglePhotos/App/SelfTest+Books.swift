@@ -447,11 +447,13 @@ extension SelfTest {
         }
 
         // MARK: Bindings
-        // The color of a page's picture at a point on the page.
+        // The color of a page's picture at a point on the page (a cover's picture is its whole board, the page within).
         func color(ofPage page: Int, at point: CGPoint) -> [CGFloat] {
             guard let image = book.pageImage(page) else { return [] }
-            let x = Int(point.x / BookLayout.pageSize.width * CGFloat(image.width))
-            let y = Int(point.y / BookLayout.pageSize.height * CGFloat(image.height))
+            let kind = book.layout.pages[page].kind
+            let area = kind == .cover || kind == .back ? BookRenderer.board(front: kind == .cover) : CGRect(origin: .zero, size: BookLayout.pageSize)
+            let x = Int((point.x - area.minX) / area.width * CGFloat(image.width))
+            let y = Int((point.y - area.minY) / area.height * CGFloat(image.height))
             var pixel = [UInt8](repeating: 0, count: 4)
             pixel.withUnsafeMutableBytes { bytes in
                 guard let context = CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
@@ -554,12 +556,32 @@ extension SelfTest {
             view.select(nil)
             view.hover(nil)
             view.go(to: 0, animated: false)
-            let middle = view.viewPoint(CGPoint(x: BookLayout.pageSize.width / 2, y: BookLayout.pageSize.height / 2), onLeft: false)
-            check(abs(middle.x - view.bounds.midX) < 0.5 && view.ringCountForTesting == 0, "closed, the binder sits in the middle, its rings out of sight")
+            let closed = view.closedCoverForTesting ?? .zero
+            check(abs(closed.midX - view.bounds.midX) < 0.5 && view.ringCountForTesting == 0, "closed, the binder sits in the middle, its rings out of sight")
+            check(closed.size == view.stage.rightBoard.size && closed.width > view.pageSize.width,
+                  "and its cover is a whole board, reaching past the pages as an open board does", "\(closed.size)")
             wait(upTo: 4) { shown() }
         }
         step {
             looksAsShown("a binder closed on its front cover")
+            // Opening, the cover is the whole board, its border showing all the way over, and inside it the endpaper
+            // with the board's border round it; the spine and rings show from under it as it lifts.
+            view.holdTurn(at: 0.02)
+            let lifting = view.spineShowsForTesting
+            view.holdTurn(at: 0.5)
+            let board = view.stage.rightBoard.size, margin = view.stage.boardMargin
+            let face = view.turningFaceForTesting
+            check(face.map { abs($0.face.width - board.width) < 0.5 && abs($0.face.height - board.height) < 0.5 } == true,
+                  "a cover turns as its whole board, its border showing all the way over", "\(String(describing: face?.face)) for a board \(board)")
+            check(face?.endpaper.map { abs($0.minX - margin) < 0.5 && abs($0.minY - margin) < 0.5 && abs($0.width - view.pageSize.width) < 0.5 } == true,
+                  "and inside it, the endpaper lies on the board, its border round it", "\(String(describing: face?.endpaper))")
+            check(lifting < 0.2 && view.spineShowsForTesting == 1, "a binder's spine and rings show from under its cover as it lifts",
+                  "\(lifting) as it starts, \(view.spineShowsForTesting) halfway")
+            view.letGoOfTurn(at: 0.1)
+            wait(upTo: 2) { !view.isTurning }
+        }
+        step {
+            check(view.state == 0 && view.closedCoverForTesting != nil, "let go early, the cover closes again")
             view.go(to: 2, animated: false)
             wait(upTo: 4) { shown() }
         }

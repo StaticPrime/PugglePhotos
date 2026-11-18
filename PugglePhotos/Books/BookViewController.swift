@@ -207,7 +207,10 @@ final class BookViewController: NSViewController, BookViewDelegate {
         if let cached = pageImages[page] { return cached }
         let pages = layout.state(layout.state(showing: page))
         let isLeft = pages.left == page
-        let image = renderer.render(layout.pages[page], index: page, isLeft: isLeft, pixelWidth: width)
+        // A cover is a picture of its whole board, bigger than a page.
+        let kind = layout.pages[page].kind
+        let image = kind == .cover || kind == .back ? renderer.renderCover(layout.pages[page], index: page, pixelWidth: width)
+            : renderer.render(layout.pages[page], index: page, isLeft: isLeft, pixelWidth: width)
         pageImages[page] = image
         return image
     }

@@ -5,7 +5,7 @@ import PugglePhotosKit
 /// What the book view asks of its controller.
 protocol BookViewDelegate: AnyObject {
     var layout: BookLayout { get }
-    /// A page as a picture, at the view's resolution; nil for none.
+    /// A page as a picture, at the view's resolution; nil for none. A cover's is its whole board, bigger than a page.
     func pageImage(_ page: Int) -> CGImage?
     func bookDidChangeState(_ state: Int)
     func bookSelectionDidChange(_ id: PhotoID?)
@@ -308,6 +308,16 @@ final class BookView: NSView, NSTextViewDelegate {
         return CGPoint(x: rect.minX + point.x * scale + offset(for: state), y: rect.minY + point.y * scale)
     }
 
+    /// Which way the book opens from a point on a closed cover's board (forward at the front, back at the back), if
+    /// the point is on one.
+    private func closedCoverOpens(at point: NSPoint) -> Bool? {
+        guard let layout = delegate?.layout else { return nil }
+        let pages = layout.state(state), shift = offset(for: state)
+        if pages.left == nil, stage.rightBoard.offsetBy(dx: shift, dy: 0).contains(point) { return true }
+        if pages.right == nil, stage.leftBoard.offsetBy(dx: shift, dy: 0).contains(point) { return false }
+        return nil
+    }
+
     /// A point in the view in a page's coordinates, even off the page: for handles dragged past its edge.
     func pageCoordinates(_ point: NSPoint, onPage page: Int) -> CGPoint {
         let rect = pageRect(left: delegate?.layout.state(state).left == page)
@@ -356,8 +366,7 @@ final class BookView: NSView, NSTextViewDelegate {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         book.transform = CATransform3DMakeTranslation(offset(for: state), 0, 0)
-        leftPage.frame = pageRect(left: true)
-        rightPage.frame = pageRect(left: false)
+        placePages(closedFront: pages.left == nil, closedBack: pages.right == nil)
         leftPage.contents = pages.left.flatMap(delegate.pageImage)
         rightPage.contents = pages.right.flatMap(delegate.pageImage)
         leftPage.isHidden = pages.left == nil
@@ -377,6 +386,16 @@ final class BookView: NSView, NSTextViewDelegate {
         }
     }
 
+    /// Lays the page pictures where they show: open pages side by side, and a closed cover over its whole board, which
+    /// reaches past the pages under it as an open board does.
+    private func placePages(closedFront: Bool, closedBack: Bool) {
+        let stage = stage
+        leftPage.frame = closedBack ? stage.leftBoard : stage.pageRect(left: true)
+        rightPage.frame = closedFront ? stage.rightBoard : stage.pageRect(left: false)
+        leftPage.cornerRadius = closedBack ? stage.boardRadius : BookStage.pageCornerRadius
+        rightPage.cornerRadius = closedFront ? stage.boardRadius : BookStage.pageCornerRadius
+    }
+
     /// The sizes the stacked sheets were last drawn at, left and right.
     private var stackSizes = (left: CGSize.zero, right: CGSize.zero)
 
@@ -386,7 +405,11 @@ final class BookView: NSView, NSTextViewDelegate {
     private func layoutBinder(_ pages: (left: Int?, right: Int?)) {
         let open = pages.left != nil && pages.right != nil
         for part in [leftBoard, rightBoard, leftStack, rightStack] { part.isHidden = !open }
-        for part in [spinePanel, rings] { part.isHidden = !(open && binding.hasRings) }
+        for part in [spinePanel, rings] {
+            part.isHidden = !(open && binding.hasRings)
+            part.removeAnimation(forKey: "shows")
+            part.opacity = 1
+        }
         // The rings lie flat again, all over the pages, once no page is turning on them.
         if leaf == nil {
             for part in [rings, ringsUnder] {
@@ -398,7 +421,7 @@ final class BookView: NSView, NSTextViewDelegate {
         guard let layout = delegate?.layout else { return }
         let settings = layout.settings
         let stage = stage
-        let left = stage.pageRect(left: true), right = stage.pageRect(left: false)
+        let left = stage.pageRect(left: true)
         let thickness = stage.ringThickness
         let scale = window?.backingScaleFactor ?? 2
         leftBoard.frame = stage.leftBoard
@@ -427,18 +450,26 @@ final class BookView: NSView, NSTextViewDelegate {
                 rings.contents = nil
             }
         }
-        // The sheets already turned lie under the left page; those still to come, under the right.
-        if pages.left != nil, pages.right != nil {
-            let (before, after) = BookScene.sheets(under: pages, in: layout)
-            let stacks = "\(look)-\(settings.paper)-\(before)-\(after)"
-            if stacksDrawn != stacks {
-                stacksDrawn = stacks
-                let leftArt = BinderArt.stack(sheets: before, height: left.height, paper: settings.paper, onLeft: true, scale: scale)
-                let rightArt = BinderArt.stack(sheets: after, height: right.height, paper: settings.paper, onLeft: false, scale: scale)
-                leftStack.contents = leftArt?.image
-                rightStack.contents = rightArt?.image
-                stackSizes = (leftArt?.size ?? .zero, rightArt?.size ?? .zero)
-            }
+        if open { layoutStacks(pages) }
+    }
+
+    /// The sheets lying under open pages: those already turned under the left page, those still to come under the
+    /// right, drawn again only when their number or look changes.
+    private func layoutStacks(_ pages: (left: Int?, right: Int?)) {
+        guard let layout = delegate?.layout else { return }
+        let settings = layout.settings
+        let stage = stage
+        let left = stage.pageRect(left: true), right = stage.pageRect(left: false)
+        let scale = window?.backingScaleFactor ?? 2
+        let (before, after) = BookScene.sheets(under: pages, in: layout)
+        let stacks = "\(binderDrawn ?? "")-\(settings.paper)-\(before)-\(after)"
+        if stacksDrawn != stacks {
+            stacksDrawn = stacks
+            let leftArt = BinderArt.stack(sheets: before, height: left.height, paper: settings.paper, onLeft: true, scale: scale)
+            let rightArt = BinderArt.stack(sheets: after, height: right.height, paper: settings.paper, onLeft: false, scale: scale)
+            leftStack.contents = leftArt?.image
+            rightStack.contents = rightArt?.image
+            stackSizes = (leftArt?.size ?? .zero, rightArt?.size ?? .zero)
         }
         leftStack.frame = CGRect(x: left.minX - stackSizes.left.width, y: left.minY, width: stackSizes.left.width, height: stackSizes.left.height)
         rightStack.frame = CGRect(x: right.maxX, y: right.minY, width: stackSizes.right.width, height: stackSizes.right.height)
@@ -598,6 +629,24 @@ final class BookView: NSView, NSTextViewDelegate {
         return turningForward ? over : 1 - over
     }
 
+    /// The closed cover as it lies in the view, slid to the middle; nil while the book lies open.
+    var closedCoverForTesting: CGRect? {
+        guard let layout = delegate?.layout, !isTurning else { return nil }
+        let pages = layout.state(state)
+        let shown = pages.left == nil ? rightPage : (pages.right == nil ? leftPage : nil)
+        return shown.map { $0.frame.offsetBy(dx: offset(for: state), dy: 0) }
+    }
+
+    /// While a leaf turns: how big each of its faces is, and where an endpaper lies on a cover's inside.
+    var turningFaceForTesting: (face: CGSize, endpaper: CGRect?)? {
+        guard let leaf, let face = leaf.sublayers?.first else { return nil }
+        let endpaper = leaf.sublayers?.lazy.compactMap { $0.sublayers?.first { $0.name == "endpaper" }?.frame }.first
+        return (face.bounds.size, endpaper)
+    }
+
+    /// How much a binder's spine shows: hidden, or how opaque.
+    var spineShowsForTesting: Float { spinePanel.isHidden ? 0 : spinePanel.opacity }
+
     /// Whether the open cover shows around the pages, a margin of it past their outer edges.
     var coverShowsForTesting: Bool {
         !leftBoard.isHidden && !rightBoard.isHidden && leftBoard.contents != nil
@@ -705,6 +754,7 @@ final class BookView: NSView, NSTextViewDelegate {
         leaf.add(rotation, forKey: "turn")
         leafAngle = end
         animateRings(from: start, to: end, duration: rotation.duration, timing: rotation.timingFunction)
+        animateBindingShows(from: start, to: end, duration: rotation.duration, timing: rotation.timingFunction)
         shade(leaf, duration: rotation.duration)
         // A closed book slides to the middle as it opens, and back as it closes.
         let slide = CABasicAnimation(keyPath: "transform")
@@ -728,28 +778,51 @@ final class BookView: NSView, NSTextViewDelegate {
         stopVideos()
         turningForward = forward
         let under = layout.state(target)
+        // The book opening or closing: the leaf turning is a cover, the front one or the back.
+        let from = layout.state(state)
+        let isCover = [from.left, from.right, under.left, under.right].contains { $0 == nil }
+        let atFront = target == 0 || state == 0
+        coverTurning = isCover ? atFront : nil
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let rect = pageRect(left: false)
+        let stage = stage
+        let rect = stage.pageRect(left: false)
         // The leaf turns about the middle of the binding: the spine where glued pages meet, or a binder's rings, with
-        // the page held half the spine's width off them.
+        // the page held half the spine's width off them. A cover is its whole board, reaching past the pages at the
+        // top, the bottom and its outer edge, so its border shows all the way over, as it does lying open or closed.
         let half = spineGap / 2
+        let margin = isCover ? stage.boardMargin : 0
         let leaf = CATransformLayer()
         leaf.anchorPoint = CGPoint(x: 0, y: 0.5)
-        leaf.bounds = CGRect(x: 0, y: 0, width: rect.width + half, height: rect.height)
+        leaf.bounds = CGRect(x: 0, y: 0, width: rect.width + margin + half, height: rect.height + margin * 2)
         leaf.position = CGPoint(x: spine.x, y: rect.midY)
-        let face = CGRect(x: half, y: 0, width: rect.width, height: rect.height)
+        let face = CGRect(x: half, y: 0, width: rect.width + margin, height: rect.height + margin * 2)
         let front = CALayer()
         front.frame = face
-        front.contents = delegate.pageImage(pages.front)
         front.contentsGravity = .resize
         front.isDoubleSided = false
         let back = CALayer()
         back.frame = face
-        back.contents = delegate.pageImage(pages.back)
         back.contentsGravity = .resize
         back.isDoubleSided = false
         back.transform = CATransform3DMakeRotation(.pi, 0, 1, 0)
+        if isCover {
+            // Outside, the cover's own picture of its board; inside, the board with the endpaper pasted on it, as it lies
+            // open: on the left for the front cover (the leaf's back), on the right for the back cover (its front).
+            let page = CGSize(width: rect.width, height: rect.height)
+            if atFront {
+                front.contents = delegate.pageImage(pages.front)
+                back.contents = leftBoard.contents
+                back.addSublayer(pasted(delegate.pageImage(pages.back), in: CGRect(origin: CGPoint(x: margin, y: margin), size: page), outerOnLeft: true))
+            } else {
+                front.contents = rightBoard.contents
+                front.addSublayer(pasted(delegate.pageImage(pages.front), in: CGRect(origin: CGPoint(x: 0, y: margin), size: page), outerOnLeft: false))
+                back.contents = delegate.pageImage(pages.back)
+            }
+        } else {
+            front.contents = delegate.pageImage(pages.front)
+            back.contents = delegate.pageImage(pages.back)
+        }
         for (side, start) in [(front, CGPoint(x: 0, y: 0.5)), (back, CGPoint(x: 1, y: 0.5))] {
             let gloom = CAGradientLayer()
             gloom.frame = side.bounds
@@ -767,7 +840,9 @@ final class BookView: NSView, NSTextViewDelegate {
         // Between a binder's rings under it and over it, as it turns on them.
         hinge.insertSublayer(leaf, below: rings)
         self.leaf = leaf
-        // Under the leaf: going forward, the next spread's right page; going back, the earlier one's left page.
+        // Under the leaf: going forward, the next spread's right page; going back, the earlier one's left page. Pages
+        // lie open around a turning leaf, even one closing over them.
+        placePages(closedFront: false, closedBack: false)
         if forward {
             rightPage.contents = under.right.flatMap(delegate.pageImage)
             rightPage.isHidden = under.right == nil
@@ -775,13 +850,20 @@ final class BookView: NSView, NSTextViewDelegate {
             leftPage.contents = under.left.flatMap(delegate.pageImage)
             leftPage.isHidden = under.left == nil
         }
-        // The book opening or closing: the turning leaf is a cover itself, so only the board staying under the pages
-        // shows (the back one under the right page at the front of the book, the front one at the back) until it lands.
-        let from = layout.state(state)
-        if [from.left, from.right, under.left, under.right].contains(where: { $0 == nil }) {
-            let atFront = target == 0 || state == 0
+        // The book opening or closing: the turning leaf is a cover itself, so the board staying under the pages shows
+        // (the back one under the right page at the front of the book, the front one at the back), with the sheets
+        // lying on it. A binder's spine and rings stay at the binding, coming into sight as the cover lifts off them.
+        if isCover {
             for part in [leftBoard, spinePanel, leftStack, rightStack, rings, rightBoard] { part.isHidden = true }
             (atFront ? rightBoard : leftBoard).isHidden = false
+            layoutStacks([from, under].first { $0.left != nil && $0.right != nil } ?? under)
+            (atFront ? rightStack : leftStack).isHidden = false
+            if binding.hasRings {
+                for part in [spinePanel, rings] {
+                    part.isHidden = false
+                    part.opacity = Float(bindingShows(at: leafAngle))
+                }
+            }
             bookShadow.frame = (atFront ? rightBoard : leftBoard).frame
             bookShadow.cornerRadius = stage.boardRadius
         } else if !rings.isHidden {
@@ -803,6 +885,50 @@ final class BookView: NSView, NSTextViewDelegate {
         leaf?.removeFromSuperlayer()
         CATransaction.commit()
         leaf = nil
+    }
+
+    /// An endpaper pasted on a cover's board, in the leaf: the page's picture, its outer corners rounded as a page's are.
+    private func pasted(_ image: CGImage?, in rect: CGRect, outerOnLeft: Bool) -> CALayer {
+        let paper = CALayer()
+        paper.name = "endpaper"
+        paper.frame = rect
+        paper.contents = image
+        paper.contentsGravity = .resize
+        paper.isDoubleSided = false
+        paper.cornerRadius = BookStage.pageCornerRadius
+        paper.maskedCorners = outerOnLeft ? [.layerMinXMinYCorner, .layerMinXMaxYCorner] : [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
+        paper.masksToBounds = true
+        return paper
+    }
+
+    /// While a cover turns, whether it's the front one (nil while no cover is turning).
+    private var coverTurning: Bool?
+
+    /// While a cover turns: how much of a binder's spine and rings shows, from none while the cover lies closed over
+    /// them to all once it has lifted a sixth of the way over.
+    private func bindingShows(at angle: CGFloat) -> CGFloat {
+        guard let atFront = coverTurning else { return 1 }
+        // The front cover lies closed at 0, the back cover at -π.
+        let lift = atFront ? -angle : .pi + angle
+        return min(1, max(0, lift / (.pi / 6)))
+    }
+
+    /// Keeps a binder's spine and rings showing as much as the cover's lift lets them while it turns from `start` to
+    /// `end`, with the same timing.
+    private func animateBindingShows(from start: CGFloat, to end: CGFloat, duration: CFTimeInterval, timing: CAMediaTimingFunction?) {
+        guard coverTurning != nil, binding.hasRings, start != end else { return }
+        let steps = 24
+        let shares = (0...steps).map { CGFloat($0) / CGFloat(steps) }
+        let values = shares.map { Float(bindingShows(at: start + (end - start) * $0)) }
+        for part in [spinePanel, rings] {
+            let shows = CAKeyframeAnimation(keyPath: "opacity")
+            shows.values = values
+            shows.keyTimes = shares.map { NSNumber(value: Double($0)) }
+            shows.duration = duration
+            shows.timingFunction = timing
+            part.opacity = values.last ?? 1
+            part.add(shows, forKey: "shows")
+        }
     }
 
     /// Crossfades to another place in the book, for Reduce Motion.
@@ -833,6 +959,7 @@ final class BookView: NSView, NSTextViewDelegate {
 
     private func finishTurn(to target: Int) {
         removeLeaf()
+        coverTurning = nil
         isTurning = false
         state = target
         reload()
@@ -854,6 +981,9 @@ final class BookView: NSView, NSTextViewDelegate {
         leafAngle = forward ? -CGFloat.pi * progress : -CGFloat.pi * (1 - progress)
         leaf?.transform = CATransform3DMakeRotation(leafAngle, 0, 1, 0)
         placeRings(at: leafAngle)
+        if coverTurning != nil, binding.hasRings {
+            for part in [spinePanel, rings] { part.opacity = Float(bindingShows(at: leafAngle)) }
+        }
         CATransaction.commit()
     }
 
@@ -877,6 +1007,7 @@ final class BookView: NSView, NSTextViewDelegate {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.removeLeaf()
+                    self.coverTurning = nil
                     self.isTurning = false
                     self.reload()
                 }
@@ -890,6 +1021,7 @@ final class BookView: NSView, NSTextViewDelegate {
             leaf.transform = CATransform3DMakeRotation(flat, 0, 1, 0)
             leaf.add(rotation, forKey: "settle")
             animateRings(from: leafAngle, to: flat, duration: rotation.duration, timing: nil)
+            animateBindingShows(from: leafAngle, to: flat, duration: rotation.duration, timing: nil)
             leafAngle = flat
             CATransaction.commit()
         }
@@ -1702,6 +1834,8 @@ final class BookView: NSView, NSTextViewDelegate {
         }
         guard let hit = pagePoint(point) else {
             select(nil)
+            // A closed cover's board, past its page, opens the book like the cover itself.
+            if let forward = closedCoverOpens(at: point) { drag = .page(forward: forward, start: point, progress: 0, clickTurns: true) }
             return
         }
         // Writing lies over everything on the page.
