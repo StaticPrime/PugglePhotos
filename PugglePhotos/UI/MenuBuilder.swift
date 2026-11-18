@@ -224,6 +224,7 @@ enum MenuBuilder {
             item("Tilt Left", #selector(LibraryWindowController.phTiltLeft(_:)), "[", []),
             item("Tilt Right", #selector(LibraryWindowController.phTiltRight(_:)), "]", []),
             item("Straighten", #selector(LibraryWindowController.phStraighten(_:))),
+            item("Original Size", #selector(LibraryWindowController.phOriginalSize(_:))),
             item("Leave Out of Book", #selector(LibraryWindowController.phLeaveOutOfBook(_:))),
         ]
     }

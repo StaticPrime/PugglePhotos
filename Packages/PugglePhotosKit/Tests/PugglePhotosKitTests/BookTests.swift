@@ -81,6 +81,39 @@ import Testing
         #expect(layout.find("p2")!.placement.center == CGPoint(x: 560, y: 40), "a frame's middle stays on the page")
     }
 
+    @Test func resizingByTheCorner() {
+        let placement = BookPlacement(id: "p0", isVideo: false, aspect: 1.5, center: CGPoint(x: 300, y: 360),
+                                      imageSize: CGSize(width: 300, height: 200), angle: 12, caption: "")
+        for frame in BookFrame.allCases {
+            let rect = placement.frameRect(frame)
+            func along(_ factor: CGFloat, _ grab: CGPoint = .zero) -> CGPoint {
+                placement.page(CGPoint(x: rect.minX + rect.width * factor + grab.x, y: rect.minY + rect.height * factor + grab.y))
+            }
+            // Dragging the corner a fifth further along the diagonal makes the photo a fifth bigger, wherever on the
+            // corner it was taken hold of.
+            #expect(abs(placement.resizeFactor(draggingCornerTo: along(1.2), frame: frame) - 1.2) < 1e-9, "\(frame)")
+            let grab = CGPoint(x: -4, y: 3)
+            #expect(abs(placement.resizeFactor(draggingCornerTo: along(1.2, grab), grab: grab, frame: frame) - 1.2) < 1e-9, "\(frame)")
+            // Off the diagonal, it still keeps its shape: what counts is how far along it the pointer is.
+            let aside = placement.page(CGPoint(x: rect.minX + rect.width * 1.2 + rect.height * 0.3, y: rect.minY + rect.height * 1.2 - rect.width * 0.3))
+            #expect(abs(placement.resizeFactor(draggingCornerTo: aside, frame: frame) - 1.2) < 1e-9, "\(frame)")
+            // Its top left corner stays where it was.
+            var bigger = placement
+            bigger.imageSize = CGSize(width: 360, height: 240)
+            bigger.center = placement.center(resizedBy: 1.2, frame: frame)
+            let before = placement.corners(frame)[0], after = bigger.corners(frame)[0]
+            #expect(hypot(before.x - after.x, before.y - after.y) < 1e-9, "\(frame)")
+            // A long way either way stops at the smallest a photo gets, and at the page's edges.
+            let size = placement.frameSize(frame)
+            let smallest = placement.resizeFactor(draggingCornerTo: along(0), frame: frame)
+            #expect(abs(max(size.width, size.height) * smallest - BookPlacement.smallestFrameSide) < 1e-6, "\(frame)")
+            let biggest = placement.resizeFactor(draggingCornerTo: along(9), frame: frame)
+            let room = CGSize(width: BookLayout.pageSize.width - 40, height: BookLayout.pageSize.height - 40)
+            #expect(size.width * biggest <= room.width + 1e-6 && size.height * biggest <= room.height + 1e-6, "\(frame)")
+            #expect(abs(size.width * biggest - room.width) < 1e-6 || abs(size.height * biggest - room.height) < 1e-6, "\(frame)")
+        }
+    }
+
     @Test func photosLeftOutAndCaptions() {
         let settings = BookSettings(frame: .print, perPage: .two, hidden: ["p1"])
         let layout = BookLayout(items: items(4), captions: ["p2": "Grandma’s pie"], settings: settings, coverPhoto: nil)

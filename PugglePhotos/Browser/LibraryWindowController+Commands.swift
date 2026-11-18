@@ -56,6 +56,9 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(phTiltLeft(_:)), #selector(phTiltRight(_:)), #selector(phStraighten(_:)), #selector(phLeaveOutOfBook(_:)):
             if isEditingText { return false }
             return isShowingBook && book.bookView.selected != nil
+        case #selector(phOriginalSize(_:)):
+            if isEditingText { return false }
+            return isShowingBook && book.bookView.selected.map(book.isResized) == true
         case #selector(phPutBackInBook(_:)):
             return isShowingBook && book.layout.settings.hidden.count > 0
         case #selector(phShuffleBook(_:)), #selector(phResetBookLayout(_:)), #selector(phExportBookPDF(_:)), #selector(phPrintBook(_:)),
@@ -234,6 +237,7 @@ extension LibraryWindowController: NSMenuItemValidation {
     @objc func phTiltLeft(_ sender: Any?) { book.tiltSelected(by: -3) }
     @objc func phTiltRight(_ sender: Any?) { book.tiltSelected(by: 3) }
     @objc func phStraighten(_ sender: Any?) { book.tiltSelected(by: 0) }
+    @objc func phOriginalSize(_ sender: Any?) { if let id = book.bookView.selected { book.originalSize(id) } }
     @objc func phLeaveOutOfBook(_ sender: Any?) { book.leaveOutSelected() }
     @objc func phPutBackInBook(_ sender: Any?) { book.putBackLeftOut() }
     @objc func phShuffleBook(_ sender: Any?) { book.shuffle() }

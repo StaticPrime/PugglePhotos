@@ -177,6 +177,45 @@ public struct BookPlacement: Hashable, Sendable {
         return [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
                 CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)].map(page)
     }
+
+    // MARK: Resizing
+
+    /// The shortest a frame's longer side can be made: small, but still a photo to look at.
+    public static let smallestFrameSide: CGFloat = 110
+
+    /// How many times bigger or smaller the photo can be made from the size it is now: down to a frame whose longer
+    /// side is `smallestFrameSide`, up to one that fills its page but for a margin.
+    public func resizeRange(_ frame: BookFrame) -> ClosedRange<Double> {
+        let size = frameSize(frame)
+        guard size.width > 0, size.height > 0 else { return 1...1 }
+        let smallest = Self.smallestFrameSide / max(size.width, size.height)
+        let biggest = min((BookLayout.pageSize.width - 40) / size.width, (BookLayout.pageSize.height - 40) / size.height)
+        return Double(min(smallest, 1))...Double(max(biggest, 1))
+    }
+
+    /// How many times as big the photo becomes when its bottom right corner is dragged to a point on the page: how
+    /// far along its diagonal the point is, so it keeps its shape, within `resizeRange`. `grab` is where on the
+    /// corner it was taken hold of, from the corner itself in the photo's own coordinates, so that spot follows the
+    /// pointer rather than the corner jumping to it.
+    public func resizeFactor(draggingCornerTo point: CGPoint, grab: CGPoint = .zero, frame: BookFrame) -> Double {
+        let rect = frameRect(frame)
+        let local = local(point)
+        // Where the corner is to go, from the top left corner, which stays put.
+        let target = CGPoint(x: local.x - grab.x - rect.minX, y: local.y - grab.y - rect.minY)
+        let length = rect.width * rect.width + rect.height * rect.height
+        guard length > 0 else { return 1 }
+        let factor = Double((target.x * rect.width + target.y * rect.height) / length)
+        let range = resizeRange(frame)
+        return min(max(factor, range.lowerBound), range.upperBound)
+    }
+
+    /// Where the photo's middle goes when it's made `factor` times as big, so its top left corner (as it leans)
+    /// stays where it is.
+    public func center(resizedBy factor: Double, frame: BookFrame) -> CGPoint {
+        let rect = frameRect(frame)
+        let shrink = 1 - CGFloat(factor)
+        return page(CGPoint(x: shrink * rect.minX, y: shrink * rect.minY))
+    }
 }
 
 public enum BookPageKind: Hashable, Sendable {

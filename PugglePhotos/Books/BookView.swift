@@ -18,6 +18,11 @@ protocol BookViewDelegate: AnyObject {
     func bookPreview(_ id: PhotoID, center: CGPoint?, angle: Double?)
     /// When the drag or turn ends.
     func bookCommit(_ id: PhotoID, center: CGPoint?, angle: Double?)
+    /// While a photo is resized by its corner: draw its page with it `factor` times as big as it was (`start`) when
+    /// the drag began.
+    func bookPreviewResize(_ id: PhotoID, from start: BookPlacement, factor: Double)
+    /// When the resize ends. Let go where it began, nothing changes.
+    func bookCommitResize(_ id: PhotoID, from start: BookPlacement, factor: Double)
     /// While a sticky note is moved, resized or turned: draw its page with it so.
     func bookPreviewSticky(_ id: PhotoID, _ sticky: BookSticky)
     /// When the move, resize or turn ends.
@@ -51,9 +56,9 @@ protocol BookViewDelegate: AnyObject {
 }
 
 /// A photo book open on a desk: two pages side by side (or the closed cover), turned with a real-looking page turn.
-/// Click the paper to turn a page, or drag it over; click a photo to pick it, then drag it or its round handle to
-/// move or turn it, or click it again to turn it over and read its back. Sticky notes move, stretch and turn the
-/// same way, and a double-click writes on one. Videos play while the pointer is over them.
+/// Click the paper to turn a page, or drag it over; click a photo to pick it, then drag it, its round handle or its
+/// corner to move, turn or resize it, or click it again to turn it over and read its back. Sticky notes move, stretch
+/// and turn the same way, and a double-click writes on one. Videos play while the pointer is over them.
 final class BookView: NSView, NSTextViewDelegate {
     weak var delegate: BookViewDelegate?
     private(set) var state = 0
@@ -101,7 +106,7 @@ final class BookView: NSView, NSTextViewDelegate {
     private(set) var turnedOver: PhotoID?
     /// The photo turning over above the page, while it turns.
     private var turnLayer: CALayer?
-    private let stickyHandle = CAShapeLayer()
+    private let stretchHandle = CAShapeLayer()
     private let desk = CAGradientLayer()
     private let book = CALayer()
     private let bookShadow = CALayer()
@@ -125,6 +130,9 @@ final class BookView: NSView, NSTextViewDelegate {
         /// `turns`: the photo was already picked, so a click without moving turns it over.
         case photo(id: PhotoID, page: Int, start: NSPoint, center: CGPoint, moved: Bool, turns: Bool)
         case rotate(id: PhotoID, page: Int, center: CGPoint, startAngle: Double, startPointerAngle: Double)
+        /// `start`: the photo as it was when its corner was taken hold of; `grab`: where on the corner, from the
+        /// corner itself (in the photo's own coordinates), so that spot follows the pointer.
+        case resize(id: PhotoID, page: Int, start: BookPlacement, grab: CGPoint)
         /// `clickTurns`: nothing was picked, so a click (not just a drag) turns the page.
         case page(forward: Bool, start: NSPoint, progress: CGFloat, clickTurns: Bool)
         case sticky(id: PhotoID, page: Int, start: NSPoint, sticky: BookSticky, moved: Bool)
@@ -178,7 +186,7 @@ final class BookView: NSView, NSTextViewDelegate {
         selection.isHidden = true
         handle.isHidden = true
         handle.lineWidth = 2
-        for layer in [handle, stickyHandle] {
+        for layer in [handle, stretchHandle] {
             layer.shadowColor = NSColor.black.cgColor
             layer.shadowOpacity = 0.3
             layer.shadowRadius = 2
@@ -186,9 +194,9 @@ final class BookView: NSView, NSTextViewDelegate {
         }
         book.addSublayer(selection)
         book.addSublayer(handle)
-        stickyHandle.isHidden = true
-        stickyHandle.lineWidth = 2
-        book.addSublayer(stickyHandle)
+        stretchHandle.isHidden = true
+        stretchHandle.lineWidth = 2
+        book.addSublayer(stretchHandle)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Photo book")
         setAccessibilityCustomActions([
@@ -221,8 +229,8 @@ final class BookView: NSView, NSTextViewDelegate {
             selection.strokeColor = Theme.accent.cgColor
             handle.strokeColor = Theme.accent.cgColor
             handle.fillColor = NSColor.white.cgColor
-            stickyHandle.strokeColor = Theme.accent.cgColor
-            stickyHandle.fillColor = NSColor.white.cgColor
+            stretchHandle.strokeColor = Theme.accent.cgColor
+            stretchHandle.fillColor = NSColor.white.cgColor
         }
     }
 
@@ -640,7 +648,16 @@ final class BookView: NSView, NSTextViewDelegate {
             return [(.stretch, Self.spot(around: handles.stretch, width: 26, height: 26))]
                 + Self.knobSpots((handles.top, handles.turn)).map { (.turn, $0) }
         }
-        return photoKnob().map { Self.knobSpots($0).map { (.turn, $0) } } ?? []
+        guard let knob = photoKnob() else { return [] }
+        return (photoCorner().map { [(Handle.stretch, Self.spot(around: $0, width: 26, height: 26))] } ?? [])
+            + Self.knobSpots(knob).map { (.turn, $0) }
+    }
+
+    /// The picked photo's bottom right corner, in the view, which resizes it.
+    private func photoCorner() -> CGPoint? {
+        guard let (placement, _, left) = selectedPlacement(), let frame = delegate?.layout.settings.frame else { return nil }
+        let rect = placement.frameRect(frame)
+        return viewPoint(placement.page(CGPoint(x: rect.maxX, y: rect.maxY)), onLeft: left)
     }
 
     private func handle(at point: NSPoint) -> Handle? {
@@ -669,10 +686,15 @@ final class BookView: NSView, NSTextViewDelegate {
                                    startPointerAngle: atan2(pointer.y - middle.y, pointer.x - middle.x))
             }
         } else if let (placement, page, _) = selectedPlacement() {
-            // From the page's own coordinates even when the knob stands off the page, so the photo doesn't jump.
+            // From the page's own coordinates even when the handle stands off the page, so the photo doesn't jump.
             let pointer = pageCoordinates(point, onPage: page)
-            drag = .rotate(id: placement.id, page: page, center: placement.center, startAngle: placement.angle,
-                           startPointerAngle: atan2(pointer.y - placement.center.y, pointer.x - placement.center.x))
+            if handle == .stretch, let frame = delegate?.layout.settings.frame {
+                let rect = placement.frameRect(frame), local = placement.local(pointer)
+                drag = .resize(id: placement.id, page: page, start: placement, grab: CGPoint(x: local.x - rect.maxX, y: local.y - rect.maxY))
+            } else {
+                drag = .rotate(id: placement.id, page: page, center: placement.center, startAngle: placement.angle,
+                               startPointerAngle: atan2(pointer.y - placement.center.y, pointer.x - placement.center.x))
+            }
         }
     }
 
@@ -759,7 +781,7 @@ final class BookView: NSView, NSTextViewDelegate {
     private func updateSelection() {
         // Where the handles are has changed, and with it where the pointer becomes a hand.
         window?.invalidateCursorRects(for: self)
-        stickyHandle.isHidden = true
+        stretchHandle.isHidden = true
         if let (writing, _, left) = writingPlace(), editing == nil, let size = delegate?.bookWritingSize(writing) {
             let rect = CGRect(x: -size.width / 2 - 4, y: -size.height / 2 - 4, width: size.width + 8, height: size.height + 8)
             let corners = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY),
@@ -774,14 +796,14 @@ final class BookView: NSView, NSTextViewDelegate {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             let offset = offset(for: state)
-            for layer in [selection, handle, stickyHandle] { layer.frame = book.bounds.offsetBy(dx: -offset, dy: 0) }
+            for layer in [selection, handle, stretchHandle] { layer.frame = book.bounds.offsetBy(dx: -offset, dy: 0) }
             selection.path = outline
             selection.lineDashPattern = [5, 4]
             handle.path = knob
-            stickyHandle.path = widen
+            stretchHandle.path = widen
             selection.isHidden = false
             handle.isHidden = false
-            stickyHandle.isHidden = false
+            stretchHandle.isHidden = false
             CATransaction.commit()
             return
         }
@@ -798,13 +820,13 @@ final class BookView: NSView, NSTextViewDelegate {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             let offset = offset(for: state)
-            for layer in [selection, handle, stickyHandle] { layer.frame = book.bounds.offsetBy(dx: -offset, dy: 0) }
+            for layer in [selection, handle, stretchHandle] { layer.frame = book.bounds.offsetBy(dx: -offset, dy: 0) }
             selection.path = outline
             handle.path = knob
-            stickyHandle.path = corner
+            stretchHandle.path = corner
             selection.isHidden = false
             handle.isHidden = false
-            stickyHandle.isHidden = false
+            stretchHandle.isHidden = false
             CATransaction.commit()
             return
         }
@@ -818,15 +840,19 @@ final class BookView: NSView, NSTextViewDelegate {
         outline.addLines(between: corners)
         outline.closeSubpath()
         let knob = Self.knobPath(knob(from: placement.page(CGPoint(x: 0, y: placement.frameRect(frame).minY)), angle: placement.angle, left: left))
+        // The bottom right corner resizes it.
+        let corner = CGMutablePath()
+        corner.addRoundedRect(in: CGRect(x: corners[2].x - 7, y: corners[2].y - 7, width: 14, height: 14), cornerWidth: 3, cornerHeight: 3)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let offset = offset(for: state)
-        selection.frame = book.bounds.offsetBy(dx: -offset, dy: 0)
-        handle.frame = selection.frame
+        for layer in [selection, handle, stretchHandle] { layer.frame = book.bounds.offsetBy(dx: -offset, dy: 0) }
         selection.path = outline
         handle.path = knob
+        stretchHandle.path = corner
         selection.isHidden = false
         handle.isHidden = false
+        stretchHandle.isHidden = false
         CATransaction.commit()
     }
 
@@ -935,7 +961,7 @@ final class BookView: NSView, NSTextViewDelegate {
         card.transform = over ? CATransform3DIdentity : CATransform3DMakeRotation(.pi, 0, 1, 0)
         selection.isHidden = true
         handle.isHidden = true
-        stickyHandle.isHidden = true
+        stretchHandle.isHidden = true
         CATransaction.commit()
         turnLayer = container
         window?.invalidateCursorRects(for: self)
@@ -1244,6 +1270,12 @@ final class BookView: NSView, NSTextViewDelegate {
             if event.modifierFlags.contains(.shift) { angle = (angle / 15).rounded() * 15 }
             delegate?.bookPreview(id, center: nil, angle: Self.normalized(angle))
             reloadPage(page)
+        case let .resize(id, page, start, grab):
+            guard let frame = delegate?.layout.settings.frame else { return }
+            let factor = start.resizeFactor(draggingCornerTo: pageCoordinates(point, onPage: page), grab: grab, frame: frame)
+            delegate?.bookPreviewResize(id, from: start, factor: factor)
+            reloadPage(page)
+            updateSelection()
         case let .page(forward, start, _, clickTurns):
             let distance = forward ? start.x - point.x : point.x - start.x
             let progress = min(max(distance / (pageSize.width * 1.6), 0), 1)
@@ -1293,6 +1325,10 @@ final class BookView: NSView, NSTextViewDelegate {
             var angle = startAngle + (atan2(pagePoint.y - center.y, pagePoint.x - center.x) - startPointerAngle) * 180 / .pi
             if event.modifierFlags.contains(.shift) { angle = (angle / 15).rounded() * 15 }
             delegate?.bookCommit(id, center: nil, angle: Self.normalized(angle))
+        case let .resize(id, page, start, grab):
+            guard let frame = delegate?.layout.settings.frame else { return }
+            delegate?.bookCommitResize(id, from: start,
+                                       factor: start.resizeFactor(draggingCornerTo: pageCoordinates(point, onPage: page), grab: grab, frame: frame))
         case let .page(forward, _, progress, clickTurns):
             if leaf != nil {
                 endDragTurn(forward: forward, progress: progress)

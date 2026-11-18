@@ -112,6 +112,24 @@ extension SelfTest {
             window.activePopover?.close()
         }
         step {
+            // A photo made bigger keeps its sticky note (moved and resized by hand) where it was on it, the same size.
+            guard let placement = noted, let sticky = settings.overrides[placement.id]?.sticky else {
+                check(false, "a sticky note moved by hand")
+                return
+            }
+            view.select(placement.id)
+            let corners = placement.corners(settings.frame).map { view.viewPoint($0, onLeft: left(placement)) }
+            let to = CGPoint(x: corners[2].x + (corners[2].x - corners[0].x) * 0.25, y: corners[2].y + (corners[2].y - corners[0].y) * 0.25)
+            bookMouse(.leftMouseDown, at: corners[2], in: view)
+            bookMouse(.leftMouseDragged, at: to, in: view)
+            bookMouse(.leftMouseUp, at: to, in: view)
+            let scale = settings.overrides[placement.id]?.scale
+            let moved = settings.overrides[placement.id]?.sticky
+            check(scale.map { abs($0 - 1.25) < 0.01 } == true
+                  && moved.map { abs($0.center.x - sticky.center.x * 1.25) < 0.01 && abs($0.center.y - sticky.center.y * 1.25) < 0.01 && $0.size == sticky.size } == true,
+                  "a photo made bigger keeps its sticky note in its place on it, the same size", "\(String(describing: scale))")
+        }
+        step {
             guard let placement = noted else { return }
             book.setNoteStyle(.hidden, for: placement.id)
             let hidden = book.layout.find(placement.id)!.placement
@@ -119,7 +137,8 @@ extension SelfTest {
             book.setNoteStyle(nil, for: placement.id)
             check(book.layout.find(placement.id)!.placement.hasSticky, "or show it as the book does")
             book.resetLayout()
-            check(settings.overrides[placement.id]?.sticky == nil, "Reset Book Layout puts sticky notes back")
+            check(settings.overrides[placement.id]?.sticky == nil && settings.overrides[placement.id]?.scale == nil,
+                  "Reset Book Layout puts sticky notes back, and photos to their size")
         }
         step {
             // Handles take a click a little off the knob, or on its stalk, without letting go of what's picked.

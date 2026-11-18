@@ -273,6 +273,56 @@ final class BookViewController: NSViewController, BookViewDelegate {
         }
     }
 
+    func bookPreviewResize(_ id: PhotoID, from start: BookPlacement, factor: Double) {
+        draft = (id, resized(id, from: start, by: factor))
+        rebuildKeepingImages()
+    }
+
+    func bookCommitResize(_ id: PhotoID, from start: BookPlacement, factor: Double) {
+        guard let album, abs(factor - 1) > 0.0001 else {
+            draft = nil
+            rebuildKeepingImages()
+            return
+        }
+        draft = nil
+        let override = resized(id, from: start, by: factor)
+        library.edit("Resize Photo") { catalog in
+            var settings = catalog.book(album)
+            settings.overrides[id] = override
+            catalog.setBook(settings, for: album)
+        }
+    }
+
+    /// A photo's kept changes with it made `factor` times as big as it was (`start`): its size, from the size the
+    /// layout gave it, and its middle, so its top left corner stays put. A sticky note moved by hand keeps its place
+    /// on the photo.
+    private func resized(_ id: PhotoID, from start: BookPlacement, by factor: Double) -> BookPlacementOverride {
+        var override = library.catalog.book(album ?? UUID()).overrides[id] ?? BookPlacementOverride()
+        let scale = (override.scale ?? 1) * factor
+        override.scale = abs(scale - 1) < 0.005 ? nil : scale
+        override.center = start.center(resizedBy: factor, frame: layout.settings.frame)
+        if var sticky = override.sticky {
+            sticky.center = CGPoint(x: sticky.center.x * factor, y: sticky.center.y * factor)
+            override.sticky = sticky
+        }
+        return override
+    }
+
+    /// Photo ▸ Original Size, and the photo's own menu: back to the size the book gave it, its top left corner
+    /// staying put.
+    func originalSize(_ id: PhotoID) {
+        guard let album, let placement = layout.find(id)?.placement, let scale = layout.settings.overrides[id]?.scale, scale > 0 else { return }
+        let override = resized(id, from: placement, by: 1 / scale)
+        library.edit("Original Size") { catalog in
+            var settings = catalog.book(album)
+            settings.overrides[id] = override
+            catalog.setBook(settings, for: album)
+        }
+    }
+
+    /// Whether a photo has been made bigger or smaller than the book made it.
+    func isResized(_ id: PhotoID) -> Bool { layout.settings.overrides[id]?.scale != nil }
+
     func bookPreviewSticky(_ id: PhotoID, _ sticky: BookSticky) {
         var override = draft?.id == id ? draft!.override : (library.catalog.book(album ?? UUID()).overrides[id] ?? BookPlacementOverride())
         override.sticky = sticky
@@ -545,9 +595,14 @@ final class BookViewController: NSViewController, BookViewDelegate {
         }
         if !sticky {
             menu.addItem(.separator())
+            if isResized(id) { add("Original Size", #selector(menuOriginalSize(_:))) }
             add("Leave Out of Book", #selector(menuLeaveOut(_:)))
         }
         return menu
+    }
+
+    @objc private func menuOriginalSize(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? PhotoID { originalSize(id) }
     }
 
     private final class NoteChoice: NSObject {

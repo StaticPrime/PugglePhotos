@@ -111,6 +111,49 @@ extension SelfTest {
             let angle = settings.overrides[placement.id]?.angle ?? 0
             check(abs(angle - 90) < 2, "dragging the handle turns the photo", "\(angle)")
         }
+        // Where a photo's corners are in the view: the one that stays put while it's resized, and the one that resizes it.
+        func photoCorners(_ id: PhotoID) -> (fixed: CGPoint, corner: CGPoint)? {
+            guard let placement = book.layout.find(id)?.placement else { return nil }
+            let corners = placement.corners(settings.frame).map { view.viewPoint($0, onLeft: false) }
+            return (corners[0], corners[2])
+        }
+        step {
+            // Resize it by its corner (it's on its side now, so the corner is wherever its bottom right went).
+            guard let id = picked?.id, let before = book.layout.find(id)?.placement, let (fixed, corner) = photoCorners(id) else { return }
+            check(view.cursorForTesting(at: corner) == .pointingHand, "the pointer is a hand over a picked photo's corner")
+            // Taken hold of a little inside the corner, and pulled a fifth further along its diagonal.
+            let grab = CGPoint(x: corner.x - 5, y: corner.y + 4)
+            let to = CGPoint(x: grab.x + (corner.x - fixed.x) * 0.2, y: grab.y + (corner.y - fixed.y) * 0.2)
+            bookMouse(.leftMouseDown, at: grab, in: view)
+            bookMouse(.leftMouseDragged, at: CGPoint(x: (grab.x + to.x) / 2, y: (grab.y + to.y) / 2), in: view)
+            bookMouse(.leftMouseDragged, at: to, in: view)
+            bookMouse(.leftMouseUp, at: to, in: view)
+            let scale = settings.overrides[id]?.scale ?? 1
+            check(abs(scale - 1.2) < 0.01, "dragging a photo's corner makes it bigger", "\(scale)")
+            check(library.undoManager.undoActionName == "Resize Photo", "resizing a photo can be undone", library.undoManager.undoActionName)
+            guard let after = book.layout.find(id)?.placement, let (newFixed, newCorner) = photoCorners(id) else { return }
+            check(hypot(newFixed.x - fixed.x, newFixed.y - fixed.y) < 1, "its opposite corner stays put")
+            check(hypot(newCorner.x - (to.x + 5), newCorner.y - (to.y - 4)) < 1.5, "the spot taken hold of stays under the pointer")
+            check(abs(after.imageSize.width / after.imageSize.height - before.imageSize.width / before.imageSize.height) < 0.001,
+                  "and the photo keeps its shape")
+            check(book.bookMenu(for: id, sticky: false)?.item(withTitle: "Original Size") != nil, "its menu offers its original size back")
+        }
+        step {
+            // As small as it goes.
+            guard let id = picked?.id, let (fixed, corner) = photoCorners(id) else { return }
+            bookMouse(.leftMouseDown, at: corner, in: view)
+            bookMouse(.leftMouseDragged, at: fixed, in: view)
+            bookMouse(.leftMouseUp, at: fixed, in: view)
+            let size = book.layout.find(id)?.placement.frameSize(settings.frame)
+            check(size.map { abs(max($0.width, $0.height) - BookPlacement.smallestFrameSide) < 0.5 } == true, "but never smaller than a small print",
+                  "\(String(describing: size))")
+        }
+        step {
+            guard let id = picked?.id, let (fixed, _) = photoCorners(id) else { return }
+            check(choose("Photo", "Original Size") && settings.overrides[id]?.scale == nil, "Photo ▸ Original Size gives it back the size the book gave it")
+            check(photoCorners(id).map { hypot($0.fixed.x - fixed.x, $0.fixed.y - fixed.y) < 1 } == true, "where it is")
+            check(book.bookMenu(for: id, sticky: false)?.item(withTitle: "Original Size") == nil, "after which there's no size to give back")
+        }
         step {
             choose("Photo", "Leave Out of Book")
             check(settings.hidden == [picked!.id] && book.layout.find(picked!.id) == nil, "a photo can be left out of the book")
