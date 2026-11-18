@@ -30,6 +30,7 @@ extension SelfTest {
         }
         func left(_ placement: BookPlacement) -> Bool { book.layout.find(placement.id).map { $0.page == book.layout.state(view.state).left } ?? false }
         var editor: NoteEditorView? { (window.activePopover?.contentViewController as? NSHostingController<NoteEditorView>)?.rootView }
+        var before: BookPlacement?
 
         step {
             guard let album = library.catalog.albums.first(where: { $0.title == "Beach Trips" }) else {
@@ -70,6 +71,21 @@ extension SelfTest {
             let stretched = settings.overrides[placement.id]?.sticky
             check(stretched.map { $0.size.width > placement.sticky.size.width && $0.size.height > placement.sticky.size.height } == true
                   && library.undoManager.undoMenuItemTitle == "Undo Resize Sticky Note", "its corner stretches it")
+        }
+        step {
+            // Taken hold of a little inside its corner, that spot stays under the pointer: the corner doesn't jump to it.
+            guard let placement = noted else { return }
+            let rect = placement.sticky.rect
+            let corner = view.viewPoint(placement.stickyPage(CGPoint(x: rect.maxX, y: rect.maxY)), onLeft: left(placement))
+            let grab = CGPoint(x: corner.x - 6, y: corner.y - 5)
+            check(view.cursorForTesting(at: grab) == .pointingHand, "the pointer is a hand over a sticky note's corner")
+            bookMouse(.leftMouseDown, at: grab, in: view)
+            bookMouse(.leftMouseDragged, at: CGPoint(x: grab.x + 25, y: grab.y + 15), in: view)
+            bookMouse(.leftMouseUp, at: CGPoint(x: grab.x + 25, y: grab.y + 15), in: view)
+            guard let after = book.layout.find(placement.id)?.placement else { return }
+            let moved = view.viewPoint(after.stickyPage(CGPoint(x: after.sticky.rect.maxX, y: after.sticky.rect.maxY)), onLeft: left(after))
+            check(hypot(moved.x - (corner.x + 25), moved.y - (corner.y + 15)) < 1.5, "the spot taken hold of on its corner stays under the pointer",
+                  "\(moved) for \(CGPoint(x: corner.x + 25, y: corner.y + 15))")
         }
         step {
             guard let placement = noted else { return }
@@ -114,6 +130,15 @@ extension SelfTest {
                 check(false, "a picked photo has a knob")
                 return
             }
+            // The pointer AppKit is given: a hand over the knob and its stalk, nothing beside them, in pieces that
+            // never overlap.
+            let stalk = CGPoint(x: (knob.top.x + knob.turn.x) / 2, y: (knob.top.y + knob.turn.y) / 2)
+            check(view.cursorForTesting(at: knob.turn) == .pointingHand && view.cursorForTesting(at: stalk) == .pointingHand
+                  && view.cursorForTesting(at: CGPoint(x: knob.turn.x + 40, y: knob.turn.y)) == nil,
+                  "the pointer is a hand over a photo's knob and its stalk, and only there")
+            let rects = view.cursorRectsForTesting.map(\.rect)
+            check(!rects.indices.contains { i in rects.indices.contains { j in i < j && !rects[i].intersection(rects[j]).isEmpty } },
+                  "the places the pointer changes never overlap")
             bookWindowClick(CGPoint(x: knob.turn.x + 8, y: knob.turn.y + 6), in: view)
             check(view.selected == placement.id && view.state == state, "a click just off a photo's knob keeps it picked")
             bookWindowClick(CGPoint(x: (knob.top.x + knob.turn.x) / 2, y: (knob.top.y + knob.turn.y) / 2), in: view)
@@ -131,6 +156,29 @@ extension SelfTest {
         step {
             check(view.state == 1, "with nothing picked, a click on the paper turns the page", "\(view.state)")
             view.go(to: 2, animated: false)
+        }
+        step {
+            // A photo at the very top of its page has its knob standing off the page, over the desk: it turns the
+            // photo from where it was, a little, without a jump.
+            guard let placement = noted else { return }
+            before = placement
+            let size = placement.frameSize(book.layout.settings.frame)
+            book.bookCommit(placement.id, center: CGPoint(x: placement.center.x, y: size.height / 2 + 4), angle: 0)
+            view.select(placement.id)
+            guard let knob = view.knobForTesting, view.pagePoint(knob.turn) == nil else {
+                check(false, "a photo at the top of its page has its knob off the page")
+                return
+            }
+            bookMouse(.leftMouseDown, at: knob.turn, in: view)
+            bookMouse(.leftMouseDragged, at: CGPoint(x: knob.turn.x + 10, y: knob.turn.y), in: view)
+            bookMouse(.leftMouseUp, at: CGPoint(x: knob.turn.x + 10, y: knob.turn.y), in: view)
+            let angle = book.layout.find(placement.id)?.placement.angle ?? 0
+            check(angle > 0 && angle < 10, "a knob standing off the page turns its photo a little, from where it was", "\(angle)°")
+        }
+        step {
+            library.undoManager.undo()
+            let after = before.flatMap { book.layout.find($0.id)?.placement }
+            check(after != nil && after?.center == before?.center && after?.angle == before?.angle, "and Undo puts it back")
         }
         step {
             // A photo: the first click picks it, a click on it picked turns it over.

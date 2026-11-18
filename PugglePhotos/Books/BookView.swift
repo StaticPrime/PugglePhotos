@@ -128,11 +128,20 @@ final class BookView: NSView, NSTextViewDelegate {
         /// `clickTurns`: nothing was picked, so a click (not just a drag) turns the page.
         case page(forward: Bool, start: NSPoint, progress: CGFloat, clickTurns: Bool)
         case sticky(id: PhotoID, page: Int, start: NSPoint, sticky: BookSticky, moved: Bool)
-        case stretchSticky(id: PhotoID, page: Int, sticky: BookSticky)
+        /// `grab`: where the corner was taken hold of, from the corner itself (in the note's own coordinates), so
+        /// that spot stays under the pointer.
+        case stretchSticky(id: PhotoID, page: Int, sticky: BookSticky, grab: CGPoint)
         case turnSticky(id: PhotoID, page: Int, sticky: BookSticky, startPointerAngle: Double)
         case writing(page: Int, start: NSPoint, writing: BookWriting, moved: Bool)
-        case widenWriting(page: Int, writing: BookWriting)
+        /// `grab`: how far past the end of its lines the bar was taken hold of, so that spot stays under the pointer.
+        case widenWriting(page: Int, writing: BookWriting, grab: CGFloat)
         case turnWriting(page: Int, writing: BookWriting, startPointerAngle: Double)
+    }
+
+    /// A handle on what's picked: a knob turns it, a sticky note's corner stretches it, the bar at writing's side
+    /// widens its lines.
+    private enum Handle {
+        case turn, stretch, widen
     }
 
     override init(frame frameRect: NSRect) {
@@ -604,15 +613,106 @@ final class BookView: NSView, NSTextViewDelegate {
         return (start, CGPoint(x: start.x + sin(radians) * Self.knobReach, y: start.y - cos(radians) * Self.knobReach))
     }
 
-    /// Whether a point is on a knob: on the knob itself, generously, or along the outer part of its stalk.
-    private static func isOn(_ knob: (top: CGPoint, turn: CGPoint), _ point: NSPoint) -> Bool {
-        if hypot(point.x - knob.turn.x, point.y - knob.turn.y) < knobRadius + 9 { return true }
-        let dx = knob.turn.x - knob.top.x, dy = knob.turn.y - knob.top.y
-        let length = dx * dx + dy * dy
-        guard length > 0 else { return false }
-        let along = ((point.x - knob.top.x) * dx + (point.y - knob.top.y) * dy) / length
-        guard along > 0.25, along <= 1 else { return false }
-        return hypot(point.x - (knob.top.x + along * dx), point.y - (knob.top.y + along * dy)) < 9
+    /// Where a knob can be taken hold of: a square around it, generously, and two smaller ones along the outer part
+    /// of its stalk (never reaching what it turns, at any lean).
+    private static func knobSpots(_ knob: (top: CGPoint, turn: CGPoint)) -> [NSRect] {
+        [spot(around: knob.turn, width: 34, height: 34)] + [0.4, 0.65].map { (along: CGFloat) in
+            spot(around: CGPoint(x: knob.top.x + (knob.turn.x - knob.top.x) * along, y: knob.top.y + (knob.turn.y - knob.top.y) * along),
+                 width: 14, height: 14)
+        }
+    }
+
+    private static func spot(around point: CGPoint, width: CGFloat, height: CGFloat) -> NSRect {
+        NSRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height)
+    }
+
+    /// Where the handles of what's picked can be taken hold of, in the view: around each knob, and around the corner
+    /// or bar that stretches it (first, so it wins where they meet). None while a photo or a page turns, or while
+    /// writing is being written.
+    private func handleSpots() -> [(handle: Handle, rect: NSRect)] {
+        guard !isTurning, turnLayer == nil else { return [] }
+        if editing == nil, let (writing, _, left) = writingPlace(), let size = delegate?.bookWritingSize(writing) {
+            let handles = writingHandles(writing, size: size, left: left)
+            return [(.widen, Self.spot(around: handles.widen, width: 22, height: 36))] + Self.knobSpots((handles.top, handles.turn)).map { (.turn, $0) }
+        }
+        if let (placement, _, left) = stickyPlacement() {
+            let handles = stickyHandles(placement, left: left)
+            return [(.stretch, Self.spot(around: handles.stretch, width: 26, height: 26))]
+                + Self.knobSpots((handles.top, handles.turn)).map { (.turn, $0) }
+        }
+        return photoKnob().map { Self.knobSpots($0).map { (.turn, $0) } } ?? []
+    }
+
+    private func handle(at point: NSPoint) -> Handle? {
+        handleSpots().first { $0.rect.contains(point) }?.handle
+    }
+
+    /// Takes hold of a handle of what's picked, remembering where: knobs turn from the pointer's angle then, and
+    /// the spot taken hold of on a corner or bar stays under the pointer.
+    private func takeHold(of handle: Handle, at point: NSPoint) {
+        if let (writing, page, _) = writingPlace() {
+            let pointer = pageCoordinates(point, onPage: page)
+            if handle == .widen {
+                drag = .widenWriting(page: page, writing: writing, grab: writing.local(pointer).x - writing.width / 2)
+            } else {
+                drag = .turnWriting(page: page, writing: writing, startPointerAngle: atan2(pointer.y - writing.center.y, pointer.x - writing.center.x))
+            }
+        } else if let (placement, page, _) = stickyPlacement() {
+            let pointer = pageCoordinates(point, onPage: page)
+            if handle == .stretch {
+                let local = placement.stickyLocal(pointer)
+                drag = .stretchSticky(id: placement.id, page: page, sticky: placement.sticky,
+                                      grab: CGPoint(x: local.x - placement.sticky.size.width / 2, y: local.y - placement.sticky.size.height / 2))
+            } else {
+                let middle = placement.stickyPage(.zero)
+                drag = .turnSticky(id: placement.id, page: page, sticky: placement.sticky,
+                                   startPointerAngle: atan2(pointer.y - middle.y, pointer.x - middle.x))
+            }
+        } else if let (placement, page, _) = selectedPlacement() {
+            // From the page's own coordinates even when the knob stands off the page, so the photo doesn't jump.
+            let pointer = pageCoordinates(point, onPage: page)
+            drag = .rotate(id: placement.id, page: page, center: placement.center, startAngle: placement.angle,
+                           startPointerAngle: atan2(pointer.y - placement.center.y, pointer.x - placement.center.x))
+        }
+    }
+
+    // MARK: The pointer
+
+    /// Where the pointer changes: a hand over the handles, and while writing, the text cursor everywhere else. The
+    /// pieces never overlap, so moving from one to the next can't leave the wrong pointer showing.
+    private func cursorRects() -> [(rect: NSRect, cursor: NSCursor)] {
+        let pieces = Self.split(visibleRect, by: handleSpots().map(\.rect))
+        return pieces.inside.map { ($0, NSCursor.pointingHand) } + (isWriting ? pieces.outside.map { ($0, NSCursor.iBeam) } : [])
+    }
+
+    override func resetCursorRects() {
+        for (rect, cursor) in cursorRects() { addCursorRect(rect, cursor: cursor) }
+    }
+
+    /// A rectangle cut into pieces that don't overlap: those some rectangles cover, and those they don't. It's cut
+    /// across at every top and bottom edge, then each band along at the sides of what covers it.
+    static func split(_ bounds: NSRect, by rects: [NSRect]) -> (inside: [NSRect], outside: [NSRect]) {
+        let rects = rects.map { $0.intersection(bounds) }.filter { !$0.isEmpty }
+        let edges = Set([bounds.minY, bounds.maxY] + rects.flatMap { [$0.minY, $0.maxY] }).sorted()
+        var inside: [NSRect] = [], outside: [NSRect] = []
+        for (top, bottom) in zip(edges, edges.dropFirst()) {
+            var covered: [ClosedRange<CGFloat>] = []
+            for rect in rects.filter({ $0.minY <= top && $0.maxY >= bottom }).sorted(by: { $0.minX < $1.minX }) {
+                if let last = covered.last, rect.minX <= last.upperBound {
+                    covered[covered.count - 1] = last.lowerBound...max(last.upperBound, rect.maxX)
+                } else {
+                    covered.append(rect.minX...rect.maxX)
+                }
+            }
+            var x = bounds.minX
+            for stretch in covered {
+                if stretch.lowerBound > x { outside.append(NSRect(x: x, y: top, width: stretch.lowerBound - x, height: bottom - top)) }
+                inside.append(NSRect(x: stretch.lowerBound, y: top, width: stretch.upperBound - stretch.lowerBound, height: bottom - top))
+                x = stretch.upperBound
+            }
+            if bounds.maxX > x { outside.append(NSRect(x: x, y: top, width: bounds.maxX - x, height: bottom - top)) }
+        }
+        return (inside, outside)
     }
 
     /// A knob drawn: its stalk and its circle.
@@ -642,23 +742,23 @@ final class BookView: NSView, NSTextViewDelegate {
         }
         return nil
     }
+
+    /// The pointer AppKit is given for each part of the view, for the self-test.
+    var cursorRectsForTesting: [(rect: NSRect, cursor: NSCursor)] { cursorRects() }
+
+    /// The pointer over a point: nil where the view leaves it as it is.
+    func cursorForTesting(at point: NSPoint) -> NSCursor? { cursorRects().first { $0.rect.contains(point) }?.cursor }
+
+    /// The middle of the bar at the picked writing's side, for the self-test.
+    var widenBarForTesting: CGPoint? {
+        guard let (writing, _, left) = writingPlace(), let size = delegate?.bookWritingSize(writing) else { return nil }
+        return writingHandles(writing, size: size, left: left).widen
+    }
     #endif
 
-    /// Whether a point is on any handle of what's picked, to show the pointer can take hold there.
-    private func isOnHandle(_ point: NSPoint) -> Bool {
-        if let knob = photoKnob(), Self.isOn(knob, point) { return true }
-        if let (placement, _, left) = stickyPlacement() {
-            let handles = stickyHandles(placement, left: left)
-            if Self.isOn((handles.top, handles.turn), point) || hypot(point.x - handles.stretch.x, point.y - handles.stretch.y) < 16 { return true }
-        }
-        if let (writing, _, left) = writingPlace(), let size = delegate?.bookWritingSize(writing) {
-            let handles = writingHandles(writing, size: size, left: left)
-            if Self.isOn((handles.top, handles.turn), point) || hypot(point.x - handles.widen.x, point.y - handles.widen.y) < 16 { return true }
-        }
-        return false
-    }
-
     private func updateSelection() {
+        // Where the handles are has changed, and with it where the pointer becomes a hand.
+        window?.invalidateCursorRects(for: self)
         stickyHandle.isHidden = true
         if let (writing, _, left) = writingPlace(), editing == nil, let size = delegate?.bookWritingSize(writing) {
             let rect = CGRect(x: -size.width / 2 - 4, y: -size.height / 2 - 4, width: size.width + 8, height: size.height + 8)
@@ -730,11 +830,6 @@ final class BookView: NSView, NSTextViewDelegate {
         CATransaction.commit()
     }
 
-    /// Whether a point is on the selected photo's turning handle.
-    private func onHandle(_ point: NSPoint) -> Bool {
-        photoKnob().map { Self.isOn($0, point) } ?? false
-    }
-
     // MARK: Sticky notes
 
     /// A sticky note moved by a distance on the page: the move turned into its photo's own coordinates.
@@ -746,13 +841,14 @@ final class BookView: NSView, NSTextViewDelegate {
         return moved
     }
 
-    /// A sticky note stretched by its bottom right corner to a point on the page, its top left corner staying put.
-    static func stretched(_ sticky: BookSticky, to point: CGPoint, on placement: BookPlacement) -> BookSticky {
+    /// A sticky note stretched by its bottom right corner, its top left corner staying put: the spot on the corner
+    /// taken hold of (`grab`, from the corner) goes to a point on the page.
+    static func stretched(_ sticky: BookSticky, to point: CGPoint, on placement: BookPlacement, grab: CGPoint = .zero) -> BookSticky {
         var before = placement
         before.sticky = sticky
         let local = before.stickyLocal(point)
-        let width = max(BookSticky.smallest.width, local.x + sticky.size.width / 2)
-        let height = max(BookSticky.smallest.height, local.y + sticky.size.height / 2)
+        let width = max(BookSticky.smallest.width, local.x - grab.x + sticky.size.width / 2)
+        let height = max(BookSticky.smallest.height, local.y - grab.y + sticky.size.height / 2)
         // The middle moves by half the growth, along the note's own lean.
         let shift = CGPoint(x: (width - sticky.size.width) / 2, y: (height - sticky.size.height) / 2)
         let radians = sticky.angle * .pi / 180
@@ -842,6 +938,7 @@ final class BookView: NSView, NSTextViewDelegate {
         stickyHandle.isHidden = true
         CATransaction.commit()
         turnLayer = container
+        window?.invalidateCursorRects(for: self)
         // The page without the photo while it turns above it.
         delegate.bookSetTurnedOver(turnedOver, hiding: id)
         reloadPage(page)
@@ -906,10 +1003,6 @@ final class BookView: NSView, NSTextViewDelegate {
 
     // MARK: Writing on pages
 
-    override func resetCursorRects() {
-        if isWriting { addCursorRect(bounds, cursor: .iBeam) }
-    }
-
     /// The writing on a page under a point, the topmost first.
     func writing(at point: CGPoint, onPage page: Int) -> BookWriting? {
         guard let delegate, delegate.layout.pages.indices.contains(page) else { return nil }
@@ -942,10 +1035,11 @@ final class BookView: NSView, NSTextViewDelegate {
         return moved
     }
 
-    /// Writing whose lines run as far as a point on the page, its left side staying put.
-    static func widened(_ writing: BookWriting, to point: CGPoint) -> BookWriting {
+    /// Writing widened or narrowed by the bar at its side, its left side staying put: the spot on the bar taken
+    /// hold of (`grab`, past the end of its lines) goes to a point on the page.
+    static func widened(_ writing: BookWriting, to point: CGPoint, grab: CGFloat = 0) -> BookWriting {
         let local = writing.local(point)
-        let width = min(max(local.x + writing.width / 2, BookWriting.widths.lowerBound), BookWriting.widths.upperBound).rounded()
+        let width = min(max(local.x - grab + writing.width / 2, BookWriting.widths.lowerBound), BookWriting.widths.upperBound).rounded()
         var widened = writing
         widened.width = width
         let shift = (width - writing.width) / 2
@@ -1043,39 +1137,9 @@ final class BookView: NSView, NSTextViewDelegate {
         let point = convert(event.locationInWindow, from: nil)
         guard let delegate, !isTurning, turnLayer == nil else { return }
         let layout = delegate.layout
-        // Picked writing's handles: the knob turns it, the bar on its side changes how wide its lines run.
-        if let (writing, page, left) = writingPlace() {
-            let handles = writingHandles(writing, size: delegate.bookWritingSize(writing), left: left)
-            if hypot(point.x - handles.widen.x, point.y - handles.widen.y) < 16 {
-                drag = .widenWriting(page: page, writing: writing)
-                return
-            }
-            if Self.isOn((handles.top, handles.turn), point) {
-                let pagePoint = pageCoordinates(point, onPage: page)
-                drag = .turnWriting(page: page, writing: writing,
-                                    startPointerAngle: atan2(pagePoint.y - writing.center.y, pagePoint.x - writing.center.x))
-                return
-            }
-        }
-        // A picked sticky note's handles: the corner stretches it, the knob turns it.
-        if let (placement, page, left) = stickyPlacement() {
-            let handles = stickyHandles(placement, left: left)
-            if hypot(point.x - handles.stretch.x, point.y - handles.stretch.y) < 16 {
-                drag = .stretchSticky(id: placement.id, page: page, sticky: placement.sticky)
-                return
-            }
-            if Self.isOn((handles.top, handles.turn), point) {
-                let middle = placement.stickyPage(.zero)
-                let pagePoint = pagePoint(point)?.point ?? middle
-                drag = .turnSticky(id: placement.id, page: page, sticky: placement.sticky,
-                                   startPointerAngle: atan2(pagePoint.y - middle.y, pagePoint.x - middle.x))
-                return
-            }
-        }
-        if onHandle(point), let (placement, page, _) = selectedPlacement() {
-            let pagePoint = pagePoint(point)?.point ?? placement.center
-            drag = .rotate(id: placement.id, page: page, center: placement.center, startAngle: placement.angle,
-                           startPointerAngle: atan2(pagePoint.y - placement.center.y, pagePoint.x - placement.center.x))
+        // The handles of what's picked come first: its knob, a sticky note's corner, the bar at writing's side.
+        if let handle = handle(at: point) {
+            takeHold(of: handle, at: point)
             return
         }
         guard let hit = pagePoint(point) else {
@@ -1144,8 +1208,8 @@ final class BookView: NSView, NSTextViewDelegate {
             delegate?.bookPreviewWriting(Self.moved(writing, by: CGPoint(x: (point.x - start.x) * scale, y: (point.y - start.y) * scale)), editing: nil)
             reloadPage(page)
             updateSelection()
-        case let .widenWriting(page, writing):
-            delegate?.bookPreviewWriting(Self.widened(writing, to: pageCoordinates(point, onPage: page)), editing: nil)
+        case let .widenWriting(page, writing, grab):
+            delegate?.bookPreviewWriting(Self.widened(writing, to: pageCoordinates(point, onPage: page), grab: grab), editing: nil)
             reloadPage(page)
             updateSelection()
         case let .turnWriting(page, writing, startPointerAngle):
@@ -1160,9 +1224,9 @@ final class BookView: NSView, NSTextViewDelegate {
                                                        photoAngle: placement.angle))
             reloadPage(page)
             updateSelection()
-        case let .stretchSticky(id, page, sticky):
+        case let .stretchSticky(id, page, sticky, grab):
             guard let placement = delegate?.layout.find(id)?.placement else { return }
-            delegate?.bookPreviewSticky(id, Self.stretched(sticky, to: pageCoordinates(point, onPage: page), on: placement))
+            delegate?.bookPreviewSticky(id, Self.stretched(sticky, to: pageCoordinates(point, onPage: page), on: placement, grab: grab))
             reloadPage(page)
             updateSelection()
         case let .turnSticky(id, page, sticky, startPointerAngle):
@@ -1205,8 +1269,8 @@ final class BookView: NSView, NSTextViewDelegate {
             guard moved else { return }
             delegate?.bookCommitWriting(Self.moved(writing, by: CGPoint(x: (point.x - start.x) * scale, y: (point.y - start.y) * scale)),
                                         actionName: "Move Writing")
-        case let .widenWriting(page, writing):
-            delegate?.bookCommitWriting(Self.widened(writing, to: pageCoordinates(point, onPage: page)), actionName: "Change Writing Width")
+        case let .widenWriting(page, writing, grab):
+            delegate?.bookCommitWriting(Self.widened(writing, to: pageCoordinates(point, onPage: page), grab: grab), actionName: "Change Writing Width")
         case let .turnWriting(page, writing, startPointerAngle):
             delegate?.bookCommitWriting(Self.turned(writing, pointer: pageCoordinates(point, onPage: page), startPointerAngle: startPointerAngle,
                                                     snapping: event.modifierFlags.contains(.shift)), actionName: "Turn Writing")
@@ -1214,9 +1278,9 @@ final class BookView: NSView, NSTextViewDelegate {
             guard moved, let placement = delegate?.layout.find(id)?.placement else { return }
             delegate?.bookCommitSticky(id, Self.moved(sticky, by: CGPoint(x: (point.x - start.x) * scale, y: (point.y - start.y) * scale),
                                                       photoAngle: placement.angle), actionName: "Move Sticky Note")
-        case let .stretchSticky(id, page, sticky):
+        case let .stretchSticky(id, page, sticky, grab):
             guard let placement = delegate?.layout.find(id)?.placement else { return }
-            delegate?.bookCommitSticky(id, Self.stretched(sticky, to: pageCoordinates(point, onPage: page), on: placement),
+            delegate?.bookCommitSticky(id, Self.stretched(sticky, to: pageCoordinates(point, onPage: page), on: placement, grab: grab),
                                        actionName: "Resize Sticky Note")
         case let .turnSticky(id, page, sticky, startPointerAngle):
             guard let placement = delegate?.layout.find(id)?.placement else { return }
@@ -1288,10 +1352,6 @@ final class BookView: NSView, NSTextViewDelegate {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        // The pointer shows when it's over a handle it can take hold of.
-        if !isWriting {
-            if isOnHandle(point) { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
-        }
         guard !isTurning, let delegate, let hit = pagePoint(point) else {
             hover(nil)
             return

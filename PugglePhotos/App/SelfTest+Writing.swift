@@ -72,10 +72,25 @@ extension SelfTest {
             guard let moved else { return }
             let size = book.bookWritingSize(moved)
             let bar = view.viewPoint(moved.page(CGPoint(x: size.width / 2 + 4, y: 0)), onLeft: false)
+            check(view.widenBarForTesting.map { hypot($0.x - bar.x, $0.y - bar.y) < 0.5 } == true && view.cursorForTesting(at: bar) == .pointingHand
+                  && view.cursorForTesting(at: start) == nil, "the pointer is a hand over the bar at writing's side")
+            book.setWriting(true)
+            check(view.cursorForTesting(at: bar) == .pointingHand && view.cursorForTesting(at: view.viewPoint(CGPoint(x: 300, y: 740), onLeft: false)) == .iBeam,
+                  "and with the pen picked up too, a text cursor everywhere else")
+            book.setWriting(false)
             bookMouse(.leftMouseDown, at: bar, in: view)
             bookMouse(.leftMouseDragged, at: CGPoint(x: bar.x - 60, y: bar.y), in: view)
             bookMouse(.leftMouseUp, at: CGPoint(x: bar.x - 60, y: bar.y), in: view)
             check(writing("Snow day, no school!").map { $0.width < moved.width } == true, "the bar on its side narrows its lines")
+            check(view.widenBarForTesting.map { abs($0.x - (bar.x - 60)) < 1.5 } == true, "the bar stays under the pointer",
+                  "\(String(describing: view.widenBarForTesting)) for \(bar.x - 60)")
+            // Taken hold of off its middle, that spot stays under the pointer: the bar doesn't jump to it.
+            guard let narrowed = view.widenBarForTesting else { return }
+            bookMouse(.leftMouseDown, at: CGPoint(x: narrowed.x + 5, y: narrowed.y + 8), in: view)
+            bookMouse(.leftMouseDragged, at: CGPoint(x: narrowed.x + 45, y: narrowed.y + 8), in: view)
+            bookMouse(.leftMouseUp, at: CGPoint(x: narrowed.x + 45, y: narrowed.y + 8), in: view)
+            check(view.widenBarForTesting.map { abs($0.x - (narrowed.x + 40)) < 1.5 } == true, "wherever on the bar it's taken hold of",
+                  "\(String(describing: view.widenBarForTesting)) for \(narrowed.x + 40)")
             _ = at
         }
         step {
