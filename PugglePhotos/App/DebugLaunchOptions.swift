@@ -131,6 +131,8 @@ enum DebugLaunchOptions {
                 let first = [pages.left, pages.right].compactMap { $0 }.flatMap { book.layout.pages[$0].placements }.first { _ in true }
                 if let first, book.layout.pages[book.layout.find(first.id)?.page ?? 0].kind == .photos { book.bookView.select(first.id) }
             }
+            // `-PHShowHandleSpots YES` paints where the handles of what's picked take hold.
+            if defaults.bool(forKey: "PHShowHandleSpots") { book.bookView.showHandleSpotsForTesting() }
             let showing = book.layout.state(book.bookView.state)
             let photos = [showing.left, showing.right].compactMap { $0 }.flatMap { book.layout.pages[$0].kind == .photos ? book.layout.pages[$0].placements : [] }
             if defaults.bool(forKey: "PHBookTurnOver"), let first = photos.first {

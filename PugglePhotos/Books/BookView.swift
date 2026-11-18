@@ -294,7 +294,11 @@ final class BookView: NSView, NSTextViewDelegate {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         desk.frame = bounds
-        book.frame = bounds
+        // Its size and middle, never its frame: the book is slid sideways by its transform to center a closed cover,
+        // and setting the frame of a slid layer folds the slide into its position, so once the slide changed (the book
+        // opening) everything was drawn off to one side of where it's clicked.
+        book.bounds = CGRect(origin: .zero, size: bounds.size)
+        book.position = CGPoint(x: bounds.midX, y: bounds.midY)
         CATransaction.commit()
         reload()
     }
@@ -776,11 +780,40 @@ final class BookView: NSView, NSTextViewDelegate {
         guard let (writing, _, left) = writingPlace(), let size = delegate?.bookWritingSize(writing) else { return nil }
         return writingHandles(writing, size: size, left: left).widen
     }
+
+    /// Where the knob and the corner (or bar) land in the view as drawn: their paths are made in each handle layer's
+    /// own coordinates, and read back through the layers here, for the self-test to hold against where they take hold.
+    var drawnHandlesForTesting: (knob: CGPoint?, stretch: CGPoint?) {
+        guard let layer else { return (nil, nil) }
+        let knob = handle.isHidden ? nil : knobForTesting.map { handle.convert($0.turn, to: layer) }
+        let stretch = stretchHandle.isHidden ? nil : stretchHandle.path.map { path in
+            let box = path.boundingBoxOfPath
+            return stretchHandle.convert(CGPoint(x: box.midX, y: box.midY), to: layer)
+        }
+        return (knob, stretch)
+    }
+
+    /// The picked photo's corner as the pointer finds it, for the self-test.
+    var photoCornerForTesting: CGPoint? { photoCorner() }
+
+    /// `-PHShowHandleSpots YES`: where the handles take hold, painted over the book in the view's own coordinates.
+    private var spotsOverlay: HandleSpotsOverlay?
+
+    func showHandleSpotsForTesting() {
+        let overlay = HandleSpotsOverlay(frame: bounds)
+        overlay.autoresizingMask = [.width, .height]
+        addSubview(overlay)
+        spotsOverlay = overlay
+        overlay.rects = handleSpots().map(\.rect)
+    }
     #endif
 
     private func updateSelection() {
         // Where the handles are has changed, and with it where the pointer becomes a hand.
         window?.invalidateCursorRects(for: self)
+        #if DEBUG
+        spotsOverlay?.rects = handleSpots().map(\.rect)
+        #endif
         stretchHandle.isHidden = true
         if let (writing, _, left) = writingPlace(), editing == nil, let size = delegate?.bookWritingSize(writing) {
             let rect = CGRect(x: -size.width / 2 - 4, y: -size.height / 2 - 4, width: size.width + 8, height: size.height + 8)
@@ -1491,3 +1524,21 @@ final class WritingTextView: NSTextView {
         super.keyDown(with: event)
     }
 }
+
+#if DEBUG
+/// Where a book's handles take hold, painted in the book view's own coordinates over everything, for screenshots.
+private final class HandleSpotsOverlay: NSView {
+    var rects: [NSRect] = [] {
+        didSet { needsDisplay = true }
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.systemBlue.withAlphaComponent(0.35).setFill()
+        for rect in rects { NSBezierPath(rect: rect).fill() }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+#endif

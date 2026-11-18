@@ -24,6 +24,7 @@ extension SelfTest {
         var view: BookView { window.book.bookView }
         var albumID: UUID?
         var settings: BookSettings { library.catalog.book(albumID!) }
+        var windowFrame: NSRect?
 
         step {
             guard let album = library.catalog.albums.first(where: { $0.title == "Beach Trips" }) else {
@@ -39,6 +40,13 @@ extension SelfTest {
             check(photos == album.items.count, "every photo in the album is in the book", "\(photos) of \(album.items.count)")
             check(book.layout.pages.count % 2 == 0 && book.layout.pages.first?.kind == .cover && book.layout.pages.last?.kind == .back,
                   "a book runs from its cover to its back")
+            // The window changes size while the book is closed (slid over to center its cover), so the book is laid
+            // out again there; once open, it must still be drawn where it's clicked.
+            if let nsWindow = window.window {
+                windowFrame = nsWindow.frame
+                nsWindow.setFrame(nsWindow.frame.insetBy(dx: -40, dy: -20), display: true)
+                nsWindow.layoutIfNeeded()
+            }
             view.next()
             wait { !view.isTurning && view.state == 1 }
         }
@@ -74,6 +82,14 @@ extension SelfTest {
             bookMouse(.leftMouseDown, at: point, in: view)
             bookMouse(.leftMouseUp, at: point, in: view)
             check(view.selected == placement.id && book.controls.hasSelection, "clicking a photo picks it")
+            // Its knob and corner are drawn right where they take hold, though the window changed size while the book
+            // was closed.
+            let drawn = view.drawnHandlesForTesting
+            func same(_ a: CGPoint?, _ b: CGPoint?) -> Bool { a.flatMap { a in b.map { hypot(a.x - $0.x, a.y - $0.y) < 0.5 } } ?? false }
+            check(same(drawn.knob, view.knobForTesting?.turn) && same(drawn.stretch, view.photoCornerForTesting),
+                  "a picked photo's handles are drawn right where they take hold",
+                  "knob drawn at \(String(describing: drawn.knob)), taken hold of at \(String(describing: view.knobForTesting?.turn))")
+            if let windowFrame { window.window?.setFrame(windowFrame, display: true) }
         }
         step {
             guard let placement = picked else { return }
