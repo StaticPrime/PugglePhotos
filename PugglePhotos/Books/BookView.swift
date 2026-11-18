@@ -407,8 +407,7 @@ final class BookView: NSView, NSTextViewDelegate {
         for part in [leftBoard, rightBoard, leftStack, rightStack] { part.isHidden = !open }
         for part in [spinePanel, rings] {
             part.isHidden = !(open && binding.hasRings)
-            part.removeAnimation(forKey: "shows")
-            part.opacity = 1
+            part.mask = nil
         }
         // The rings lie flat again, all over the pages, once no page is turning on them.
         if leaf == nil {
@@ -644,8 +643,21 @@ final class BookView: NSView, NSTextViewDelegate {
         return (face.bounds.size, endpaper)
     }
 
-    /// How much a binder's spine shows: hidden, or how opaque.
-    var spineShowsForTesting: Float { spinePanel.isHidden ? 0 : spinePanel.opacity }
+    /// How much of a binder's spine and rings shows across the view, from where to where (nil for none), and where the
+    /// edge of a turning cover shows.
+    var binderShownForTesting: (spine: ClosedRange<CGFloat>?, rings: ClosedRange<CGFloat>?, coverEdge: CGFloat?) {
+        let slide = book.transform.m41
+        func shown(_ part: CALayer) -> ClosedRange<CGFloat>? {
+            guard !part.isHidden, part.contents != nil else { return nil }
+            var low = part.frame.minX, high = part.frame.maxX
+            if let mask = part.mask {
+                let edge = part.frame.minX + mask.position.x
+                if mask.anchorPoint.x == 0 { low = max(low, edge) } else { high = min(high, edge) }
+            }
+            return low < high ? (low + slide)...(high + slide) : nil
+        }
+        return (shown(spinePanel), shown(rings), leaf.map { coverEdge(at: leafAngle, reach: $0.bounds.width) + slide })
+    }
 
     /// Whether the open cover shows around the pages, a margin of it past their outer edges.
     var coverShowsForTesting: Bool {
@@ -754,7 +766,7 @@ final class BookView: NSView, NSTextViewDelegate {
         leaf.add(rotation, forKey: "turn")
         leafAngle = end
         animateRings(from: start, to: end, duration: rotation.duration, timing: rotation.timingFunction)
-        animateBindingShows(from: start, to: end, duration: rotation.duration, timing: rotation.timingFunction)
+        animateBinderInside(from: start, to: end, duration: rotation.duration, timing: rotation.timingFunction)
         shade(leaf, duration: rotation.duration)
         // A closed book slides to the middle as it opens, and back as it closes.
         let slide = CABasicAnimation(keyPath: "transform")
@@ -852,7 +864,8 @@ final class BookView: NSView, NSTextViewDelegate {
         }
         // The book opening or closing: the turning leaf is a cover itself, so the board staying under the pages shows
         // (the back one under the right page at the front of the book, the front one at the back), with the sheets
-        // lying on it. A binder's spine and rings stay at the binding, coming into sight as the cover lifts off them.
+        // lying on it. A binder's spine and rings stay at the binding, inside the book: they show only where the cover
+        // has swung clear of them, never out past its edge.
         if isCover {
             for part in [leftBoard, spinePanel, leftStack, rightStack, rings, rightBoard] { part.isHidden = true }
             (atFront ? rightBoard : leftBoard).isHidden = false
@@ -861,7 +874,13 @@ final class BookView: NSView, NSTextViewDelegate {
             if binding.hasRings {
                 for part in [spinePanel, rings] {
                     part.isHidden = false
-                    part.opacity = Float(bindingShows(at: leafAngle))
+                    let mask = CALayer()
+                    mask.backgroundColor = NSColor.black.cgColor
+                    mask.bounds = CGRect(x: 0, y: 0, width: 100_000, height: 100_000)
+                    // The front cover's inside is past its edge toward the back board; the back cover's, toward the front.
+                    mask.anchorPoint = CGPoint(x: atFront ? 0 : 1, y: 0.5)
+                    mask.position = CGPoint(x: coverEdge(at: leafAngle, reach: leaf.bounds.width) - part.frame.minX, y: part.bounds.midY)
+                    part.mask = mask
                 }
             }
             bookShadow.frame = (atFront ? rightBoard : leftBoard).frame
@@ -904,31 +923,34 @@ final class BookView: NSView, NSTextViewDelegate {
     /// While a cover turns, whether it's the front one (nil while no cover is turning).
     private var coverTurning: Bool?
 
-    /// While a cover turns: how much of a binder's spine and rings shows, from none while the cover lies closed over
-    /// them to all once it has lifted a sixth of the way over.
-    private func bindingShows(at angle: CGFloat) -> CGFloat {
-        guard let atFront = coverTurning else { return 1 }
-        // The front cover lies closed at 0, the back cover at -π.
-        let lift = atFront ? -angle : .pi + angle
-        return min(1, max(0, lift / (.pi / 6)))
+    /// Where a turning cover's outer edge shows across the book, `reach` out from the middle of the binding, at
+    /// `angle`: through the perspective it turns in. A binder's spine and rings show only on the cover's inside of that
+    /// line. Out past it they'd lie on the desk, outside the book; under the cover, it hides them anyway.
+    private func coverEdge(at angle: CGFloat, reach: CGFloat) -> CGFloat {
+        let lift = -reach * sin(angle)
+        return spine.x + reach * cos(angle) / (1 + lift * hinge.sublayerTransform.m34)
     }
 
-    /// Keeps a binder's spine and rings showing as much as the cover's lift lets them while it turns from `start` to
-    /// `end`, with the same timing.
-    private func animateBindingShows(from start: CGFloat, to end: CGFloat, duration: CFTimeInterval, timing: CAMediaTimingFunction?) {
-        guard coverTurning != nil, binding.hasRings, start != end else { return }
-        let steps = 24
+    /// Keeps a binder's spine and rings inside the book while the cover turns from `start` to `end`, with the same timing:
+    /// shown up to its outer edge as it goes.
+    private func animateBinderInside(from start: CGFloat, to end: CGFloat, duration: CFTimeInterval, timing: CAMediaTimingFunction?) {
+        guard coverTurning != nil, let leaf, start != end else { return }
+        let steps = 36
         let shares = (0...steps).map { CGFloat($0) / CGFloat(steps) }
-        let values = shares.map { Float(bindingShows(at: start + (end - start) * $0)) }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         for part in [spinePanel, rings] {
-            let shows = CAKeyframeAnimation(keyPath: "opacity")
-            shows.values = values
-            shows.keyTimes = shares.map { NSNumber(value: Double($0)) }
-            shows.duration = duration
-            shows.timingFunction = timing
-            part.opacity = values.last ?? 1
-            part.add(shows, forKey: "shows")
+            guard let mask = part.mask else { continue }
+            let values = shares.map { coverEdge(at: start + (end - start) * $0, reach: leaf.bounds.width) - part.frame.minX }
+            let follow = CAKeyframeAnimation(keyPath: "position.x")
+            follow.values = values.map { NSNumber(value: Double($0)) }
+            follow.keyTimes = shares.map { NSNumber(value: Double($0)) }
+            follow.duration = duration
+            follow.timingFunction = timing
+            mask.position.x = values.last ?? mask.position.x
+            mask.add(follow, forKey: "follow")
         }
+        CATransaction.commit()
     }
 
     /// Crossfades to another place in the book, for Reduce Motion.
@@ -981,8 +1003,8 @@ final class BookView: NSView, NSTextViewDelegate {
         leafAngle = forward ? -CGFloat.pi * progress : -CGFloat.pi * (1 - progress)
         leaf?.transform = CATransform3DMakeRotation(leafAngle, 0, 1, 0)
         placeRings(at: leafAngle)
-        if coverTurning != nil, binding.hasRings {
-            for part in [spinePanel, rings] { part.opacity = Float(bindingShows(at: leafAngle)) }
+        if coverTurning != nil, let leaf {
+            for part in [spinePanel, rings] { part.mask?.position.x = coverEdge(at: leafAngle, reach: leaf.bounds.width) - part.frame.minX }
         }
         CATransaction.commit()
     }
@@ -1021,7 +1043,7 @@ final class BookView: NSView, NSTextViewDelegate {
             leaf.transform = CATransform3DMakeRotation(flat, 0, 1, 0)
             leaf.add(rotation, forKey: "settle")
             animateRings(from: leafAngle, to: flat, duration: rotation.duration, timing: nil)
-            animateBindingShows(from: leafAngle, to: flat, duration: rotation.duration, timing: nil)
+            animateBinderInside(from: leafAngle, to: flat, duration: rotation.duration, timing: nil)
             leafAngle = flat
             CATransaction.commit()
         }

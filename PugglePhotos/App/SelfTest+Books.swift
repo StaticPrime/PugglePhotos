@@ -565,9 +565,15 @@ extension SelfTest {
         step {
             looksAsShown("a binder closed on its front cover")
             // Opening, the cover is the whole board, its border showing all the way over, and inside it the endpaper
-            // with the board's border round it; the spine and rings show from under it as it lifts.
-            view.holdTurn(at: 0.02)
-            let lifting = view.spineShowsForTesting
+            // with the board's border round it. The binder's spine and rings are inside the book: none of them shows
+            // while the cover lies over the pages, not even out beside it, and past upright they show only up to the
+            // cover's edge.
+            var overPages: [String] = []
+            for progress in [0.02, 0.25, 0.45] as [CGFloat] {
+                view.holdTurn(at: progress)
+                let shown = view.binderShownForTesting
+                if shown.spine != nil || shown.rings != nil { overPages.append("\(progress): \(shown)") }
+            }
             view.holdTurn(at: 0.5)
             let board = view.stage.rightBoard.size, margin = view.stage.boardMargin
             let face = view.turningFaceForTesting
@@ -575,8 +581,13 @@ extension SelfTest {
                   "a cover turns as its whole board, its border showing all the way over", "\(String(describing: face?.face)) for a board \(board)")
             check(face?.endpaper.map { abs($0.minX - margin) < 0.5 && abs($0.minY - margin) < 0.5 && abs($0.width - view.pageSize.width) < 0.5 } == true,
                   "and inside it, the endpaper lies on the board, its border round it", "\(String(describing: face?.endpaper))")
-            check(lifting < 0.2 && view.spineShowsForTesting == 1, "a binder's spine and rings show from under its cover as it lifts",
-                  "\(lifting) as it starts, \(view.spineShowsForTesting) halfway")
+            view.holdTurn(at: 0.75)
+            let leaning = view.binderShownForTesting
+            check(overPages.isEmpty, "while a binder's cover lies over its pages, none of its spine or rings shows, not even outside the book",
+                  "\(overPages)")
+            check(leaning.spine != nil && leaning.rings != nil
+                  && leaning.coverEdge.map { edge in [leaning.spine, leaning.rings].allSatisfy { $0.map { $0.lowerBound >= edge - 0.5 } ?? false } } == true,
+                  "turned past upright, they show inside the book, never out past the cover's edge", "\(leaning)")
             view.letGoOfTurn(at: 0.1)
             wait(upTo: 2) { !view.isTurning }
         }
