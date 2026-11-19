@@ -3,11 +3,13 @@ import PugglePhotosKit
 
 protocol SidebarDelegate: AnyObject {
     var library: LibraryController { get }
+    var sharing: SharingController { get }
     /// How many years today's memories come from, for the Memories row.
     var memoriesToday: Int { get }
     var albumOrder: [UUID] { get }
     func sidebarSelect(_ source: LibrarySource)
     func sidebarNewAlbum()
+    func sidebarNewSharedAlbum()
     func sidebarNewLabel()
     func sidebarMenu(for source: LibrarySource) -> NSMenu?
     func sidebarRenameAlbum(_ id: UUID, to title: String)
@@ -144,8 +146,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var albumNodes = [SidebarNode(.source(.allAlbums))]
         albumNodes += (delegate?.albumOrder ?? library.catalog.albums.map(\.id)).map { SidebarNode(.source(.album($0))) }
         let labelNodes = library.catalog.labels.map { SidebarNode(.source(.label($0.id))) }
+        // Albums you share, then albums shared with you, each by name.
+        let sharing = delegate?.sharing
+        let yours = (sharing?.mine ?? []).filter { library.catalog.album($0.id) != nil }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }.map { SidebarNode(.source(.album($0.id))) }
+        let theirs = (sharing?.sharedWithMe ?? []).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+            .map { SidebarNode(.source(.sharedAlbum($0.id))) }
         roots = [SidebarNode(.heading("Library"), children: libraryNodes), SidebarNode(.heading("Albums"), children: albumNodes),
-                 SidebarNode(.heading("Labels"), children: labelNodes)]
+                 SidebarNode(.heading("Shared Albums"), children: yours + theirs), SidebarNode(.heading("Labels"), children: labelNodes)]
         isReloading = true
         outlineView.reloadData()
         for root in roots {
@@ -271,8 +279,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         switch node.kind {
         case let .heading(title):
             let cell = outlineView.makeView(withIdentifier: SidebarHeadingCell.identifier, owner: self) as? SidebarHeadingCell ?? SidebarHeadingCell()
-            cell.configure(title: title, addAction: title == "Albums" ? { [weak self] in self?.delegate?.sidebarNewAlbum() }
-                : title == "Labels" ? { [weak self] in self?.delegate?.sidebarNewLabel() } : nil)
+            let add: (() -> Void)? = switch title {
+            case "Albums": { [weak self] in self?.delegate?.sidebarNewAlbum() }
+            case "Shared Albums": { [weak self] in self?.delegate?.sidebarNewSharedAlbum() }
+            case "Labels": { [weak self] in self?.delegate?.sidebarNewLabel() }
+            default: nil
+            }
+            cell.configure(title: title, addAction: add)
             return cell
         case let .source(source):
             let cell = outlineView.makeView(withIdentifier: SidebarCell.identifier, owner: self) as? SidebarCell ?? SidebarCell()
@@ -311,6 +324,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case let .label(id):
             guard let label = library.catalog.label(id) else { return }
             cell.configure(title: label.displayName, symbol: nil, count: arranger.ids(for: source).count, dot: Theme.color(label.color))
+        case let .sharedAlbum(id):
+            guard let album = delegate?.sharing.sharedWithMe(id) else { return }
+            cell.configure(title: album.title, symbol: "person.2", count: arranger.ids(for: source).count)
+            if let cover = album.coverID { loadCover(cover, album: id, into: cell, library) }
         }
     }
 
@@ -390,7 +407,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case let .album(id): .album(id)
             case let .label(id): .label(id)
             case .allAlbums: .newAlbum
-            case .memories, .memory, .journal: nil
+            case .memories, .memory, .journal, .sharedAlbum: nil
             }
         }
     }

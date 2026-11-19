@@ -192,7 +192,7 @@ public struct Catalog: Hashable, Codable, Sendable {
     /// Adds an album at the end and returns its ID.
     @discardableResult
     public mutating func addAlbum(title: String, items: [PhotoID] = [], created: Date = Date()) -> UUID {
-        let album = Album(title: title, created: created, items: Self.unique(items))
+        let album = Album(title: title, created: created, items: Self.unique(items.filter { !SharedAlbum.isShared($0) }))
         albums.append(album)
         return album.id
     }
@@ -217,13 +217,14 @@ public struct Catalog: Hashable, Codable, Sendable {
         update(id) { $0.cover = photo }
     }
 
-    /// Adds photos to the end of an album, skipping any it already has. Returns how many were added.
+    /// Adds photos to the end of an album, skipping any it already has. Returns how many were added. Photos of albums
+    /// shared with you aren't in your library, so they can't go in one of your albums (or its twin in Photos).
     @discardableResult
     public mutating func add(_ photos: [PhotoID], toAlbum id: UUID) -> Int {
         var added = 0
         update(id) { album in
             var present = Set(album.items)
-            for photo in photos where present.insert(photo).inserted {
+            for photo in photos where !SharedAlbum.isShared(photo) && present.insert(photo).inserted {
                 album.items.append(photo)
                 added += 1
             }
@@ -392,8 +393,10 @@ public struct Catalog: Hashable, Codable, Sendable {
         setDetails(photo) { $0.note = note }
     }
 
-    /// Changes one photo's details, dropping the entry once it holds nothing.
+    /// Changes one photo's details, dropping the entry once it holds nothing. A photo of an album shared with you is
+    /// its owner's to change: nothing is written about it here.
     mutating func setDetails(_ photo: PhotoID, _ change: (inout PhotoDetails) -> Void) {
+        guard !SharedAlbum.isShared(photo) else { return }
         var details = photos[photo] ?? PhotoDetails()
         change(&details)
         photos[photo] = details.isEmpty ? nil : details

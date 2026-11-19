@@ -20,6 +20,8 @@ final class BookControlsModel {
     var isWriting = false
     /// Whether the open pages include one the person added.
     var showsAddedPage = false
+    /// Who shared the book, when it's someone else's to look through; nil for a book of yours.
+    var sharedBy: String?
     @ObservationIgnored weak var controller: BookViewController?
 }
 
@@ -40,6 +42,8 @@ final class BookViewController: NSViewController, BookViewDelegate {
     let bookView = BookView()
     let controls = BookControlsModel()
     private(set) var album: UUID?
+    /// The album shared with you that's open, to look through: nothing in it can be changed here.
+    private(set) var sharedAlbum: UUID?
     private(set) var layout = BookLayout(items: [], captions: [:], settings: BookSettings(), coverPhoto: nil)
     private var renderer: BookRenderer?
     private var pageImages: [Int: CGImage] = [:]
@@ -123,13 +127,23 @@ final class BookViewController: NSViewController, BookViewDelegate {
     // MARK: The book
 
     /// Opens an album as a book, where it was left (or closed, the first time).
-    func show(album id: UUID) {
+    func show(album id: UUID) { open(id, shared: false) }
+
+    /// Opens an album shared with you as a book, to look through.
+    func show(shared id: UUID) { open(id, shared: true) }
+
+    /// Whether the book is someone else's, to look through.
+    var isReadOnly: Bool { sharedAlbum != nil }
+
+    private func open(_ id: UUID, shared: Bool) {
         loadViewIfNeeded()
-        if album != id {
+        if (shared ? sharedAlbum : album) != id {
             bookView.endEditing()
             setWriting(false)
-            if let album { places[album] = bookView.state }
-            album = id
+            if let open = album ?? sharedAlbum { places[open] = bookView.state }
+            album = shared ? nil : id
+            sharedAlbum = shared ? id : nil
+            bookView.isReadOnly = shared
             bookView.forgetTurnedOver()
             images = [:]
             imageOrder = []
@@ -145,6 +159,10 @@ final class BookViewController: NSViewController, BookViewDelegate {
 
     /// Lays the book out again from the album (after it or its book settings changed), keeping the place.
     func rebuild() {
+        if let sharedAlbum {
+            rebuildShared(sharedAlbum)
+            return
+        }
         guard let album, let albumValue = library.catalog.album(album) else { return }
         let arranger = library.arranger
         var ids = albumValue.items.filter(library.snapshot.contains)
@@ -184,10 +202,41 @@ final class BookViewController: NSViewController, BookViewDelegate {
         prefetch()
     }
 
+    /// A book shared with you, laid out just as its owner's is: the photos in the owner's order, each where it lies in
+    /// the owner's book, their captions and notes, and the book's look, written in the owner's hand.
+    private func rebuildShared(_ id: UUID) {
+        guard let shared = library.sharedAlbums.first(where: { $0.id == id }) else { return }
+        let settings = shared.book ?? BookSettings()
+        layout = BookLayout(items: shared.bookItems.filter { library.snapshot.contains($0.id) }, captions: shared.captions,
+                            notes: shared.notes, settings: settings, coverPhoto: shared.coverID)
+        let dates = shared.items.map(\.date)
+        let videos = shared.items.filter(\.kind.isVideo).count
+        let subtitle = [library.formatting.dateRange(from: dates.min(), to: dates.max()),
+                        library.formatting.count(photos: shared.items.count - videos, videos: videos)].compactMap { $0 }.joined(separator: " · ")
+        let renderer = BookRenderer(settings: settings, title: shared.title, subtitle: subtitle, story: shared.story) { [weak self] id in
+            self?.images[id]
+        }
+        renderer.coverPhoto = shared.coverID
+        renderer.turnedOver = turnedOver
+        renderer.hiding = hiding
+        let library = library
+        renderer.day = { id in library.snapshot.day(of: id).map(library.formatting.writtenDay) ?? "" }
+        self.renderer = renderer
+        pageImages = [:]
+        prefetch()
+    }
+
+    /// The title of the album the book is made from.
+    private var albumTitle: String? {
+        if let sharedAlbum { return library.sharedAlbums.first { $0.id == sharedAlbum }?.title }
+        return album.flatMap { library.catalog.album($0)?.title }
+    }
+
     /// The library or catalog changed: lay out again and show it.
     func libraryChanged() {
-        guard album != nil, isViewLoaded else { return }
+        guard album != nil || sharedAlbum != nil, isViewLoaded else { return }
         if let album, library.catalog.album(album) == nil { return }
+        if let sharedAlbum, !library.sharedAlbums.contains(where: { $0.id == sharedAlbum }) { return }
         rebuild()
         bookView.reload()
         updateControls()
@@ -258,7 +307,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
     var playsVideoSound: Bool { UserDefaults.standard.bool(forKey: BookPreferences.soundKey) }
 
     func bookDidChangeState(_ state: Int) {
-        if let album { places[album] = state }
+        if let open = album ?? sharedAlbum { places[open] = state }
         // A photo turned over goes back when its page is turned away.
         if let turned = bookView.turnedOver, let page = layout.find(turned)?.page {
             let showing = layout.state(state)
@@ -772,6 +821,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
         controls.hasSelection = bookView.selected != nil
         controls.isWriting = bookView.isWriting
         controls.showsAddedPage = openAddedPage != nil
+        controls.sharedBy = sharedAlbum.flatMap { id in library.sharedAlbums.first { $0.id == id }?.owner.name }
     }
 
     // MARK: PDF, EPUB and printing
@@ -915,7 +965,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
     }
 
     func exportPDF() {
-        guard let window = view.window, let album, let title = library.catalog.album(album)?.title else { return }
+        guard let window = view.window, let title = albumTitle else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = "\(title).pdf"
@@ -944,7 +994,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
     static let ebookPageWidth = 1800
 
     func exportEPUB() {
-        guard let window = view.window, let album, let title = library.catalog.album(album)?.title else { return }
+        guard let window = view.window, let title = albumTitle else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.epub]
         panel.nameFieldStringValue = "\(title).epub"
@@ -958,7 +1008,7 @@ final class BookViewController: NSViewController, BookViewDelegate {
     /// is a picture of it drawn just as the window draws it, its photos at print size, as on paper. The pages are drawn
     /// one at a time, each packed as JPEG while the window carries on, then put together with words for each.
     func saveEPUB(to url: URL, then done: ((Error?) -> Void)? = nil) {
-        guard let album, let renderer else { return }
+        guard let album = album ?? sharedAlbum, let renderer else { return }
         let layout = layout
         withPrintPictures(asJPEG: true) { [weak self] pictures in
             guard let self else { return }
@@ -1080,6 +1130,21 @@ struct BookControlsView: View {
                 .disabled(!model.canGoOn)
                 .help("Next page (→)")
             Divider().frame(height: 20)
+            if let owner = model.sharedBy {
+                // Someone else's book, to look through.
+                Label("Shared by \(owner)", systemImage: "person.2")
+                    .titled(titled)
+                    .foregroundStyle(.secondary)
+                    .help("\(owner) shared this book with you to look through")
+            } else {
+                editingControls(titled: titled)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder private func editingControls(titled: Bool) -> some View {
+        HStack(spacing: 14) {
             picker("Paper", BookPaper.allCases, \.paper, \.displayName)
             picker("Frames", BookFrame.allCases, \.frame, \.displayName)
             picker("Tilt", BookTilt.allCases, \.tilt, \.displayName)
@@ -1144,7 +1209,6 @@ struct BookControlsView: View {
                 Button("Put Back \(model.hiddenCount)") { model.controller?.putBackLeftOut() }
                     .help("Put back the photos left out of the book")
             }
-            Spacer(minLength: 0)
         }
     }
 

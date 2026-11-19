@@ -187,9 +187,10 @@ public struct SharedAlbum: Identifiable, Hashable, Codable, Sendable {
     /// An album of yours as it's shared: its photos and videos (`items`, in the album's order), their captions and
     /// notes from `catalog`, its cover and story, and its book, every photo named apart from your library. A photo
     /// shared before keeps the name it was shared under, so what's said about it, and where it lies in the book, stays
-    /// with it; who it's shared with, and how, carry over from `previous`.
+    /// with it; who it's shared with, and how, carry over from `previous`. A book that's written in whatever hand its
+    /// reader chose is written in `handwriting`, the owner's, wherever it's shared.
     public static func sharing(_ album: Album, items: [MediaItem], catalog: Catalog, cover: PhotoID?, owner: ShareParticipant,
-                               previous: SharedAlbum?, now: Date = Date()) -> SharedAlbum {
+                               handwriting: String? = nil, previous: SharedAlbum?, now: Date = Date()) -> SharedAlbum {
         var known: [PhotoID: UUID] = [:]
         for item in previous?.items ?? [] {
             if let source = item.source { known[source] = item.id }
@@ -209,6 +210,11 @@ public struct SharedAlbum: Identifiable, Hashable, Codable, Sendable {
         }
         result.cover = cover.flatMap { cover in shared.first { $0.source == cover }?.id }
         result.book = album.book?.renamingPhotos { names[$0] }
+        if let handwriting, result.book?.handwriting == nil {
+            var book = result.book ?? BookSettings()
+            book.handwriting = handwriting
+            result.book = book
+        }
         if let previous, result.sameContent(as: previous) { result.modified = previous.modified }
         return result
     }

@@ -169,7 +169,7 @@ final class ViewerViewController: NSViewController {
 
     func updateCaption() {
         guard let id = currentID, let library = delegate?.library else { return }
-        let caption = library.catalog.photos[id]?.caption ?? ""
+        let caption = library.details(id).caption
         captionField.stringValue = caption
         captionBackground.isHidden = caption.isEmpty
     }

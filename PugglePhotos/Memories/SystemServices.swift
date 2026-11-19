@@ -14,6 +14,10 @@ protocol MemoryNotificationCenter: AnyObject {
     func show(_ notification: MemoryNotification, image: URL?)
     /// Called with the memory a clicked notification is about.
     var onOpen: ((_ memoryID: String) -> Void)? { get set }
+    /// Shows a notification about an album shared with you, now, with one of its pictures.
+    func showSharedAlbum(_ notice: SharedAlbumNotice, image: URL?)
+    /// Called with the shared album a clicked notification is about.
+    var onOpenSharedAlbum: ((UUID) -> Void)? { get set }
 }
 
 /// Opens PugglePhotos when the person logs in, or stops.
@@ -28,6 +32,7 @@ protocol LoginItemService: AnyObject {
 /// The system's notification center.
 final class SystemNotificationCenter: NSObject, MemoryNotificationCenter, UNUserNotificationCenterDelegate {
     var onOpen: ((String) -> Void)?
+    var onOpenSharedAlbum: ((UUID) -> Void)?
     private let center = UNUserNotificationCenter.current()
     static let threadIdentifier = "memories"
 
@@ -58,6 +63,25 @@ final class SystemNotificationCenter: NSObject, MemoryNotificationCenter, UNUser
         Task { try? await UNUserNotificationCenter.current().add(request.request) }
     }
 
+    func showSharedAlbum(_ notice: SharedAlbumNotice, image: URL?) {
+        let content = UNMutableNotificationContent()
+        content.title = notice.title
+        content.body = notice.body
+        content.sound = .default
+        content.threadIdentifier = "shared-albums"
+        content.userInfo = ["sharedAlbum": notice.album.uuidString]
+        // A copy of the picture: the system moves the file it's given.
+        if let image {
+            let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(image.pathExtension)
+            if (try? FileManager.default.copyItem(at: image, to: copy)) != nil,
+               let attachment = try? UNNotificationAttachment(identifier: "photo", url: copy, options: nil) {
+                content.attachments = [attachment]
+            }
+        }
+        let request = SendableRequest(request: UNNotificationRequest(identifier: notice.identifier, content: content, trigger: nil))
+        Task { try? await UNUserNotificationCenter.current().add(request.request) }
+    }
+
     private nonisolated struct SendableRequest: @unchecked Sendable { let request: UNNotificationRequest }
 
     private func trigger(for notification: MemoryNotification) -> UNNotificationTrigger {
@@ -82,8 +106,10 @@ final class SystemNotificationCenter: NSObject, MemoryNotificationCenter, UNUser
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let memory = response.notification.request.content.userInfo["memory"] as? String
+        let shared = (response.notification.request.content.userInfo["sharedAlbum"] as? String).flatMap(UUID.init(uuidString:))
         Task { @MainActor in
             if let memory { self.onOpen?(memory) }
+            if let shared { self.onOpenSharedAlbum?(shared) }
         }
         completionHandler()
     }

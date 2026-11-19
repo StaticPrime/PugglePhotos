@@ -103,6 +103,10 @@ protocol PhotoSource: AnyObject {
     func updateAlbum(_ id: String, title: String, items: [PhotoID], completion: @escaping @MainActor (Error?) -> Void)
     /// Deletes a library album. The photos in it stay in the library.
     func deleteAlbum(_ id: String, completion: @escaping @MainActor (Error?) -> Void)
+
+    /// A photo's or video's original file as it is now (with any edits made to it), at full size, written to a
+    /// temporary file for sharing; nil if it can't be had.
+    func exportOriginal(_ id: PhotoID, completion: @escaping @MainActor (URL?) -> Void)
 }
 
 extension PhotoSource {

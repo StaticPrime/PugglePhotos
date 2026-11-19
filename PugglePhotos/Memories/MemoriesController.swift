@@ -218,6 +218,8 @@ final class MemoriesController {
 /// notifications or ask for permission.
 final class RecordingNotificationCenter: MemoryNotificationCenter {
     var onOpen: ((String) -> Void)?
+    var onOpenSharedAlbum: ((UUID) -> Void)?
+    private(set) var sharedNotices: [SharedAlbumNotice] = []
     private(set) var scheduled: [MemoryNotification] = []
     private(set) var shown: [MemoryNotification] = []
     private(set) var images: [CivilDay: URL] = [:]
@@ -234,6 +236,8 @@ final class RecordingNotificationCenter: MemoryNotificationCenter {
     }
 
     func show(_ notification: MemoryNotification, image: URL?) { shown.append(notification) }
+
+    func showSharedAlbum(_ notice: SharedAlbumNotice, image: URL?) { sharedNotices.append(notice) }
 }
 
 /// Stands in for the login item in debug runs on the sample library.

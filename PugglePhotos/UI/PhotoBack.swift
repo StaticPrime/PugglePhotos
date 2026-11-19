@@ -15,7 +15,7 @@ enum PhotoBack {
     /// What's on a photo's back.
     static func content(of id: PhotoID, library: LibraryController, family: String? = nil) -> Content {
         let day = library.snapshot.day(of: id).map(library.formatting.writtenDay) ?? ""
-        let details = library.catalog.details(id)
+        let details = library.details(id)
         return Content(day: day, caption: details.caption, note: details.note, family: family)
     }
 

@@ -99,6 +99,19 @@ import Testing
         #expect(!changed.sameContent(as: withLink))
     }
 
+    @Test func aSharedBookIsInTheOwnersHand() {
+        let (album, items, catalog) = workedAlbum()
+        let shared = SharedAlbum.sharing(album, items: items, catalog: catalog, cover: nil, owner: owner, handwriting: "Noteworthy", previous: nil)
+        #expect(shared.book?.handwriting == "Noteworthy", "written as its owner sees it")
+        var chosen = album
+        chosen.book?.handwriting = "Marker Felt"
+        #expect(SharedAlbum.sharing(chosen, items: items, catalog: catalog, cover: nil, owner: owner, handwriting: "Noteworthy",
+                                    previous: nil).book?.handwriting == "Marker Felt", "a hand chosen for the book stays")
+        let plain = Album(title: "Plain", items: items.map(\.id))
+        #expect(SharedAlbum.sharing(plain, items: items, catalog: catalog, cover: nil, owner: owner, handwriting: "Noteworthy",
+                                    previous: nil).book?.handwriting == "Noteworthy", "even a book as it first comes")
+    }
+
     @Test func renamingLeavesOutWhatsGone() {
         var book = BookSettings()
         book.changeOverride("a") { $0.angle = 5; $0.page = .photo("gone") }
@@ -157,6 +170,52 @@ import Testing
         store.removePictures(of: shared.id, keeping: [shared.items[0]])
         #expect(FileManager.default.fileExists(atPath: picture.path)
                 && !FileManager.default.fileExists(atPath: store.pictureURL(album: shared.id, item: shared.items[1]).path))
+    }
+
+    @Test func noticesOfSharedAlbums() {
+        let gran = ShareParticipant(id: "gran", name: "Gran", isOwner: true)
+        var album = SharedAlbum(id: UUID(), title: "Gran’s Garden", created: Date(), modified: Date(),
+                                items: [SharedItem(kind: .photo, date: Date(), pixelWidth: 1, pixelHeight: 1, layoutSeed: 1),
+                                        SharedItem(kind: .video, date: Date(), pixelWidth: 1, pixelHeight: 1, layoutSeed: 2)],
+                                owner: gran, isMine: false)
+        let formatting = Formatting()
+        let shared = SharedAlbumNotice.shared(album, formatting: formatting)
+        #expect(shared.title == "Gran shared “Gran’s Garden” with you" && shared.body == "1 photo and 1 video. Click to look through it in PugglePhotos.")
+        #expect(shared.identifier == "shared-\(album.id.uuidString)")
+        var more = album
+        more.items += [SharedItem(kind: .photo, date: Date(), pixelWidth: 1, pixelHeight: 1, layoutSeed: 3),
+                       SharedItem(kind: .photo, date: Date(), pixelWidth: 1, pixelHeight: 1, layoutSeed: 4)]
+        let added = SharedAlbumNotice.added(from: album, to: more, formatting: formatting)
+        #expect(added?.title == "Gran added to “Gran’s Garden”" && added?.body == "2 photos added. Click to see them.")
+        album.items[0].caption = "Roses"
+        #expect(SharedAlbumNotice.added(from: more, to: album, formatting: formatting) == nil, "nothing added, nothing to say")
+    }
+
+    @Test func sharedPhotosStayOutOfYourAlbums() {
+        var catalog = Catalog()
+        let shared = SharedAlbum.photoID(album: UUID(), item: UUID())
+        let album = catalog.addAlbum(title: "Mine", items: ["library-1", shared])
+        #expect(catalog.album(album)?.items == ["library-1"])
+        #expect(catalog.add([shared, "library-2"], toAlbum: album) == 1 && catalog.album(album)?.items == ["library-1", "library-2"])
+        catalog.setCaption("Hers", for: [shared])
+        catalog.setNote("Hers", for: shared)
+        let label = catalog.addLabel(name: "Family", color: .blue)
+        catalog.setLabel(label, on: [shared], true)
+        #expect(catalog.photos[shared] == nil, "what's said about it is its owner's")
+    }
+
+    @Test func aSharedAlbumShowsItsPhotos() {
+        let gran = ShareParticipant(id: "gran", name: "Gran", isOwner: true)
+        let album = SharedAlbum(id: UUID(), title: "Garden", created: Date(), modified: Date(),
+                                items: [SharedItem(kind: .photo, date: Date(timeIntervalSinceReferenceDate: 2), pixelWidth: 1, pixelHeight: 1,
+                                                   caption: "Roses", layoutSeed: 1),
+                                        SharedItem(kind: .photo, date: Date(timeIntervalSinceReferenceDate: 1), pixelWidth: 1, pixelHeight: 1, layoutSeed: 2)],
+                                owner: gran, isMine: false)
+        let arranger = Arranger(snapshot: LibrarySnapshot(items: media(2), extras: album.mediaItems), catalog: Catalog(), sharedAlbums: [album])
+        #expect(arranger.ids(for: .sharedAlbum(album.id)) == album.photoIDs, "in the album's order")
+        #expect(arranger.ids(for: .library) == ["library-0", "library-1"])
+        #expect(arranger.title(of: album.photoIDs[0]) == "Roses")
+        #expect(arranger.sorted(album.photoIDs, by: .dateTaken, ascending: true) == album.photoIDs.reversed())
     }
 
     @Test func initials() {

@@ -99,7 +99,7 @@ enum SelfTest {
             exit(1)
         }
         let library = app.library!
-        let source = library.source as! SamplePhotoSource
+        let source = library.baseSource as! SamplePhotoSource
         let undo = library.undoManager
         nsWindow.makeKeyAndOrderFront(nil)
         UserDefaults.standard.set(false, forKey: Preferences.askBeforeChangingDatesKey)
@@ -483,6 +483,7 @@ enum SelfTest {
         bookNoteSteps(app, window: window)
         writingSteps(app, window: window)
         importSteps(app, window: window)
+        sharingSteps(app, window: window)
 
         // MARK: Saving
         step { wait(upTo: 3) { (try? DebugLaunchOptions.sampleStore?.load()) == catalog } }

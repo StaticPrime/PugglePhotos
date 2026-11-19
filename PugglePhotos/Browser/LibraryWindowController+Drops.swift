@@ -38,7 +38,7 @@ extension LibraryWindowController {
         case .allAlbums:
             // On a cover, into that album; anywhere else, into a new one.
             return albums.album(atWindowPoint: dropZone.convert(point, to: nil)).map { .album($0) } ?? .newAlbum
-        case .memories, .memory, .journal: return nil
+        case .memories, .memory, .journal, .sharedAlbum: return nil
         }
     }
 

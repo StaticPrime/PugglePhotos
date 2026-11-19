@@ -4,6 +4,8 @@ import PugglePhotosKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var library: LibraryController!
     private(set) var memories: MemoriesController!
+    private(set) var sharing: SharingController!
+    private(set) var notifications: MemoryNotificationCenter!
     private(set) var loginItem: LoginItemService!
     private(set) var settings: SettingsModel!
     private(set) var windowController: LibraryWindowController?
@@ -26,8 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         library = makeLibrary()
         let notifications = makeNotificationCenter()
+        self.notifications = notifications
         memories = MemoriesController(library: library, notifications: notifications, defaults: Self.memoryDefaults, clock: Self.memoryClock)
         notifications.onOpen = { [weak self] id in self?.openMemory(id) }
+        let sharedStore = Self.sharedAlbumsStore
+        sharing = SharingController(library: library, backend: makeSharingBackend(store: sharedStore), store: sharedStore, notifications: notifications)
+        notifications.onOpenSharedAlbum = { [weak self] id in self?.openSharedAlbum(id) }
         loginItem = makeLoginItem()
         settings = SettingsModel(loginItem: loginItem)
         NSApp.mainMenu = MenuBuilder.makeMainMenu()
@@ -39,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         library.start(catalog: initialCatalog)
         memories.start()
+        sharing.start()
         // Files other apps wrote out for drops last time are in the library by now, or were never wanted.
         FileDrop.clearDroppedFiles()
         if launchedAtLogin {
@@ -71,6 +78,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         return LibraryController(source: SystemPhotoSource(), store: CatalogStore(folder: Self.catalogFolder))
+    }
+
+    /// iCloud, where albums are shared; on the sample library, a stand-in for it.
+    private func makeSharingBackend(store: SharedAlbumsStore) -> SharingBackend {
+        #if DEBUG
+        if DebugLaunchOptions.usesSampleLibrary {
+            let standIn = StandInSharing(store: store)
+            // The self-test brings Gran's album in itself, when it's ready for it.
+            standIn.delivers = !UserDefaults.standard.bool(forKey: "PHSelfTest")
+            return standIn
+        }
+        #endif
+        return UnavailableSharing(reason: "Sharing albums uses iCloud, which this copy of PugglePhotos isn’t set up to reach yet.")
+    }
+
+    /// Where shared albums are kept: beside the catalog, or for the sample library in a folder of its own.
+    private static var sharedAlbumsStore: SharedAlbumsStore {
+        #if DEBUG
+        if DebugLaunchOptions.usesSampleLibrary { return DebugLaunchOptions.sampleSharedStore }
+        #endif
+        return SharedAlbumsStore(folder: catalogFolder.appendingPathComponent("Shared Albums", isDirectory: true))
     }
 
     /// The system's notifications; debug runs on the sample library only record them.
@@ -114,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showLibraryWindow(_ sender: Any?) {
         leaveMenuBar()
         if windowController == nil {
-            windowController = LibraryWindowController(library: library, memories: memories)
+            windowController = LibraryWindowController(library: library, memories: memories, sharing: sharing)
             windowController?.window?.center()
         }
         windowController?.showWindow(nil)
@@ -143,6 +171,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Memories
 
     /// Plays a memory, from a clicked notification or the menu bar: the window comes up behind the slideshow.
+    /// Opens an album shared with you, from a notification about it.
+    func openSharedAlbum(_ id: UUID) {
+        showLibraryWindow(nil)
+        guard sharing.sharedWithMe(id) != nil else { return }
+        windowController?.go(to: .sharedAlbum(id))
+    }
+
     func openMemory(_ id: String) {
         showLibraryWindow(nil)
         guard library.hasLoaded else {

@@ -17,7 +17,7 @@ extension LibraryController {
     /// has labels or a note.
     func spokenDescription(of id: PhotoID) -> String {
         guard let item = snapshot.item(id) else { return "Photo" }
-        let details = catalog.details(id)
+        let details = self.details(id)
         var parts = [item.kind.isVideo && item.duration > 0 ? "\(item.kind.displayName), \(Formatting.duration(item.duration))"
                                                             : item.kind.displayName,
                      formatting.dateAndTime(item.date)]

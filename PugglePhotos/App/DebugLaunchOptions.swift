@@ -53,6 +53,10 @@ enum DebugLaunchOptions {
         return defaults
     }()
 
+    /// A fresh folder for the sample library's shared albums.
+    static let sampleSharedStore = SharedAlbumsStore(folder: FileManager.default.temporaryDirectory
+        .appendingPathComponent("PugglePhotos Sample Shared Albums \(UUID().uuidString)", isDirectory: true))
+
     /// A fresh folder for the sample catalog, so the real one is never touched.
     static let sampleStore: CatalogStore? = {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("PugglePhotos Sample Catalog \(UUID().uuidString)", isDirectory: true)
@@ -72,7 +76,7 @@ enum DebugLaunchOptions {
             if let inspector = defaults.object(forKey: "PHInspector") as? String {
                 controller.inspectorItem.isCollapsed = !(inspector == "YES" || inspector == "1")
             }
-            setUp(controller, app: app)
+            setUpOnceShared(controller, app: app, tries: 0)
             if defaults.bool(forKey: "PHDebugLayout") { print("PHDebug: window=\(window.windowNumber)"); fflush(stdout) }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + (defaults.double(forKey: "PHSnapshotDelay") > 0 ? defaults.double(forKey: "PHSnapshotDelay") : 2.6)) {
@@ -86,6 +90,15 @@ enum DebugLaunchOptions {
     /// `-PHViewer YES` opens the first selected; `-PHCalendar 2019-07` turns the calendar;
     /// `-PHRedate day|between` shows the question asked when photos are dropped; `-PHOpenSheet
     /// changeDate|shortcuts|newLabel|journal` opens a sheet; `-PHShowAbout YES` and `-PHSettings YES` open those windows.
+    /// Albums shared with you come a moment after launch: a place among them waits for them.
+    private static func setUpOnceShared(_ controller: LibraryWindowController, app: AppDelegate, tries: Int) {
+        if defaults.string(forKey: "PHSource")?.hasPrefix("shared") == true, app.sharing.sharedWithMe.isEmpty, tries < 20 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { setUpOnceShared(controller, app: app, tries: tries + 1) }
+            return
+        }
+        setUp(controller, app: app)
+    }
+
     private static func setUp(_ controller: LibraryWindowController, app: AppDelegate) {
         let library = app.library!
         if let source = defaults.string(forKey: "PHSource") {
@@ -104,8 +117,21 @@ enum DebugLaunchOptions {
             case "label":
                 let labels = library.catalog.labels
                 if labels.indices.contains(index - 1) { controller.go(to: .label(labels[index - 1].id)) }
+            case "shared":
+                let shared = app.sharing.sharedWithMe.sorted { $0.title < $1.title }
+                if shared.indices.contains(index - 1) { controller.go(to: .sharedAlbum(shared[index - 1].id)) }
             default: break
             }
+        }
+        // `-PHShareAlbum YES` shares the album showing (with the stand-in for iCloud), `-PHShareInvite name@example.com`
+        // inviting someone to it; `-PHShareSheet YES` opens the sharing sheet for it, or for a new shared album.
+        if defaults.bool(forKey: "PHShareAlbum"), let album = controller.currentAlbum?.id {
+            app.sharing.share(album, access: .invited) { _ in
+                if let address = defaults.string(forKey: "PHShareInvite") { app.sharing.invite(address, to: album) { _ in } }
+                if defaults.bool(forKey: "PHShareSheet") { controller.presentShareSheet(album: album) }
+            }
+        } else if defaults.bool(forKey: "PHShareSheet") {
+            controller.presentShareSheet(album: controller.currentAlbum?.id)
         }
         if let mode = defaults.string(forKey: "PHViewMode").flatMap(ViewMode.init(rawValue:)) { controller.setViewMode(mode) }
         if let grouping = defaults.string(forKey: "PHGrouping").flatMap(Grouping.init(rawValue:)) { controller.setGrouping(grouping) }

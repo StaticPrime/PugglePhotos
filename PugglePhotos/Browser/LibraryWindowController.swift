@@ -7,6 +7,7 @@ import SwiftUI
 final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     let library: LibraryController
     let memories: MemoriesController
+    let sharing: SharingController
     let state: BrowserState
     let sidebar = SidebarViewController()
     let grid = PhotoGridViewController()
@@ -50,11 +51,14 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     var toolbarController: ToolbarController!
     private var observers: [NSObjectProtocol] = []
     var activePopover: NSPopover?
+    /// The sharing sheet showing, if one is.
+    weak var shareSheet: ShareAlbumModel?
     private var lastShowsBadges = UserDefaults.standard.bool(forKey: Preferences.showsBadgesKey)
 
-    init(library: LibraryController, memories: MemoriesController) {
+    init(library: LibraryController, memories: MemoriesController, sharing: SharingController) {
         self.library = library
         self.memories = memories
+        self.sharing = sharing
         state = BrowserState(defaults: Self.browserDefaults)
         inspectorModel = InspectorModel(library: library)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
@@ -70,6 +74,10 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         build()
         library.reportProblem = { [weak self] title, message in self?.showProblem(title, message) }
+        sharing.reportProblem = { [weak self] title, message in self?.showProblem(title, message) }
+        observers.append(NotificationCenter.default.addObserver(forName: .sharingDidChange, object: sharing, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sharingChanged() }
+        })
         observers.append(NotificationCenter.default.addObserver(forName: .libraryDidChange, object: library, queue: .main) { [weak self] note in
             let change = note.userInfo?["change"] as? LibraryController.Change
             MainActor.assumeIsolated { self?.libraryChanged(change) }
@@ -157,6 +165,14 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     // MARK: What the middle shows
 
     var currentAlbum: Album? { state.source.album.flatMap { library.catalog.album($0) } }
+
+    /// The album shared with you that's showing, if one is.
+    var currentSharedAlbum: SharedAlbum? { state.source.sharedAlbum.flatMap { sharing.sharedWithMe($0) } }
+
+    /// Whether what's showing is someone else's, to look at: an album shared with you, or a photo from one.
+    var isLookingOnly: Bool {
+        currentSharedAlbum != nil || state.viewerID.map(SharedAlbum.isShared) == true || state.selection.contains(where: SharedAlbum.isShared)
+    }
 
     var arrangement: Arrangement { state.arrangement(for: state.source, album: currentAlbum) }
 
@@ -269,6 +285,12 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             setSelection([], notify: false)
             return
         }
+        if state.viewMode == .book, let shared = currentSharedAlbum {
+            show(book)
+            book.show(shared: shared.id)
+            setSelection([], notify: false)
+            return
+        }
         if content.isEmpty, content.album == nil {
             showEmptyState()
         } else if state.viewMode == .list {
@@ -347,6 +369,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
                                                 message: "Photos added to your Photos library in the last 30 days show here. Drag photos and videos here from anywhere to add them.")
             case .label: EmptyStateView(symbol: "tag", title: "No Photos with This Label",
                                         message: "Drag photos onto the label in the sidebar, or press ⌃ and the label’s number.")
+            case .sharedAlbum: EmptyStateView(symbol: "person.2", title: "No Photos Yet",
+                                              message: "Photos show here as \(currentSharedAlbum?.owner.name ?? "its owner") adds them to the album.")
             default: EmptyStateView(symbol: "photo.on.rectangle.angled", title: "No Photos",
                                     message: "Photos and videos in your Photos library show here. Drag photos and videos here from anywhere to add them.")
             }
@@ -369,6 +393,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         case .allAlbums: window.title = "Albums"
         case let .album(id): window.title = library.catalog.album(id)?.title ?? "Album"
         case let .label(id): window.title = library.catalog.label(id)?.displayName ?? "Label"
+        case .sharedAlbum: window.title = currentSharedAlbum?.title ?? "Shared Album"
         }
         if let addingStatus {
             window.subtitle = addingStatus
@@ -394,6 +419,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         let ids = Set(content.allIDs)
         let counts = library.snapshot.counts(of: ids)
         var subtitle = formatting.count(photos: counts.photos, videos: counts.videos)
+        if let shared = currentSharedAlbum { subtitle = "Shared by \(shared.owner.name) · " + subtitle }
         if state.selection.count > 1 { subtitle += " · \(formatting.number(state.selection.count)) selected" }
         window.subtitle = subtitle
     }
@@ -428,6 +454,15 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         }
         revealPending()
         inspectorModel.ids = state.selection.filter { library.snapshot.contains($0) }
+    }
+
+    /// Shared albums changed: the sidebar shows them, and one shared with you that's showing may have gone.
+    private func sharingChanged() {
+        sidebar.reload()
+        toolbarController?.update()
+        if let id = state.source.sharedAlbum, sharing.sharedWithMe(id) == nil {
+            go(to: .library, remember: false)
+        }
     }
 
     private func memoriesChanged() {
@@ -555,7 +590,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func setViewMode(_ mode: ViewMode) {
-        if mode == .book, currentAlbum == nil {
+        if mode == .book, currentAlbum == nil, currentSharedAlbum == nil {
             NSSound.beep()
             return
         }

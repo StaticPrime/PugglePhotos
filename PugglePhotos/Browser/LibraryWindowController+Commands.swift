@@ -14,9 +14,31 @@ extension LibraryWindowController: NSMenuItemValidation {
     /// True while the person is typing somewhere, so single-key shortcuts leave the keys alone.
     private var isEditingText: Bool { window?.firstResponder is NSTextView }
 
+    /// Commands that change photos, albums, books or what's written about them, none of which an album shared with
+    /// you, or a photo from one, can have.
+    private static let changes: Set<Selector> = [
+        #selector(phToggleFavorite(_:)), #selector(phChangeDate(_:)), #selector(phNewAlbumWithSelection(_:)), #selector(phToggleLabel(_:)),
+        #selector(phAddToAlbum(_:)), #selector(phRemoveFromAlbum(_:)), #selector(phMakeCover(_:)), #selector(phWriteNote(_:)),
+        #selector(phTiltLeft(_:)), #selector(phTiltRight(_:)), #selector(phStraighten(_:)), #selector(phOriginalSize(_:)),
+        #selector(phLeaveOutOfBook(_:)), #selector(phPutBackInBook(_:)), #selector(phResetBookLayout(_:)), #selector(phToggleBookWriting(_:)),
+        #selector(phAddBookPage(_:)), #selector(phRemoveBookPage(_:)), #selector(phBookStyle(_:)),
+    ]
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         let hasTargets = !targetIDs.isEmpty && library.access == .authorized
+        if let action = menuItem.action, Self.changes.contains(action),
+           isLookingOnly || targetIDs.contains(where: SharedAlbum.isShared) {
+            return false
+        }
         switch menuItem.action {
+        case #selector(phNewSharedAlbum(_:)):
+            return library.hasLoaded && library.access == .authorized
+        case #selector(phShareAlbum(_:)):
+            let album = menuItem.representedObject as? UUID ?? currentAlbum?.id ?? albums.selectedAlbum
+            menuItem.title = album.flatMap { sharing.mine($0) } != nil ? "Manage Shared Album…" : "Share Album…"
+            return album.flatMap { library.catalog.album($0) } != nil
+        case #selector(phLeaveSharedAlbum(_:)):
+            return (menuItem.representedObject as? UUID ?? currentSharedAlbum?.id) != nil
         case #selector(phToggleFavorite(_:)):
             if isEditingText, menuItem.keyEquivalentModifierMask.isEmpty, !menuItem.keyEquivalent.isEmpty { return false }
             let allFavorites = hasTargets && targetIDs.allSatisfy { library.snapshot.item($0)?.isFavorite == true }
@@ -52,7 +74,7 @@ extension LibraryWindowController: NSMenuItemValidation {
             return targetIDs.count == 1 && library.access == .authorized
         case #selector(phShowBook(_:)):
             menuItem.state = isShowingBook ? .on : .off
-            return currentAlbum != nil
+            return currentAlbum != nil || currentSharedAlbum != nil
         case #selector(phTiltLeft(_:)), #selector(phTiltRight(_:)), #selector(phStraighten(_:)), #selector(phLeaveOutOfBook(_:)):
             if isEditingText { return false }
             return isShowingBook && book.bookView.selected != nil
@@ -121,6 +143,20 @@ extension LibraryWindowController: NSMenuItemValidation {
     @objc func phNewAlbum(_ sender: Any?) { newAlbum(with: []) }
 
     @objc func phNewAlbumWithSelection(_ sender: Any?) { newAlbum(with: targetIDs) }
+
+    /// Makes an album to share, with the photos selected, and shares it.
+    @objc func phNewSharedAlbum(_ sender: Any?) { presentShareSheet(album: nil) }
+
+    /// Shares an album of yours, or shows who it's shared with.
+    @objc func phShareAlbum(_ sender: Any?) {
+        guard let album = (sender as? NSMenuItem)?.representedObject as? UUID ?? currentAlbum?.id ?? albums.selectedAlbum else { return }
+        presentShareSheet(album: album)
+    }
+
+    @objc func phLeaveSharedAlbum(_ sender: Any?) {
+        guard let album = (sender as? NSMenuItem)?.representedObject as? UUID ?? currentSharedAlbum?.id else { return }
+        leaveSharedAlbum(album)
+    }
 
     @objc func phNewLabel(_ sender: Any?) { newLabel(for: targetIDs) }
 
@@ -233,7 +269,7 @@ extension LibraryWindowController: NSMenuItemValidation {
 
     @objc func phOpenAlbumAsBook(_ sender: Any?) {
         guard let id = (sender as? NSMenuItem)?.representedObject as? UUID ?? albums.selectedAlbum else { return }
-        go(to: .album(id))
+        go(to: sharing.sharedWithMe(id) != nil ? .sharedAlbum(id) : .album(id))
         setViewMode(.book)
     }
 

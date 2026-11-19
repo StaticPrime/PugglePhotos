@@ -89,7 +89,7 @@ extension SelfTest {
     /// Favorites, Videos and Recently Added onto an album in the sidebar.
     static func importSteps(_ app: AppDelegate, window: LibraryWindowController) {
         let library = app.library!
-        let source = library.source as! SamplePhotoSource
+        let source = library.baseSource as! SamplePhotoSource
         guard let nsWindow = window.window else { return }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("PugglePhotos Drop Test \(UUID().uuidString)", isDirectory: true)
         let screenshot = folder.appendingPathComponent("Screenshot of the Lake.png")

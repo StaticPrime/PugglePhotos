@@ -316,7 +316,7 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
         guard UserDefaults.standard.bool(forKey: Preferences.showsBadgesKey) else {
             return CellBadges(isVideo: item?.kind.isVideo ?? false, duration: item?.duration ?? 0, kind: item?.kind ?? .photo)
         }
-        let details = library.catalog.photos[id]
+        let details: PhotoDetails? = library.details(id)
         return CellBadges(isFavorite: item?.isFavorite ?? false, isVideo: item?.kind.isVideo ?? false,
                           duration: item?.duration ?? 0, kind: item?.kind ?? .photo,
                           labelColors: (details?.labels ?? []).compactMap { library.catalog.label($0)?.color },
@@ -373,12 +373,13 @@ final class PhotoGridViewController: NSViewController, NSCollectionViewDataSourc
 
     // MARK: Dragging
 
+    /// Photos of an album shared with you stay where they are: they aren't yours to put in albums.
     func collectionView(_ collectionView: NSCollectionView, canDragItemsAt indexPaths: Set<IndexPath>, with event: NSEvent) -> Bool {
-        true
+        !indexPaths.compactMap(content.id(at:)).contains(where: SharedAlbum.isShared)
     }
 
     func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> (any NSPasteboardWriting)? {
-        content.id(at: indexPath).map(PhotoDrag.item)
+        content.id(at: indexPath).flatMap { SharedAlbum.isShared($0) ? nil : PhotoDrag.item($0) }
     }
 
     func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint,

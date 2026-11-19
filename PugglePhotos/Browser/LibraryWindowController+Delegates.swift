@@ -246,6 +246,7 @@ extension LibraryWindowController: SidebarDelegate {
     }
 
     func sidebarNewAlbum() { newAlbum(with: []) }
+    func sidebarNewSharedAlbum() { presentShareSheet(album: nil) }
     func sidebarNewLabel() { newLabel(for: []) }
 
     func sidebarMenu(for source: LibrarySource) -> NSMenu? {
@@ -253,6 +254,8 @@ extension LibraryWindowController: SidebarDelegate {
         switch source {
         case let .album(id):
             menu.addItem(represented(MenuBuilder.item("Open as Book", #selector(phOpenAlbumAsBook(_:)), symbol: "book"), id))
+            menu.addItem(represented(MenuBuilder.item(sharing.mine(id) != nil ? "Manage Shared Album…" : "Share Album…",
+                                                      #selector(phShareAlbum(_:)), symbol: "person.crop.circle.badge.plus"), id))
             menu.addItem(.separator())
             menu.addItem(represented(MenuBuilder.item("Rename Album", #selector(phRenameAlbum(_:))), id))
             menu.addItem(represented(MenuBuilder.item("Delete Album…", #selector(phDeleteAlbum(_:))), id))
@@ -261,6 +264,10 @@ extension LibraryWindowController: SidebarDelegate {
             menu.addItem(represented(MenuBuilder.item("Delete Label…", #selector(phDeleteLabel(_:))), id))
         case .allAlbums:
             menu.addItem(MenuBuilder.item("New Album", #selector(phNewAlbum(_:))))
+        case let .sharedAlbum(id):
+            menu.addItem(represented(MenuBuilder.item("Open as Book", #selector(phOpenAlbumAsBook(_:)), symbol: "book"), id))
+            menu.addItem(.separator())
+            menu.addItem(represented(MenuBuilder.item("Leave Shared Album…", #selector(phLeaveSharedAlbum(_:))), id))
         default:
             return nil
         }

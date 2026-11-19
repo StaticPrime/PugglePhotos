@@ -212,7 +212,7 @@ final class PhotoListViewController: NSViewController, NSTableViewDataSource, NS
 
     private func text(_ column: Column, _ id: PhotoID, _ library: LibraryController) -> String {
         let item = library.snapshot.item(id)
-        let details = library.catalog.photos[id]
+        let details: PhotoDetails? = library.details(id)
         switch column {
         case .thumbnail: return ""
         case .title:
@@ -242,8 +242,9 @@ final class PhotoListViewController: NSViewController, NSTableViewDataSource, NS
         onSort?(sort, descriptor.ascending)
     }
 
+    /// Photos of an album shared with you stay where they are: they aren't yours to put in albums.
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
-        if case let .item(id) = rows[row] { return PhotoDrag.item(id) }
+        if case let .item(id) = rows[row], !SharedAlbum.isShared(id) { return PhotoDrag.item(id) }
         return nil
     }
 }

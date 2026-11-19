@@ -47,12 +47,70 @@ struct InspectorView: View {
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.ids.count == 1, let id = model.ids.first {
-                SingleInspector(model: model, id: id).id(id)
+                if SharedAlbum.isShared(id) {
+                    SharedInspector(library: model.library, id: id).id(id)
+                } else {
+                    SingleInspector(model: model, id: id).id(id)
+                }
+            } else if model.ids.contains(where: SharedAlbum.isShared) {
+                Text("These photos were shared with you, to look at.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .padding(24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 MultipleInspector(model: model, ids: model.ids)
             }
         }
         .frame(minWidth: 250, idealWidth: 280, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// A photo from an album shared with you: when it was taken and what its owner wrote about it, to read.
+private struct SharedInspector: View {
+    let library: LibraryController
+    let id: PhotoID
+
+    var body: some View {
+        let item = library.snapshot.item(id)
+        let details = library.details(id)
+        let album = library.sharedAlbum(containing: id)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(details.caption.isEmpty ? "No Caption" : details.caption)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(details.caption.isEmpty ? .tertiary : .primary)
+                    .textSelection(.enabled)
+                if let item {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Image(systemName: "calendar").foregroundStyle(Color.pugglePink).frame(width: 18)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(library.formatting.longDay(CivilDay(item.date, in: library.formatting.timeZone)))
+                            Text(library.formatting.time(item.date)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if let album {
+                    Label("Shared by \(album.owner.name) in “\(album.title)”", systemImage: "person.2")
+                        .foregroundStyle(.secondary)
+                }
+                if !details.note.isEmpty {
+                    InspectorSection("Note") {
+                        Text(details.note).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                if let item {
+                    InspectorSection("Details") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            DetailRow("Kind", item.kind.isVideo ? "Video, \(Formatting.duration(item.duration))" : item.kind.displayName)
+                            DetailRow("Size", "\(item.pixelWidth) × \(item.pixelHeight)")
+                            if let name = item.fileName { DetailRow("File", name) }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+        }
     }
 }
 

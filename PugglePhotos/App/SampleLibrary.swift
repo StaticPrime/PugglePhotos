@@ -2,6 +2,7 @@
 import AppKit
 import AVFoundation
 import PugglePhotosKit
+import UniformTypeIdentifiers
 
 /// `-PHSampleLibrary YES`: a made-up library of illustrated photos, used by the self-test and for screenshots so
 /// nothing ever touches the real Photos library. It lives in memory; changes, and files dropped in, last until quit.
@@ -249,6 +250,45 @@ final class SamplePhotoSource: PhotoSource {
         }
         albums.removeAll { $0.id == id }
         changed(completion)
+    }
+
+    /// A sample photo drawn as a file, as big as it says it is (up to 2,400 pixels, to be quick), or its movie.
+    private(set) var exported: [PhotoID] = []
+
+    func exportOriginal(_ id: PhotoID, completion: @escaping @MainActor (URL?) -> Void) {
+        exported.append(id)
+        if let file = addedFiles[id] {
+            DispatchQueue.main.async { completion(file) }
+            return
+        }
+        guard let item = items[id], let spec = scenes[id] else {
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("PugglePhotos Sample Originals", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = "\(spec.scene.rawValue)-\(spec.seed)"
+        if item.kind.isVideo {
+            let url = folder.appendingPathComponent(name + ".mov")
+            Task {
+                let made = await SampleVideo.make(at: url, scene: spec.scene, seed: spec.seed)
+                completion(made ? url : nil)
+            }
+            return
+        }
+        let url = folder.appendingPathComponent(name + ".jpg")
+        let maxPixels = CGFloat(min(max(item.pixelWidth, item.pixelHeight), 2400)), aspect = CGFloat(item.aspectRatio)
+        Task {
+            let written = await Self.writeJPEG(scene: spec.scene, seed: spec.seed, maxPixels: maxPixels, aspect: aspect, to: url)
+            completion(written ? url : nil)
+        }
+    }
+
+    @concurrent nonisolated private static func writeJPEG(scene: SampleScene, seed: Int, maxPixels: CGFloat, aspect: CGFloat, to url: URL) async -> Bool {
+        guard let image = SampleScene.render(scene, seed: seed, maxPixels: maxPixels, aspect: aspect),
+              let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else { return false }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+        return CGImageDestinationFinalize(destination)
     }
 
     /// Changes an album the way someone using another app on the library would, for the self-test.

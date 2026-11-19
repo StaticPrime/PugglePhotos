@@ -16,6 +16,8 @@ public enum LibrarySource: Hashable, Codable, Sendable {
     case allAlbums
     case album(UUID)
     case label(UUID)
+    /// An album someone shared with you, to look at.
+    case sharedAlbum(UUID)
 }
 
 /// How photos are grouped into sections.
@@ -140,11 +142,14 @@ public struct Arranger: Sendable {
     public let snapshot: LibrarySnapshot
     public let catalog: Catalog
     public let membership: Membership
+    /// The albums shared with you, whose photos the snapshot holds as extras.
+    public let sharedAlbums: [SharedAlbum]
 
-    public init(snapshot: LibrarySnapshot, catalog: Catalog, membership: Membership? = nil) {
+    public init(snapshot: LibrarySnapshot, catalog: Catalog, membership: Membership? = nil, sharedAlbums: [SharedAlbum] = []) {
         self.snapshot = snapshot
         self.catalog = catalog
         self.membership = membership ?? Membership(catalog)
+        self.sharedAlbums = sharedAlbums
     }
 
     // MARK: Which photos
@@ -177,6 +182,8 @@ public struct Arranger: Sendable {
         case let .label(id):
             return membership.photos(labeled: id).filter(snapshot.contains)
                 .sorted { (snapshot.position(of: $0) ?? 0) < (snapshot.position(of: $1) ?? 0) }
+        case let .sharedAlbum(id):
+            return (sharedAlbums.first { $0.id == id }?.photoIDs ?? []).filter(snapshot.contains)
         }
     }
 
@@ -226,7 +233,7 @@ public struct Arranger: Sendable {
 
     /// The caption, else the file name, else nothing.
     public func title(of id: PhotoID) -> String {
-        let caption = catalog.photos[id]?.caption ?? ""
+        let caption = SharedAlbum.isShared(id) ? (sharedAlbums.lazy.compactMap { $0.item(id) }.first?.caption ?? "") : (catalog.photos[id]?.caption ?? "")
         if !caption.isEmpty { return caption }
         return snapshot.item(id)?.fileName ?? ""
     }

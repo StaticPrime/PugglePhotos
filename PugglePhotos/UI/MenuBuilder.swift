@@ -89,6 +89,9 @@ enum MenuBuilder {
         [
             item("New Album", #selector(LibraryWindowController.phNewAlbum(_:)), "n"),
             item("New Album with Selection", #selector(LibraryWindowController.phNewAlbumWithSelection(_:)), "n", [.command, .shift]),
+            item("New Shared Album…", #selector(LibraryWindowController.phNewSharedAlbum(_:)), symbol: "person.2"),
+            item("Share Album…", #selector(LibraryWindowController.phShareAlbum(_:)), symbol: "person.crop.circle.badge.plus"),
+            item("Leave Shared Album…", #selector(LibraryWindowController.phLeaveSharedAlbum(_:))),
             item("New Label…", #selector(LibraryWindowController.phNewLabel(_:)), "n", [.command, .option]),
             item("Write in Journal…", #selector(LibraryWindowController.phWriteJournal(_:)), "j", symbol: "square.and.pencil"),
             .separator(),

@@ -363,6 +363,29 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
         }, completion: completion)
     }
 
+    /// A photo's or video's own file as it is now: its edited version when it has one, else its original, downloaded
+    /// from iCloud if need be, written into the app's temporary folder.
+    func exportOriginal(_ id: PhotoID, completion: @escaping @MainActor (URL?) -> Void) {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id.rawValue], options: nil).firstObject else {
+            completion(nil)
+            return
+        }
+        let resources = PHAssetResource.assetResources(for: asset)
+        let wanted: [PHAssetResourceType] = asset.mediaType == .video ? [.fullSizeVideo, .video] : [.fullSizePhoto, .photo]
+        guard let resource = wanted.lazy.compactMap({ type in resources.first { $0.type == type } }).first else {
+            completion(nil)
+            return
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Shared Originals", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension((resource.originalFilename as NSString).pathExtension)
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true
+        PHAssetResourceManager.default().writeData(for: resource, toFile: url, options: options) { @Sendable error in
+            Task { @MainActor in completion(error == nil ? url : nil) }
+        }
+    }
+
     private nonisolated struct DateTarget: Sendable {
         let asset: PHAsset
         let date: Date

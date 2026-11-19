@@ -116,10 +116,11 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
         let state = owner.state
         // Memories and the Journal are pages of their own: no way of showing photos is chosen there.
         let onPage = state.source == .memories || state.source == .journal
-        let isBook = state.viewMode == .book && owner.currentAlbum != nil
+        let hasBook = owner.currentAlbum != nil || owner.currentSharedAlbum != nil
+        let isBook = state.viewMode == .book && hasBook
         modeGroup?.selectedIndex = onPage ? -1 : (isBook ? 2 : (state.viewMode == .list ? 1 : 0))
         modeGroup?.isEnabled = owner.library.access == .authorized
-        if let modeGroup, modeGroup.subitems.count == 3 { modeGroup.subitems[2].isEnabled = owner.currentAlbum != nil }
+        if let modeGroup, modeGroup.subitems.count == 3 { modeGroup.subitems[2].isEnabled = hasBook }
         zoomSlider?.doubleValue = Double(state.thumbnailSide)
         zoomSlider?.isEnabled = !onPage && (state.viewMode == .gallery || state.source == .allAlbums)
         arrangeItem?.isEnabled = !onPage
@@ -127,7 +128,8 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
         let ids = owner.state.viewerID.map { [$0] } ?? state.selection
         let allFavorites = !ids.isEmpty && ids.allSatisfy { owner.library.snapshot.item($0)?.isFavorite == true }
         favoriteItem?.image = NSImage(systemSymbolName: allFavorites ? "heart.fill" : "heart", accessibilityDescription: "Favorite")
-        favoriteItem?.isEnabled = !ids.isEmpty
+        // Photos shared with you aren't in your library, to make favorites of.
+        favoriteItem?.isEnabled = !ids.isEmpty && !ids.contains(where: SharedAlbum.isShared)
         if let menu = arrangeItem?.menu {
             menu.removeAllItems()
             for item in ArrangeMenu.items(for: owner) { menu.addItem(item) }

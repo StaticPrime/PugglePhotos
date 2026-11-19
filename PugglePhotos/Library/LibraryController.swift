@@ -16,7 +16,10 @@ extension Notification.Name {
 final class LibraryController {
     nonisolated enum Change { case items, catalog, access }
 
+    /// Where every picture comes from: the library, and the albums shared with you.
     @ObservationIgnored let source: PhotoSource
+    /// The library alone.
+    @ObservationIgnored let baseSource: PhotoSource
     /// Nil keeps the catalog in memory only.
     @ObservationIgnored let store: CatalogStore?
     @ObservationIgnored let undoManager = UndoManager()
@@ -42,13 +45,58 @@ final class LibraryController {
     @ObservationIgnored private var reloadCompletions: [() -> Void] = []
 
     init(source: PhotoSource, store: CatalogStore?) {
-        self.source = source
+        let pictures = SharedPicturesSource(base: source)
+        self.source = pictures
+        baseSource = source
         self.store = store
         access = source.access
-        thumbnails = ThumbnailCache(source: source)
+        thumbnails = ThumbnailCache(source: pictures)
+        pictures.pictureURL = { [weak self] id in self?.sharedPictureURL(id) }
     }
 
-    var arranger: Arranger { Arranger(snapshot: snapshot, catalog: catalog, membership: membership) }
+    var arranger: Arranger { Arranger(snapshot: snapshot, catalog: catalog, membership: membership, sharedAlbums: sharedAlbums) }
+
+    // MARK: Albums shared with you
+
+    /// The albums shared with you. Their photos are looked up along with the library's, but they're never part of it:
+    /// they show only in their albums, and only to look at.
+    private(set) var sharedAlbums: [SharedAlbum] = []
+    /// Where their pictures are kept.
+    @ObservationIgnored var sharedPictures: SharedAlbumsStore?
+
+    func setSharedAlbums(_ albums: [SharedAlbum]) {
+        sharedAlbums = albums
+        snapshot = snapshot.replacingExtras(albums.flatMap(\.mediaItems))
+        post(.items)
+    }
+
+    /// The album shared with you that a photo is from.
+    func sharedAlbum(containing id: PhotoID) -> SharedAlbum? {
+        SharedAlbum.parse(id).flatMap { parsed in sharedAlbums.first { $0.id == parsed.album } }
+    }
+
+    private func sharedPictureURL(_ id: PhotoID) -> URL? {
+        guard let album = sharedAlbum(containing: id), let item = album.item(id) else { return nil }
+        return sharedPictures?.pictureURL(album: album.id, item: item)
+    }
+
+    /// What's written about a photo: its caption and note from the catalog, or, for a photo shared with you, as its
+    /// owner wrote them.
+    func details(_ id: PhotoID) -> PhotoDetails {
+        if SharedAlbum.isShared(id) {
+            let item = sharedAlbum(containing: id)?.item(id)
+            return PhotoDetails(caption: item?.caption ?? "", note: item?.note ?? "")
+        }
+        return catalog.details(id)
+    }
+
+    /// A photo's or video's original file, to send to the people an album's shared with.
+    func exportOriginal(_ id: PhotoID?) async -> URL? {
+        guard let id else { return nil }
+        return await withCheckedContinuation { continuation in
+            baseSource.exportOriginal(id) { continuation.resume(returning: $0) }
+        }
+    }
 
     /// Reads the catalog and, with permission, the library; then keeps up with changes made elsewhere.
     func start(catalog initial: Catalog? = nil) {
@@ -82,7 +130,7 @@ final class LibraryController {
             for index in items.indices where items[index].fileName == nil {
                 items[index].fileName = fileNames[items[index].id]
             }
-            snapshot = LibrarySnapshot(items: items)
+            snapshot = LibrarySnapshot(items: items, extras: sharedAlbums.flatMap(\.mediaItems))
             recentlyAdded = contents.recentlyAdded
             reconcileAlbums(contents.albums)
             isLoading = false

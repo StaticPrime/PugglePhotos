@@ -82,6 +82,9 @@ final class BookView: NSView, NSTextViewDelegate {
     }
 
     /// While on, a click on a page starts writing there; a click on writing writes on it.
+    /// Whether the book is someone else's, shared with you to look through: its pages turn, and nothing on them changes.
+    var isReadOnly = false
+
     var isWriting = false {
         didSet {
             guard isWriting != oldValue else { return }
@@ -1696,7 +1699,7 @@ final class BookView: NSView, NSTextViewDelegate {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        guard let delegate, !isTurning, let hit = pagePoint(point) else { return nil }
+        guard let delegate, !isTurning, !isReadOnly, let hit = pagePoint(point) else { return nil }
         if let writing = writing(at: hit.point, onPage: hit.page) {
             pick(.writing(writing.id))
             return delegate.bookWritingMenu(writing.id)
@@ -1858,6 +1861,17 @@ final class BookView: NSView, NSTextViewDelegate {
             select(nil)
             // A closed cover's board, past its page, opens the book like the cover itself.
             if let forward = closedCoverOpens(at: point) { drag = .page(forward: forward, start: point, progress: 0, clickTurns: true) }
+            return
+        }
+        // A book shared with you is to look through: its pages turn and a photo opens on a double-click, but nothing
+        // on them is picked up, moved or written.
+        if isReadOnly {
+            if event.clickCount == 2, layout.pages[hit.page].holdsPhotos, let placement = layout.placement(at: hit.point, onPage: hit.page) {
+                delegate.bookOpenPhoto(placement.id)
+                return
+            }
+            pick(nil)
+            drag = .page(forward: !hit.left, start: point, progress: 0, clickTurns: true)
             return
         }
         // Writing lies over everything on the page.

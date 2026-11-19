@@ -6,7 +6,7 @@ extension SelfTest {
     /// Working ahead: thumbnails got ready around what's showing.
     static func speedSteps(_ app: AppDelegate, window: LibraryWindowController) {
         let library = app.library!
-        let source = library.source as! SamplePhotoSource
+        let source = library.baseSource as! SamplePhotoSource
 
         step {
             window.go(to: .library)
