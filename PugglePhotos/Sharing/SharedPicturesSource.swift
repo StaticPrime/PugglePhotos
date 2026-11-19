@@ -113,4 +113,8 @@ final class SharedPicturesSource: PhotoSource {
         guard !SharedAlbum.isShared(id) else { return completion(pictureURL(id)) }
         base.exportOriginal(id, completion: completion)
     }
+
+    func originalSizes(_ ids: [PhotoID]) async -> [PhotoID: Int64] {
+        await base.originalSizes(ids.filter { !SharedAlbum.isShared($0) })
+    }
 }

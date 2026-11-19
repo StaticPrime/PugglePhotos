@@ -16,6 +16,11 @@ final class ShareAlbumModel {
     var cover: CGImage?
     var isWorking = false
     var problem: String?
+    /// How much of the person's iCloud storage the album takes, or will once it's shared; nil until that's known, or
+    /// if it can't be.
+    var size: Int64?
+    /// The photos a new shared album is to be made of, before it's made.
+    @ObservationIgnored var pendingItems: [PhotoID] = []
     /// Whom to invite, typed in (where the system doesn't send the invitations).
     var address = ""
     var confirmsStop = false
@@ -46,6 +51,23 @@ final class ShareAlbumModel {
 
     var status: SharingStatus { sharing.status }
     var me: ShareParticipant? { status.me }
+
+    /// Why the album isn't up to date for the people it's shared with, while it isn't.
+    var stallReason: String? {
+        _ = version
+        return albumID.flatMap { sharing.stallReason($0) }
+    }
+
+    /// Works out how much room the album takes in iCloud.
+    func loadSize() {
+        let album = albumID, items = pendingItems
+        Task { [weak self] in
+            guard let self else { return }
+            let size: Int64?
+            if let album { size = await sharing.size(of: album) } else { size = await library.originalSize(of: items) }
+            self.size = size
+        }
+    }
 
     // MARK: Doing it
 
@@ -99,6 +121,12 @@ final class ShareAlbumModel {
     func stopSharing() {
         guard let id = albumID else { return }
         run { self.sharing.stopSharing(id, completion: $0) }
+    }
+
+    /// Closes the sheet without sharing the album: whatever was sent of it goes back out of iCloud.
+    func cancel() {
+        if let id = albumID, shared == nil { sharing.abandon(id) }
+        done?()
     }
 
     /// Renames the album as its name is changed here, once it's shared.
@@ -158,7 +186,7 @@ struct ShareAlbumView: View {
                             Button("Stop Sharing…", role: .destructive) { model.confirmsStop = true }
                         }
                     }
-                    if let problem = model.problem {
+                    if let problem = model.problem ?? model.stallReason {
                         Text(problem)
                             .font(.callout)
                             .foregroundStyle(.red)
@@ -172,7 +200,7 @@ struct ShareAlbumView: View {
                 if model.isWorking { ProgressView().controlSize(.small) }
                 Spacer()
                 if shared == nil {
-                    Button("Cancel") { model.done?() }
+                    Button("Cancel") { model.cancel() }
                         .keyboardShortcut(.cancelAction)
                     Button("Share") { model.share() }
                         .keyboardShortcut(.defaultAction)
@@ -231,7 +259,7 @@ struct ShareAlbumView: View {
     }
 
     private var accessExplanation: String {
-        let storage = "Its photos and videos are kept at full size in your iCloud storage."
+        let storage = SharingSpace.storage(bytes: model.size, shared: model.shared != nil)
         return switch model.access {
         case .invited: "Only people you invite can join, to look through it in PugglePhotos. " + storage
         case .anyoneWithLink: "Anyone with the link can join, to look through it in PugglePhotos. " + storage

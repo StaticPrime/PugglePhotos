@@ -255,6 +255,20 @@ final class SamplePhotoSource: PhotoSource {
     /// A sample photo drawn as a file, as big as it says it is (up to 2,400 pixels, to be quick), or its movie.
     private(set) var exported: [PhotoID] = []
 
+    /// How big each sample's file would be from a camera, about 0.4 bytes a pixel for a photo and 3 MB a second for a
+    /// movie, or a dropped file's own size.
+    func originalSizes(_ ids: [PhotoID]) async -> [PhotoID: Int64] {
+        var sizes: [PhotoID: Int64] = [:]
+        for id in ids {
+            if let file = addedFiles[id], let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+                sizes[id] = Int64(size)
+            } else if let item = items[id] {
+                sizes[id] = item.kind.isVideo ? Int64(max(item.duration, 1) * 3_000_000) : Int64(Double(item.pixelWidth * item.pixelHeight) * 0.4)
+            }
+        }
+        return sizes
+    }
+
     func exportOriginal(_ id: PhotoID, completion: @escaping @MainActor (URL?) -> Void) {
         exported.append(id)
         if let file = addedFiles[id] {

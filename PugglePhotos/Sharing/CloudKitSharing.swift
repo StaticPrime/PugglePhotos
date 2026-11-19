@@ -379,10 +379,21 @@ final class CloudKitSharing: NSObject, SharingBackend {
         Task {
             do {
                 completion(.success(try await send(album, picture: picture)))
+            } catch where Self.isStorageFull(error) {
+                // What went up before iCloud filled is known, for the person to be told how much room there was.
+                completion(.failure(SharingError.storageFull(stored: Set((sentItems[album.id] ?? [:]).keys))))
             } catch {
                 completion(.failure(Self.problem(error)))
             }
         }
+    }
+
+    /// Whether iCloud turned something down for want of room in the person's storage.
+    private nonisolated static func isStorageFull(_ error: Error) -> Bool {
+        guard let error = error as? CKError else { return false }
+        if error.code == .quotaExceeded { return true }
+        return error.code == .partialFailure
+            && (error.partialErrorsByItemID?.values.contains { ($0 as? CKError)?.code == .quotaExceeded } ?? false)
     }
 
     /// Brings what iCloud holds of an album of yours up to date: photos new to it go with their files, a few at a time,
@@ -598,6 +609,13 @@ final class CloudKitSharing: NSObject, SharingBackend {
             forgetMine(album)
             completion(nil)
         }
+    }
+
+    /// Takes back out of iCloud what was sent of an album of yours that never got shared, by deleting its zone, as
+    /// stopping sharing does. Never an album that is shared.
+    func discard(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void) {
+        guard mine[album] == nil else { return completion(nil) }
+        stopSharing(album, completion: completion)
     }
 
     private func run(_ completion: @escaping @MainActor (Result<SharedAlbum, Error>) -> Void, _ work: @escaping () async throws -> SharedAlbum) {

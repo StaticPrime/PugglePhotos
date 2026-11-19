@@ -107,10 +107,14 @@ protocol PhotoSource: AnyObject {
     /// A photo's or video's original file as it is now (with any edits made to it), at full size, written to a
     /// temporary file for sharing; nil if it can't be had.
     func exportOriginal(_ id: PhotoID, completion: @escaping @MainActor (URL?) -> Void)
+    /// How big each of these photos' and videos' files is as `exportOriginal` writes it, in bytes; those whose size
+    /// isn't known are left out.
+    func originalSizes(_ ids: [PhotoID]) async -> [PhotoID: Int64]
 }
 
 extension PhotoSource {
     /// Sources that make pictures quickly don't need to work ahead.
     func prefetchThumbnails(start: [PhotoID], stop: [PhotoID], pixels: CGSize) {}
     func stopPrefetching() {}
+    func originalSizes(_ ids: [PhotoID]) async -> [PhotoID: Int64] { [:] }
 }

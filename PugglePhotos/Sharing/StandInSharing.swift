@@ -24,6 +24,10 @@ final class StandInSharing: SharingBackend {
     private(set) var sentPictures: [UUID: Set<UUID>] = [:]
     /// How many times albums of yours were sent.
     private(set) var publishes = 0
+    /// How many more pictures fit in the stand-in's "iCloud storage", for the self-test; nil for as many as are sent.
+    var room: Int?
+    /// After how many more pictures the connection drops, once, for the self-test.
+    var dropsAfter: Int?
     private var garden: SharedAlbum?
 
     init(store: SharedAlbumsStore) { self.store = store }
@@ -84,11 +88,24 @@ final class StandInSharing: SharingBackend {
         Task {
             var sent = sentPictures[album.id] ?? []
             for item in album.items where !sent.contains(item.id) {
+                if let room, room <= 0 {
+                    completion(.failure(SharingError.storageFull(stored: sent.intersection(album.items.map(\.id)))))
+                    return
+                }
                 guard await picture(item) != nil else {
                     completion(.failure(SharingError.failed("A photo couldn’t be read to send.")))
                     return
                 }
                 sent.insert(item.id)
+                sentPictures[album.id] = sent
+                if let room { self.room = room - 1 }
+                if let drops = dropsAfter {
+                    dropsAfter = drops > 1 ? drops - 1 : nil
+                    if drops <= 1 {
+                        completion(.failure(SharingError.failed("iCloud can’t be reached right now. Try again in a little while.")))
+                        return
+                    }
+                }
             }
             sentPictures[album.id] = sent
             var result = album
@@ -134,8 +151,19 @@ final class StandInSharing: SharingBackend {
 
     func stopSharing(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void) {
         shared[album] = nil
-        sentPictures[album] = nil
+        free(album)
         DispatchQueue.main.async { completion(nil) }
+    }
+
+    func discard(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void) {
+        if shared[album] == nil { free(album) }
+        DispatchQueue.main.async { completion(nil) }
+    }
+
+    /// Lets an album's pictures go, making room for as many again.
+    private func free(_ album: UUID) {
+        let pictures = sentPictures.removeValue(forKey: album)?.count ?? 0
+        if let room { self.room = room + pictures }
     }
 
     func leave(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void) {

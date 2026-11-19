@@ -98,14 +98,63 @@ extension SelfTest {
 
         // MARK: Yours, shared
         var summer: UUID?
+        var other: UUID?
         var sheet: ShareAlbumModel?
+        // One cut off partway, then given up.
         step {
+            other = library.catalog.albums.first { $0.title != "Summer at the Lake" && $0.items.filter(library.snapshot.inLibrary).count >= 3 }?.id
+            guard let other else {
+                check(false, "a second album to share")
+                return
+            }
+            window.go(to: .album(other))
+            window.presentShareSheet(album: other)
+            sheet = window.shareSheet
+            standIn.dropsAfter = 2
+            sheet?.share()
+            wait(upTo: 20) { sheet?.problem != nil }
+        }
+        step {
+            guard let other else { return }
+            check(sheet?.problem?.hasPrefix("iCloud can’t be reached") == true && standIn.sentPictures[other]?.count == 2
+                  && sharing.mine(other) == nil && sharing.unfinishedAlbums.contains(other),
+                  "a share cut off partway keeps what went up, to go on from", sheet?.problem ?? "no problem shown")
+            sheet?.cancel()
+            wait(upTo: 3) { standIn.sentPictures[other] == nil && !sharing.unfinishedAlbums.contains(other) }
+        }
+        var expected: Int64?
+        step {
+            guard let other else { return }
+            check(standIn.sentPictures[other] == nil && !sharing.unfinishedAlbums.contains(other),
+                  "given up, what went up of it is taken back out of iCloud")
             summer = library.catalog.albums.first { $0.title == "Summer at the Lake" }?.id
-            guard let summer else { return }
+            guard let summer, let album = library.catalog.album(summer) else { return }
             window.go(to: .album(summer))
             window.presentShareSheet(album: summer)
             sheet = window.shareSheet
             check(sheet?.title == "Summer at the Lake" && sheet?.shared == nil, "Share Album opens the sharing sheet for the album")
+            let photos = album.items.filter(library.snapshot.inLibrary)
+            Task { expected = await library.originalSize(of: photos) }
+            wait(upTo: 5) { expected != nil && sheet?.size != nil }
+        }
+        // Too big for iCloud, then shared once there's room.
+        step {
+            guard let summer else { return }
+            check(sheet?.size == expected && (expected ?? 0) > 0, "the sheet says how much iCloud storage the album will take",
+                  "\(sheet?.size ?? -1) for \(expected ?? -1)")
+            standIn.room = 2
+            sheet?.share()
+            wait(upTo: 20) { sheet?.problem != nil && !sharing.unfinishedAlbums.contains(summer) }
+        }
+        step {
+            guard let summer else { return }
+            let problem = sheet?.problem ?? ""
+            check(problem.hasPrefix("Your iCloud storage is full, so “Summer at the Lake” couldn’t be shared.")
+                  && problem.contains("It needs about \(SharingSpace.size(expected ?? 0)), and only about") && problem.contains("more, or choose more storage"),
+                  "an album too big for the room in iCloud says how much it needs, and how much more room to make", problem)
+            check(sharing.mine(summer) == nil && standIn.sentPictures[summer] == nil && !sharing.unfinishedAlbums.contains(summer),
+                  "and what went up of it is taken back out at once")
+            standIn.room = nil
             sheet?.share()
             wait(upTo: 20) { sharing.mine(summer)?.url != nil }
         }
@@ -144,10 +193,47 @@ extension SelfTest {
             library.edit("Note") { $0.setNote("Lake was warm.", for: edited) }
             wait(upTo: 5) { sent(summer) }
         }
+        var problems: [String] = []
+        var report: ((String, String) -> Void)?
+        var added: PhotoID?
         step {
             guard let summer else { return }
             check(sent(summer), "a change to a shared album reaches everyone it's shared with")
             check(standIn.publishes == publishes + 1, "a run of changes goes as one", "\(standIn.publishes - publishes) sends")
+            // iCloud fills up, so a photo added to the album can't go.
+            report = sharing.reportProblem
+            sharing.reportProblem = { title, message in problems.append(title + " " + message) }
+            standIn.room = 0
+            added = library.snapshot.allIDs.first { library.catalog.album(summer)?.items.contains($0) == false }
+            guard let added else { return }
+            library.edit("Add to Album") { _ = $0.add([added], toAlbum: summer) }
+            wait(upTo: 8) { !problems.isEmpty }
+        }
+        step {
+            check(problems.count == 1 && problems[0].contains("couldn’t be brought up to date")
+                  && problems[0].contains("Your iCloud storage is full. The photos and videos still to go need about"),
+                  "with iCloud full, a shared album that can't be brought up to date says so", problems.joined(separator: " | "))
+            check(sheet?.stallReason?.hasPrefix("Your iCloud storage is full.") == true, "and its sheet says why it's behind")
+            publishes = standIn.publishes
+            if let edited { library.edit("Caption") { $0.setCaption("Still sunny", for: [edited]) } }
+            wait(upTo: 2.5) { false }
+        }
+        step {
+            guard let summer else { return }
+            check(problems.count == 1 && standIn.publishes == publishes, "more changes meanwhile neither try again nor say so again",
+                  "\(problems.count) problems, \(standIn.publishes - publishes) sends")
+            standIn.room = nil
+            // As when PugglePhotos comes back to the front.
+            sharing.retryStalled()
+            wait(upTo: 8) { standIn.shared[summer]?.items.contains { $0.source == added } == true && sharing.stallReason(summer) == nil }
+        }
+        step {
+            guard let summer else { return }
+            let items = standIn.shared[summer]?.items ?? []
+            check(items.contains { $0.source == added } && items.contains { $0.source == edited && $0.caption == "Still sunny" }
+                  && sharing.stallReason(summer) == nil && problems.count == 1,
+                  "once there's room, coming back to the front sends all of it, without a word")
+            sharing.reportProblem = report
             sheet?.stopSharing()
             wait(upTo: 3) { sharing.mine(summer) == nil }
         }

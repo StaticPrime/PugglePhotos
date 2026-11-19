@@ -14,6 +14,8 @@ extension LibraryWindowController {
             go(to: .album(id))
             return id
         }
+        model.pendingItems = selection
+        model.loadSize()
         if let album, let value = library.catalog.album(album), let cover = library.arranger.cover(of: value) {
             _ = library.thumbnails.request(cover, pixels: 240) { [weak model] image in model?.cover = image }
         }

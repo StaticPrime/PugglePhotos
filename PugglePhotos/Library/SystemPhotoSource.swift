@@ -366,13 +366,8 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
     /// A photo's or video's own file as it is now: its edited version when it has one, else its original, downloaded
     /// from iCloud if need be, written into the app's temporary folder.
     func exportOriginal(_ id: PhotoID, completion: @escaping @MainActor (URL?) -> Void) {
-        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id.rawValue], options: nil).firstObject else {
-            completion(nil)
-            return
-        }
-        let resources = PHAssetResource.assetResources(for: asset)
-        let wanted: [PHAssetResourceType] = asset.mediaType == .video ? [.fullSizeVideo, .video] : [.fullSizePhoto, .photo]
-        guard let resource = wanted.lazy.compactMap({ type in resources.first { $0.type == type } }).first else {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id.rawValue], options: nil).firstObject,
+              let resource = Self.original(of: asset) else {
             completion(nil)
             return
         }
@@ -384,6 +379,31 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
         PHAssetResourceManager.default().writeData(for: resource, toFile: url, options: options) { @Sendable error in
             Task { @MainActor in completion(error == nil ? url : nil) }
         }
+    }
+
+    /// The file of a photo or video that's shared: its edited version when it has one, else its original.
+    private nonisolated static func original(of asset: PHAsset) -> PHAssetResource? {
+        let resources = PHAssetResource.assetResources(for: asset)
+        let wanted: [PHAssetResourceType] = asset.mediaType == .video ? [.fullSizeVideo, .video] : [.fullSizePhoto, .photo]
+        return wanted.lazy.compactMap { type in resources.first { $0.type == type } }.first
+    }
+
+    /// How big each photo's or video's file is as `exportOriginal` writes it. macOS says from version 27; before
+    /// that, none is known.
+    func originalSizes(_ ids: [PhotoID]) async -> [PhotoID: Int64] {
+        guard #available(macOS 27, *) else { return [:] }
+        return await Self.sizes(of: ids)
+    }
+
+    @available(macOS 27, *)
+    @concurrent private nonisolated static func sizes(of ids: [PhotoID]) async -> [PhotoID: Int64] {
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids.map(\.rawValue), options: nil)
+        var sizes: [PhotoID: Int64] = [:]
+        for index in 0..<assets.count {
+            let asset = assets.object(at: index)
+            if let size = original(of: asset)?.dataSize { sizes[PhotoID(asset.localIdentifier)] = Int64(size) }
+        }
+        return sizes
     }
 
     private nonisolated struct DateTarget: Sendable {

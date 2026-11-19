@@ -98,6 +98,14 @@ final class LibraryController {
         }
     }
 
+    /// How much room these photos and videos take at full size, as they'd be sent to the people an album's shared
+    /// with; nil unless every one's size is known.
+    func originalSize(of ids: [PhotoID]) async -> Int64? {
+        let sizes = await baseSource.originalSizes(ids)
+        guard ids.allSatisfy({ sizes[$0] != nil }) else { return nil }
+        return ids.reduce(0) { $0 + (sizes[$1] ?? 0) }
+    }
+
     /// Reads the catalog and, with permission, the library; then keeps up with changes made elsewhere.
     func start(catalog initial: Catalog? = nil) {
         if let initial {

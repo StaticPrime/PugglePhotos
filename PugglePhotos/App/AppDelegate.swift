@@ -33,7 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         memories = MemoriesController(library: library, notifications: notifications, defaults: Self.memoryDefaults, clock: Self.memoryClock)
         notifications.onOpen = { [weak self] id in self?.openMemory(id) }
         let sharedStore = Self.sharedAlbumsStore
-        sharing = SharingController(library: library, backend: makeSharingBackend(store: sharedStore), store: sharedStore, notifications: notifications)
+        sharing = SharingController(library: library, backend: makeSharingBackend(store: sharedStore), store: sharedStore,
+                                    notifications: notifications, defaults: Self.memoryDefaults)
         notifications.onOpenSharedAlbum = { [weak self] id in self?.openSharedAlbum(id) }
         loginItem = makeLoginItem()
         settings = SettingsModel(loginItem: loginItem)

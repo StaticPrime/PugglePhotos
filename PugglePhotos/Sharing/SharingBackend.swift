@@ -18,12 +18,15 @@ nonisolated enum SharingError: LocalizedError {
     case unavailable(String)
     case notShared
     case failed(String)
+    /// iCloud filled up while an album was being sent; `stored` are the photos and videos of it that it holds.
+    case storageFull(stored: Set<UUID>)
 
     var errorDescription: String? {
         switch self {
         case let .unavailable(reason): reason
         case .notShared: "The album isn’t shared any longer."
         case let .failed(reason): reason
+        case .storageFull: "Your iCloud storage is full. Shared albums are kept in it at full size, so free up some space, or choose more in System Settings."
         }
     }
 }
@@ -58,6 +61,9 @@ protocol SharingBackend: AnyObject {
     func remove(_ participant: ShareParticipant, from album: UUID, completion: @escaping @MainActor (Result<SharedAlbum, Error>) -> Void)
     /// Stops sharing an album of yours: it goes from everyone it was shared with.
     func stopSharing(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void)
+    /// Takes whatever was sent of an album of yours that never got shared (a first send that stopped partway) back out
+    /// of iCloud, so it doesn't take up room there.
+    func discard(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void)
     /// Leaves an album shared with you.
     func leave(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void)
 }
@@ -97,5 +103,7 @@ final class UnavailableSharing: SharingBackend {
     }
 
     func stopSharing(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void) { completion(SharingError.unavailable(reason)) }
+    /// Nothing was ever sent from here.
+    func discard(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void) { completion(nil) }
     func leave(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void) { completion(SharingError.unavailable(reason)) }
 }

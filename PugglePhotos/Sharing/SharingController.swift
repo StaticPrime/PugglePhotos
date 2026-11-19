@@ -15,20 +15,32 @@ final class SharingController {
     let store: SharedAlbumsStore
     private unowned let library: LibraryController
     private let notifications: MemoryNotificationCenter
+    private let defaults: UserDefaults
     /// Yours and those shared with you.
     private(set) var albums: [SharedAlbum]
-    private var observer: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
     private var syncWork: DispatchWorkItem?
     /// Albums of yours being sent now, which aren't sent again until that's done.
     private var publishing: Set<UUID> = []
+    /// Albums of yours whose last send, made as they changed, failed, with why. They aren't sent again at every
+    /// change, so the person is told once, but when PugglePhotos next comes to the front, by when they may have made
+    /// room in iCloud, say.
+    private var stalled: [UUID: String] = [:]
+    /// Albums whose sharing sheet closed while they were still being sent for the first time: they aren't to be
+    /// shared after all.
+    private var abandoned: Set<UUID> = []
+    /// Albums being taken back out of iCloud.
+    private var discarding: Set<UUID> = []
     /// Shows a problem to the person; the window controller sets this.
     var reportProblem: ((String, String) -> Void)?
 
-    init(library: LibraryController, backend: SharingBackend, store: SharedAlbumsStore, notifications: MemoryNotificationCenter) {
+    init(library: LibraryController, backend: SharingBackend, store: SharedAlbumsStore, notifications: MemoryNotificationCenter,
+         defaults: UserDefaults = .standard) {
         self.library = library
         self.backend = backend
         self.store = store
         self.notifications = notifications
+        self.defaults = defaults
         albums = store.load()
         library.sharedPictures = store
         library.setSharedAlbums(albums.filter { !$0.isMine })
@@ -37,14 +49,24 @@ final class SharingController {
         backend.onUpdate = { [weak self] in self?.replace($0) }
         backend.onStatus = { [weak self] in
             guard let self else { return }
+            sweepUnfinished()
             NotificationCenter.default.post(name: .sharingDidChange, object: self)
         }
-        observer = NotificationCenter.default.addObserver(forName: .libraryDidChange, object: library, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.scheduleSync() }
-        }
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: .libraryDidChange, object: library, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.scheduleSync() }
+            },
+            center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.retryStalled() }
+            },
+        ]
     }
 
-    func start() { backend.start() }
+    func start() {
+        backend.start()
+        sweepUnfinished()
+    }
 
     var status: SharingStatus { backend.status }
     var mine: [SharedAlbum] { albums.filter(\.isMine) }
@@ -66,17 +88,34 @@ final class SharingController {
                                    cover: arranger.cover(of: album), owner: me, handwriting: Handwriting.family, previous: previous)
     }
 
+    /// How much of the person's iCloud storage an album of theirs takes at full size, or will once it's shared; nil
+    /// unless every photo's size is known.
+    func size(of albumID: UUID) async -> Int64? {
+        guard let album = library.catalog.album(albumID) else { return nil }
+        return await library.originalSize(of: album.items.filter(library.snapshot.inLibrary))
+    }
+
     /// Shares an album of yours with the people you choose, or with anyone who has its link.
     func share(_ albumID: UUID, access: ShareAccess, completion: @escaping (Error?) -> Void) {
+        guard !discarding.contains(albumID) else {
+            completion(SharingError.failed("What was sent of it before is still being taken out of iCloud. Try again in a moment."))
+            return
+        }
         guard var album = current(albumID, previous: mine(albumID)) else {
             completion(SharingError.unavailable(Self.reason(status)))
             return
         }
         album.access = access
+        abandoned.remove(albumID)
         publish(album, completion: completion)
     }
 
+    /// Sends an album of yours. Sharing it the first time, it's noted as unfinished until it's shared, so that what's
+    /// sent of it can be taken back out of iCloud if it never is (when PugglePhotos quits partway, say). A first send
+    /// that fills up iCloud is taken out again at once: the room is more use to the person than half an album.
     private func publish(_ album: SharedAlbum, completion: ((Error?) -> Void)? = nil) {
+        let first = mine(album.id) == nil
+        if first { unfinished.insert(album.id) }
         publishing.insert(album.id)
         let library = library
         backend.publish(album, picture: { item in await library.exportOriginal(item.source) }) { [weak self] result in
@@ -84,18 +123,51 @@ final class SharingController {
             publishing.remove(album.id)
             switch result {
             case let .success(shared):
+                if first, abandoned.remove(album.id) != nil {
+                    // Its sheet closed before it was done: it isn't to be shared after all.
+                    backend.stopSharing(album.id) { [weak self] error in if error == nil { self?.unfinished.remove(album.id) } }
+                    return
+                }
+                unfinished.remove(album.id)
+                stalled[album.id] = nil
                 replace(shared)
                 completion?(nil)
                 // Changed again while it was being sent.
                 scheduleSync()
             case let .failure(error):
-                if let completion {
-                    completion(error)
-                } else {
-                    reportProblem?("“\(album.title)” couldn’t be brought up to date for the people it’s shared with.", error.localizedDescription)
+                Task {
+                    let full = Self.isStorageFull(error)
+                    let reason = await self.words(for: error, sending: album, first: first)
+                    if first, full || self.abandoned.contains(album.id) { self.discard(album.id) }
+                    if let completion {
+                        completion(SharingError.failed(reason))
+                    } else if self.stalled[album.id] == nil {
+                        self.stalled[album.id] = reason
+                        NotificationCenter.default.post(name: .sharingDidChange, object: self)
+                        self.reportProblem?("“\(album.title)” couldn’t be brought up to date for the people it’s shared with.",
+                                            full ? reason : reason + " It’ll be tried again when PugglePhotos next comes to the front.")
+                    }
                 }
             }
         }
+    }
+
+    private static func isStorageFull(_ error: Error) -> Bool {
+        if case .storageFull? = error as? SharingError { return true }
+        return false
+    }
+
+    /// What to tell the person about a send that failed. When iCloud filled up: how much room the album needs, and,
+    /// the first time it's shared, how much went up before it filled, the best measure there is of the room there was.
+    private func words(for error: Error, sending album: SharedAlbum, first: Bool) async -> String {
+        guard case let .storageFull(stored)? = error as? SharingError else { return error.localizedDescription }
+        let sources = { (items: [SharedItem]) in items.compactMap(\.source) }
+        if first {
+            let needed = await library.originalSize(of: sources(album.items))
+            let fit = await library.originalSize(of: sources(album.items.filter { stored.contains($0.id) }))
+            return SharingSpace.full(title: album.title, needed: needed, fit: fit)
+        }
+        return SharingSpace.fullUpdating(remaining: await library.originalSize(of: sources(album.items.filter { !stored.contains($0.id) })))
     }
 
     func setAccess(_ access: ShareAccess, of album: UUID, completion: @escaping (Error?) -> Void) {
@@ -141,7 +213,7 @@ final class SharingController {
     }
 
     /// Brings what's shared of each album of yours up to date with the album, a moment after the library or catalog
-    /// changes, so a run of changes goes as one.
+    /// changes, so a run of changes goes as one. Albums whose last send failed wait to be tried again.
     private func scheduleSync() {
         syncWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.sync() }
@@ -151,10 +223,64 @@ final class SharingController {
 
     private func sync() {
         guard library.hasLoaded else { return }
-        for shared in mine where !publishing.contains(shared.id) {
+        for shared in mine where !publishing.contains(shared.id) && stalled[shared.id] == nil {
             guard let now = current(shared.id, previous: shared), !now.sameContent(as: shared) else { continue }
             publish(now)
         }
+    }
+
+    /// Why an album of yours isn't up to date for the people it's shared with, while it isn't.
+    func stallReason(_ album: UUID) -> String? { stalled[album] }
+
+    /// Sends again the albums of yours whose last send failed, with whatever's changed since. When PugglePhotos comes
+    /// to the front, as the person may have made room in iCloud meanwhile; if it fails again, they've been told.
+    func retryStalled() {
+        for id in Array(stalled.keys) where !publishing.contains(id) {
+            guard let shared = mine(id) else {
+                stalled[id] = nil
+                continue
+            }
+            if let now = current(id, previous: shared) { publish(now) }
+        }
+    }
+
+    // MARK: Albums that didn't get shared
+
+    /// Albums of yours on their way to being shared for the first time, or that stopped partway and haven't been taken
+    /// back out of iCloud yet. Kept between launches, so what was sent of one that never got shared can't be forgotten
+    /// there.
+    private var unfinished: Set<UUID> {
+        get { Set((defaults.stringArray(forKey: "SharingUnfinished") ?? []).compactMap(UUID.init(uuidString:))) }
+        set { defaults.set(newValue.map(\.uuidString).sorted(), forKey: "SharingUnfinished") }
+    }
+
+    var unfinishedAlbums: Set<UUID> { unfinished }
+
+    /// The sharing sheet for an album of yours closed without it being shared: whatever was sent of it is taken back
+    /// out of iCloud, once a send still going has finished.
+    func abandon(_ album: UUID) {
+        guard mine(album) == nil, unfinished.contains(album) else { return }
+        if publishing.contains(album) { abandoned.insert(album) } else { discard(album) }
+    }
+
+    /// Takes what was sent of an album of yours that didn't get shared back out of iCloud. It stays unfinished until
+    /// that's done, so a failure is tried again when PugglePhotos next opens.
+    private func discard(_ album: UUID) {
+        abandoned.remove(album)
+        guard !discarding.contains(album) else { return }
+        discarding.insert(album)
+        backend.discard(album) { [weak self] error in
+            guard let self else { return }
+            discarding.remove(album)
+            if error == nil { unfinished.remove(album) }
+        }
+    }
+
+    /// Takes out of iCloud what was sent of albums that never got shared: one whose sending stopped when PugglePhotos
+    /// last quit, say. Once iCloud can be reached.
+    private func sweepUnfinished() {
+        guard status.me != nil else { return }
+        for album in unfinished where mine(album) == nil && !publishing.contains(album) { discard(album) }
     }
 
     // MARK: Albums shared with you
@@ -209,6 +335,7 @@ final class SharingController {
 
     private func forget(_ album: UUID, mine: Bool) {
         albums.removeAll { $0.id == album && $0.isMine == mine }
+        if mine { stalled[album] = nil }
         if !mine { store.removePictures(of: album) }
         changed(touchesLibrary: !mine)
     }
