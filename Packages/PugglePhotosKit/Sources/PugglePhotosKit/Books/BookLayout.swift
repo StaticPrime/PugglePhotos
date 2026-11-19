@@ -7,11 +7,15 @@ public struct BookItem: Hashable, Sendable {
     /// Width over height.
     public let aspect: Double
     public let isVideo: Bool
+    /// Where on its page the photo lies, how it leans and where its sticky note goes come from this: by default its
+    /// identifier's, or the one a photo shared with you had in its owner's library, so it lies just as it does there.
+    public let seed: UInt64
 
-    public init(id: PhotoID, aspect: Double, isVideo: Bool = false) {
+    public init(id: PhotoID, aspect: Double, isVideo: Bool = false, seed: UInt64? = nil) {
         self.id = id
         self.aspect = aspect > 0 ? aspect : 1
         self.isVideo = isVideo
+        self.seed = seed ?? KenBurns.seed(id)
     }
 }
 
@@ -403,7 +407,7 @@ public struct BookLayout: Sendable {
             let scale = min(space.width / imageAspect, space.height)
             size = CGSize(width: scale * imageAspect, height: scale)
         }
-        var jitter = SplitMix(seed: settings.seed ^ KenBurns.seed(item.id))
+        var jitter = SplitMix(seed: settings.seed ^ item.seed)
         let dx = CGFloat(Int(jitter.next() % 29) - 14)
         let dy = CGFloat(Int(jitter.next() % 21) - 10)
         let lean = settings.tilt.maxDegrees * leanScale * (Double(jitter.next() % 2001) / 1000 - 1)
@@ -420,7 +424,7 @@ public struct BookLayout: Sendable {
             }
         }
         placement.sticky = override?.sticky
-            ?? BookPlacement.defaultSticky(frameSize: placement.frameSize(frame), seed: settings.seed ^ KenBurns.seed(item.id) ^ 0x5717)
+            ?? BookPlacement.defaultSticky(frameSize: placement.frameSize(frame), seed: settings.seed ^ item.seed ^ 0x5717)
         placement.center = clamp(placement.center)
         return placement
     }
