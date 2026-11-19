@@ -135,6 +135,7 @@ enum MenuBuilder {
             place("Recently Added", "recent", "clock.arrow.circlepath", "4"),
             item("All Albums", #selector(LibraryWindowController.phShowAllAlbums(_:)), "5", [.command, .option], symbol: "rectangle.stack"),
             place("Journal", "journal", "book.closed", "6"),
+            place("Map", "map", "map", "7"),
             .separator(),
             item("Today", #selector(LibraryWindowController.phGoToToday(_:)), "t"),
             .separator(),

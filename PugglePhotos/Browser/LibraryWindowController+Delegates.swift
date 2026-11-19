@@ -333,10 +333,21 @@ extension LibraryWindowController: AlbumsViewDelegate {
     }
 }
 
+// MARK: The map
+
+extension LibraryWindowController: MapViewDelegate {
+    func mapOpen(_ id: PhotoID, among photos: [PhotoID]) {
+        mapViewerPhotos = photos
+        openViewer(id)
+    }
+}
+
 // MARK: The viewer
 
 extension LibraryWindowController: ViewerDelegate {
+    /// The photos the viewer goes through: what's showing, or, opened from the map, the photos in view there.
     var viewerSequence: [PhotoID] {
+        if state.source == .map, let mapViewerPhotos { return mapViewerPhotos }
         var seen = Set<PhotoID>()
         return content.allIDs.filter { seen.insert($0).inserted }
     }

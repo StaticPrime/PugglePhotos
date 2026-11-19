@@ -7,9 +7,9 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
     private unowned let owner: LibraryWindowController
     let toolbar = NSToolbar(identifier: "LibraryToolbar")
     private var backItem: NSToolbarItem?
-    private var modeGroup: NSToolbarItemGroup?
-    private var zoomSlider: NSSlider?
-    private var arrangeItem: NSMenuToolbarItem?
+    private(set) var modeGroup: NSToolbarItemGroup?
+    private(set) var zoomSlider: NSSlider?
+    private(set) var arrangeItem: NSMenuToolbarItem?
     private var favoriteItem: NSToolbarItem?
     private(set) var searchItem: NSSearchToolbarItem?
 
@@ -73,6 +73,8 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
             item.view = slider
             item.label = "Size"
             item.toolTip = "Thumbnail size (⌘+ and ⌘−)"
+            // Turned on and off in update(), like the view switch.
+            item.autovalidates = false
             zoomSlider = slider
             return item
         case Self.arrange:
@@ -82,6 +84,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
             item.toolTip = "Group and sort"
             item.showsIndicator = true
             item.menu = NSMenu()
+            item.autovalidates = false
             arrangeItem = item
             return item
         case Self.favorite:
@@ -114,11 +117,21 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
     /// only here: left to check themselves, the toolbar turns on anything with an action, Book even outside an album.
     func update() {
         let state = owner.state
-        // Memories and the Journal are pages of their own: no way of showing photos is chosen there.
-        let onPage = state.source == .memories || state.source == .journal
+        // Memories, the Journal and the map are pages of their own: no way of showing photos is chosen there.
+        let onPage = state.source == .memories || state.source == .journal || state.source == .map
         let hasBook = owner.currentAlbum != nil || owner.currentSharedAlbum != nil
         let isBook = state.viewMode == .book && hasBook
-        modeGroup?.selectedIndex = onPage ? -1 : (isBook ? 2 : (state.viewMode == .list ? 1 : 0))
+        if let modeGroup {
+            if onPage {
+                // A pick-one group won't be left with nothing picked: let it pick any, clear it, then make it pick
+                // one again. A click still picks one.
+                modeGroup.selectionMode = .selectAny
+                for index in modeGroup.subitems.indices { modeGroup.setSelected(false, at: index) }
+                modeGroup.selectionMode = .selectOne
+            } else {
+                modeGroup.selectedIndex = isBook ? 2 : (state.viewMode == .list ? 1 : 0)
+            }
+        }
         modeGroup?.isEnabled = owner.library.access == .authorized
         if let modeGroup, modeGroup.subitems.count == 3 { modeGroup.subitems[2].isEnabled = hasBook }
         zoomSlider?.doubleValue = Double(state.thumbnailSide)

@@ -142,7 +142,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// Rebuilds the rows from the library and catalog, keeping the selection.
     func reload() {
         guard let library = delegate?.library else { return }
-        let libraryNodes: [SidebarNode] = [.memories, .journal, .library, .favorites, .videos, .recentlyAdded].map { SidebarNode(.source($0)) }
+        let libraryNodes: [SidebarNode] = [.memories, .journal, .library, .favorites, .videos, .map, .recentlyAdded].map { SidebarNode(.source($0)) }
         var albumNodes = [SidebarNode(.source(.allAlbums))]
         albumNodes += (delegate?.albumOrder ?? library.catalog.albums.map(\.id)).map { SidebarNode(.source(.album($0))) }
         let labelNodes = library.catalog.labels.map { SidebarNode(.source(.label($0.id))) }
@@ -312,6 +312,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .videos:
             count = library.snapshot.items.lazy.filter(\.kind.isVideo).count
             cell.configure(title: "Videos", symbol: "video", count: count)
+        case .map:
+            count = library.snapshot.items.lazy.filter { $0.location != nil }.count
+            cell.configure(title: "Map", symbol: "map", count: count)
         case .recentlyAdded:
             cell.configure(title: "Recently Added", symbol: "clock.arrow.circlepath", count: arranger.ids(for: .recentlyAdded, recent: library.recentlyAdded).count)
         case .allAlbums:
@@ -407,7 +410,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case let .album(id): .album(id)
             case let .label(id): .label(id)
             case .allAlbums: .newAlbum
-            case .memories, .memory, .journal, .sharedAlbum: nil
+            case .memories, .memory, .journal, .map, .sharedAlbum: nil
             }
         }
     }

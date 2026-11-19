@@ -50,6 +50,7 @@ final class BrowserState {
         case .library: "library"
         case .favorites: "favorites"
         case .videos: "videos"
+        case .map: "map"
         case .recentlyAdded: "recent"
         case .allAlbums: "albums"
         case .album: "album"
@@ -120,10 +121,15 @@ extension LibrarySource {
     }
 
     /// False for the places with a page of their own (Memories, the Journal and the album covers) instead of photos.
+    /// The map shows photos, so searching it finds them there.
     var showsPhotos: Bool {
         switch self {
         case .memories, .journal, .allAlbums: false
         default: true
         }
     }
+
+    /// Whether the photos are shown in a gallery or a list (or as a book), arranged by the View menu: everywhere
+    /// they're shown but on the map.
+    var showsGallery: Bool { showsPhotos && self != .map }
 }

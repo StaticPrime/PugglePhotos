@@ -52,6 +52,18 @@ struct Fixture {
         #expect(arranger.ids(for: .label(fixture.family)) == ["p1", "p4"])
         #expect(arranger.ids(for: .recentlyAdded, recent: ["p4"]) == ["p4"])
         #expect(arranger.ids(for: .allAlbums).isEmpty)
+        #expect(arranger.ids(for: .map).isEmpty, "none of them says where it was taken")
+    }
+
+    @Test func theMapHoldsOnlyPhotosThatSayWhereTheyWereTaken() {
+        let lake = GeoPoint(latitude: 45.27, longitude: -121.74)
+        let items = [
+            MediaItem(id: "here", date: date(2025, 6, 14, 9), location: lake),
+            MediaItem(id: "nowhere", date: date(2025, 6, 14, 10)),
+            MediaItem(id: "there", kind: .video, date: date(2025, 6, 14, 11), location: lake),
+        ]
+        let arranger = Arranger(snapshot: LibrarySnapshot(items: items, timeZone: newYork), catalog: Catalog())
+        #expect(arranger.ids(for: .map) == ["here", "there"])
     }
 
     @Test func sortingByDate() {

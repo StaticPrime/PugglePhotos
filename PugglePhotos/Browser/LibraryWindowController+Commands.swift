@@ -63,10 +63,10 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(phBack(_:)):
             return canGoBack
         case #selector(phShowGallery(_:)):
-            menuItem.state = state.viewMode == .gallery && state.source.showsPhotos ? .on : .off
+            menuItem.state = state.viewMode == .gallery && state.source.showsGallery ? .on : .off
             return library.access == .authorized
         case #selector(phShowList(_:)):
-            menuItem.state = state.viewMode == .list && state.source.showsPhotos ? .on : .off
+            menuItem.state = state.viewMode == .list && state.source.showsGallery ? .on : .off
             return library.access == .authorized
         case #selector(phWriteJournal(_:)):
             return library.hasLoaded
@@ -130,7 +130,7 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(phRenameAlbum(_:)), #selector(phDeleteAlbum(_:)):
             return (menuItem.representedObject as? UUID ?? currentAlbum?.id ?? albums.selectedAlbum) != nil
         case #selector(phGroupBy(_:)), #selector(phSortBy(_:)), #selector(phOrder(_:)):
-            return state.source.showsPhotos && library.access == .authorized
+            return state.source.showsGallery && library.access == .authorized
         case #selector(phPlaySlideshow(_:)):
             return library.hasLoaded && state.source != .allAlbums && SlideshowController.current == nil
         default:
@@ -365,6 +365,7 @@ extension LibraryWindowController: NSMenuItemValidation {
         case "journal": go(to: .journal)
         case "favorites": go(to: .favorites)
         case "videos": go(to: .videos)
+        case "map": go(to: .map)
         case "recent": go(to: .recentlyAdded)
         default: go(to: .library)
         }

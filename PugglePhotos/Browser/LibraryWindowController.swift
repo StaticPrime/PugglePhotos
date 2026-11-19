@@ -14,6 +14,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     let list = PhotoListViewController()
     let albums = AlbumsViewController()
     let viewer = ViewerViewController()
+    let map = MapViewController()
+    /// The photos the viewer goes through when it was opened from the map: those in view there.
+    var mapViewerPhotos: [PhotoID]?
     private(set) lazy var book: BookViewController = {
         let book = BookViewController(library: library)
         book.onOpenPhoto = { [weak self] id in self?.openViewer(id) }
@@ -113,6 +116,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         list.onSort = { [weak self] sort, ascending in self?.setSort(sort, ascending: ascending) }
         albums.delegate = self
         viewer.delegate = self
+        map.delegate = self
         sidebar.delegate = self
         inspectorModel.actions = self
         grid.thumbnailSide = state.thumbnailSide
@@ -278,6 +282,16 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         content = makeContent()
+        if state.source == .map {
+            if content.isEmpty {
+                showEmptyState()
+            } else {
+                show(map)
+                map.show(content.allIDs, search: state.searchText)
+            }
+            setSelection([], notify: false)
+            return
+        }
         let selection = state.selection.filter { library.snapshot.contains($0) }
         if state.viewMode == .book, let album = currentAlbum {
             show(book)
@@ -365,6 +379,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
                                             message: "Press period (.) or click the heart in the toolbar to make a photo a favorite, or drag photos here from anywhere. Favorites show here and in your Photos library.")
             case .videos: EmptyStateView(symbol: "video", title: "No Videos",
                                          message: "Videos in your Photos library show here. Drag videos here from anywhere to add them.")
+            case .map: EmptyStateView(symbol: "map", title: "No Places Yet",
+                                      message: "Photos and videos that say where they were taken show here, on a map. Those that don’t, like screenshots, stay off it.")
             case .recentlyAdded: EmptyStateView(symbol: "clock", title: "Nothing Added Lately",
                                                 message: "Photos added to your Photos library in the last 30 days show here. Drag photos and videos here from anywhere to add them.")
             case .label: EmptyStateView(symbol: "tag", title: "No Photos with This Label",
@@ -389,6 +405,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         case .library: window.title = "Library"
         case .favorites: window.title = "Favorites"
         case .videos: window.title = "Videos"
+        case .map: window.title = "Map"
         case .recentlyAdded: window.title = "Recently Added"
         case .allAlbums: window.title = "Albums"
         case let .album(id): window.title = library.catalog.album(id)?.title ?? "Album"
@@ -529,9 +546,15 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     func closeViewer(refreshing: Bool = true) {
         guard let id = state.viewerID else { return }
         state.viewerID = nil
+        mapViewerPhotos = nil
         viewer.stop()
         guard refreshing else { return }
         refresh(keepPosition: true)
+        if state.source == .map {
+            // Back on the map, just where it was.
+            window?.makeFirstResponder(map.mapView)
+            return
+        }
         setSelection([id])
         if state.viewMode == .gallery {
             grid.select([id])
@@ -594,7 +617,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             NSSound.beep()
             return
         }
-        if !state.source.showsPhotos { go(to: .library) }
+        if !state.source.showsGallery { go(to: .library) }
         closeViewer(refreshing: false)
         state.viewMode = mode
         refresh(keepPosition: false)

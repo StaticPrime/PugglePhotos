@@ -59,6 +59,14 @@
 			);
 			sourceTree = "<group>";
 		};
+		6D0000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6D0000000000000000000004 /* PugglePhotos.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
 		6D0000000000000000000014 /* Config */ = {
 			isa = PBXGroup;
 			children = (
@@ -66,14 +74,6 @@
 				6D0000000000000000000016 /* iCloud.entitlements */,
 			);
 			path = Config;
-			sourceTree = "<group>";
-		};
-		6D0000000000000000000003 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				6D0000000000000000000004 /* PugglePhotos.app */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */

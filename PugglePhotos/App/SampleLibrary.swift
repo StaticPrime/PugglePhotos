@@ -384,15 +384,33 @@ enum SampleLibrary {
         var entries: [Entry] = []
         var byEvent: [String: [PhotoID]] = [:]
         var seed = 7
+        /// Where the family takes each kind of photo (at home, the lake, the coast, up the mountain, on the trail and
+        /// in the city), a few steps apart within `spread` degrees. Screenshots and scans say nowhere.
+        func place(of scene: SampleScene, seed: Int, spread: Double) -> GeoPoint? {
+            let home = (45.5231, -122.6765)
+            let base: (Double, Double)
+            switch scene {
+            case .party, .garden, .pug: base = home
+            case .lake: base = (45.2700, -121.7376)
+            case .beach, .sunset: base = (45.8918, -123.9615)
+            case .snow: base = (45.3317, -121.6650)
+            case .hike: base = (45.5762, -122.1158)
+            case .city, .food: base = (47.6097, -122.3425)
+            case .screenshot, .scan: return nil
+            }
+            let across = Double((seed * 7919) % 201 - 100) / 100, down = Double((seed * 104_729) % 201 - 100) / 100
+            return GeoPoint(latitude: base.0 + down * spread, longitude: base.1 + across * spread)
+        }
         func add(_ key: String, _ scene: SampleScene, at date: Date, kind: MediaKind = .photo, favorite: Bool = false,
-                 added: Date? = nil, duration: TimeInterval = 0) {
+                 added: Date? = nil, duration: TimeInterval = 0, spread: Double = 0.002) {
             seed += 1
             let id = PhotoID("sample-\(key)-\(byEvent[key, default: []].count + 1)")
             let aspect = kind == .video ? 16.0 / 9.0 : Double(scene.aspect(seed: seed))
             let pixelWidth = kind == .panorama ? 9000 : (aspect >= 1 ? 4032 : 3024)
             let pixelHeight = kind == .panorama ? 3000 : Int(Double(pixelWidth) / aspect)
             let item = MediaItem(id: id, kind: kind, date: date, addedDate: added ?? date.addingTimeInterval(3600),
-                                 pixelWidth: pixelWidth, pixelHeight: pixelHeight, duration: duration, isFavorite: favorite)
+                                 pixelWidth: pixelWidth, pixelHeight: pixelHeight, duration: duration, isFavorite: favorite,
+                                 location: place(of: scene, seed: seed, spread: spread))
             entries.append(Entry(item: item, scene: scene, seed: seed))
             byEvent[key, default: []].append(id)
         }
@@ -435,7 +453,7 @@ enum SampleLibrary {
             let start = calendar.date(from: DateComponents(year: 2005, month: 1, day: 1))!
             let scenes: [SampleScene] = [.lake, .beach, .party, .snow, .hike, .city, .garden, .food, .pug, .sunset]
             for index in 0..<extra {
-                add("bulk\(index / 1000)", scenes[index % scenes.count], at: start.addingTimeInterval(Double(index) * 4987))
+                add("bulk\(index / 1000)", scenes[index % scenes.count], at: start.addingTimeInterval(Double(index) * 4987), spread: 6)
             }
         }
 

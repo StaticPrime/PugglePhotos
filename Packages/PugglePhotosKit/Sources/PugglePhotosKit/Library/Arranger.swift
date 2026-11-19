@@ -11,6 +11,8 @@ public enum LibrarySource: Hashable, Codable, Sendable {
     case library
     case favorites
     case videos
+    /// The photos and videos that say where they were taken, on a map.
+    case map
     case recentlyAdded
     /// The covers of every album, rather than photos.
     case allAlbums
@@ -168,6 +170,8 @@ public struct Arranger: Sendable {
             return snapshot.items.filter(\.isFavorite).map(\.id)
         case .videos:
             return snapshot.items.filter(\.kind.isVideo).map(\.id)
+        case .map:
+            return snapshot.items.filter { $0.location != nil }.map(\.id)
         case .recentlyAdded:
             let cutoff = Date().addingTimeInterval(-30 * 86_400)
             let added = snapshot.items.filter { ($0.addedDate ?? .distantPast) >= cutoff }

@@ -109,6 +109,7 @@ enum DebugLaunchOptions {
             case "journal": controller.go(to: .journal)
             case "favorites": controller.go(to: .favorites)
             case "videos": controller.go(to: .videos)
+            case "map": controller.go(to: .map)
             case "recent": controller.go(to: .recentlyAdded)
             case "albums": controller.go(to: .allAlbums)
             case "album":
@@ -312,11 +313,7 @@ enum DebugLaunchOptions {
         // The window server's picture of the window shows vibrant sidebars and every SwiftUI view as they really
         // look; drawing the views into a bitmap misses those, so it's only the fallback.
         if let windowImage = windowServerImage(window) {
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-            try? windowImage.representation(using: .png, properties: [:])?.write(to: url)
-            print("PHSnapshot: \(url.path)")
-            fflush(stdout)
-            exit(0)
+            save(windowImage.representation(using: .png, properties: [:]), as: name)
         }
         var image = capture(view)
         // A popover lives in its own window: draw it over the main window where it appears.
@@ -333,9 +330,16 @@ enum DebugLaunchOptions {
             let inspector = controller.inspectorItem.viewController.view
             print("PHDebug: inspector frame=\(inspector.frame) collapsed=\(controller.inspectorItem.isCollapsed) subviews=\(inspector.subviews.count)")
         }
+        save(image.representation(using: .png, properties: [:]), as: name)
+    }
+
+    /// Writes a snapshot to the app's temporary folder, says where, and quits. With `-PHSnapshotPrint YES` it's
+    /// printed too, in base64 after "PHSnapshotData: ", for when the app's own folder can't be read from outside.
+    private static func save(_ png: Data?, as name: String) -> Never {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        try? image.representation(using: .png, properties: [:])?.write(to: url)
+        try? png?.write(to: url)
         print("PHSnapshot: \(url.path)")
+        if defaults.bool(forKey: "PHSnapshotPrint"), let png { print("PHSnapshotData: " + png.base64EncodedString()) }
         fflush(stdout)
         exit(0)
     }

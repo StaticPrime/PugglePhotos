@@ -410,6 +410,7 @@ struct ShortcutsView: View {
             ("Memories", "⌥⌘0"),
             ("Library, Favorites, Videos, Recently Added", "⌥⌘1 … ⌥⌘4"),
             ("Journal", "⌥⌘6"),
+            ("Map", "⌥⌘7"),
             ("Play a slideshow", "⌥⌘P"),
             ("Go to today", "⌘T"),
         ]),
