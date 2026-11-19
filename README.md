@@ -137,7 +137,7 @@ xcodebuild -project PugglePhotos.xcodeproj -scheme PugglePhotos -configuration D
 open build/DerivedData/Build/Products/Debug/PugglePhotos.app
 ```
 
-The app is sandboxed, with access to the Photos library, and signs locally ("Sign to Run Locally"). To distribute it, set your team under *Signing & Capabilities*.
+The app is sandboxed, with access to the Photos library. Debug builds are signed to run on the Mac that built them, unless `Config/Signing.xcconfig` names a team (see Sharing from Xcode below); releases are signed by `Tools/make-installer.sh`.
 
 ### Installer
 
@@ -174,14 +174,26 @@ To sign and notarize releases, add these secrets under the repository's Settings
 
 ### Sharing through iCloud
 
-Shared albums are kept in iCloud, in the container `iCloud.com.pugglesoft.PugglePhotos`, so only a copy of PugglePhotos signed for that container can share them. Any other copy, like one built and run from Xcode, says so in the sharing sheet; on the sample library, debug runs share through a stand-in for iCloud on the Mac instead. To set it up, once:
+Shared albums are kept in iCloud, in the container `iCloud.com.pugglesoft.PugglePhotos`, so only a copy of PugglePhotos signed for that container can share them. Any other copy, like one built from a fresh clone, says so in the sharing sheet; on the sample library, debug runs share through a stand-in for iCloud on the Mac instead. To set it up, once:
 
 1. In the Apple Developer account, under Certificates, Identifiers & Profiles ▸ Identifiers, register the iCloud container `iCloud.com.pugglesoft.PugglePhotos`. Then edit the App ID `com.pugglesoft.PugglePhotos`: turn on iCloud, with CloudKit and that container, and Push Notifications.
 2. Under Profiles, make a Developer ID provisioning profile for that App ID and the Developer ID Application certificate, and download it.
-3. In CloudKit Console, open the container's development schema and add two record types: `Album`, with a Bytes field `info`, and `Item`, with a Bytes field `info` and an Asset field `original`. Then deploy the schema to production.
+3. Make the container's schema. iCloud's development environment adds record types as they're first saved, but production only takes what's deployed to it. So share an album once from Xcode in the development environment (see Sharing from Xcode below), which adds `Album` (a Bytes field `info`), `Item` (a Bytes field `info` and an Asset field `original`) and iCloud's own record of a share, `cloudkit.share`. Then deploy the schema to production in CloudKit Console.
 4. Add the profile to the repository as the secret `DEVELOPER_ID_PROFILE_BASE64` (`base64 -i PugglePhotos.provisionprofile | pbcopy`). To build a signed installer on your Mac instead, set `DEVELOPER_ID_PROFILE` to the profile's path along with the Developer ID variables before running `Tools/make-installer.sh`.
 
 `Tools/make-installer.sh` then puts the profile inside the app and signs it for the container, the production environment and pushes. To try sharing, install it on two Macs signed in to different iCloud accounts.
+
+#### Sharing from Xcode
+
+A debug build can share albums too, once it's signed with the team. Make `Config/Signing.xcconfig` (Git ignores it) with your team's ID:
+
+```
+DEVELOPMENT_TEAM = ABCDE12345
+CODE_SIGN_IDENTITY = Apple Development
+CODE_SIGN_ENTITLEMENTS = Config/iCloud.entitlements
+```
+
+Add an Apple ID in that team under Xcode ▸ Settings ▸ Accounts, then build: Xcode makes the development certificate and provisioning profile itself. Set the team in that file rather than under *Signing & Capabilities*, which would write it into the project for everyone. Debug builds use iCloud's production environment, as installed copies do, so an album shared from Xcode reaches someone who installed PugglePhotos. Production only takes the kinds of records already deployed to it: when PugglePhotos starts saving a new kind, and once at the start, add `ICLOUD_ENVIRONMENT = Development` to `Config/Signing.xcconfig`, share an album, deploy the schema to production in CloudKit Console, and take the line out again. `Config/iCloud.entitlements` is `PugglePhotos/PugglePhotos.entitlements` with iCloud's added, so keep the two alike.
 
 ## Tests
 
@@ -225,6 +237,7 @@ Packages/PugglePhotosKit/    The catalog, dates, sorting, grouping and search (n
   Export/                    EPUB files and the ZIP archives they're kept in
   Sharing/                   Shared albums: what's shared of an album and its book, how it's kept in iCloud, their notifications, and keeping them on the Mac
   Store/                     Saving the catalog, with daily backups
+Config/                      Signing for debug builds, and their entitlements for sharing from Xcode
 Tools/make-icons.swift       Regenerates the app icon PNGs
 Tools/make-installer.sh      Builds the PugglePhotos.pkg installer
 Tools/release.sh             Releases the next version (see Releasing a new version)
