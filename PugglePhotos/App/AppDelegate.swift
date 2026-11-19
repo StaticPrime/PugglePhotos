@@ -1,4 +1,5 @@
 import AppKit
+import CloudKit
 import PugglePhotosKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -90,7 +91,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return standIn
         }
         #endif
-        return UnavailableSharing(reason: "Sharing albums uses iCloud, which this copy of PugglePhotos isn’t set up to reach yet.")
+        if CloudKitSharing.isEntitled { return CloudKitSharing(store: store) }
+        return UnavailableSharing(reason: "Sharing albums goes through iCloud, which this copy of PugglePhotos isn’t signed to use.")
     }
 
     /// Where shared albums are kept: beside the catalog, or for the sample library in a folder of its own.
@@ -168,9 +170,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func showSettings(_ sender: Any?) { SettingsWindowController.show(settings) }
 
-    // MARK: Memories
+    // MARK: Shared albums
 
-    /// Plays a memory, from a clicked notification or the menu bar: the window comes up behind the slideshow.
+    /// Joins an album someone shared with you, from the link they sent, and opens it.
+    func application(_ application: NSApplication, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
+        sharing.accept(metadata) { [weak self] result in
+            switch result {
+            case let .success(id):
+                self?.openSharedAlbum(id)
+            case let .failure(error):
+                self?.showLibraryWindow(nil)
+                let alert = NSAlert()
+                alert.messageText = "The shared album couldn’t be opened."
+                alert.informativeText = error.localizedDescription
+                if let window = self?.windowController?.window {
+                    alert.beginSheetModal(for: window)
+                } else {
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
+    func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
+        sharing.receivedPush(userInfo)
+    }
+
     /// Opens an album shared with you, from a notification about it.
     func openSharedAlbum(_ id: UUID) {
         showLibraryWindow(nil)
@@ -178,6 +203,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController?.go(to: .sharedAlbum(id))
     }
 
+    // MARK: Memories
+
+    /// Plays a memory, from a clicked notification or the menu bar: the window comes up behind the slideshow.
     func openMemory(_ id: String) {
         showLibraryWindow(nil)
         guard library.hasLoaded else {

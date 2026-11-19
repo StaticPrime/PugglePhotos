@@ -1,4 +1,5 @@
 import AppKit
+import CloudKit
 import PugglePhotosKit
 
 extension Notification.Name {
@@ -34,6 +35,10 @@ final class SharingController {
         backend.onReceive = { [weak self] in self?.received($0) }
         backend.onGone = { [weak self] in self?.gone($0) }
         backend.onUpdate = { [weak self] in self?.replace($0) }
+        backend.onStatus = { [weak self] in
+            guard let self else { return }
+            NotificationCenter.default.post(name: .sharingDidChange, object: self)
+        }
         observer = NotificationCenter.default.addObserver(forName: .libraryDidChange, object: library, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleSync() }
         }
@@ -173,6 +178,29 @@ final class SharingController {
             if error == nil { self?.forget(album, mine: false) }
             completion(error)
         }
+    }
+
+    /// Joins an album shared with you from the link its owner sent, answering once it's here. It's opened at once, so
+    /// no notification says it's come.
+    func accept(_ metadata: CKShare.Metadata, completion: @escaping (Result<UUID, Error>) -> Void) {
+        guard let cloud = backend as? CloudKitSharing else {
+            completion(.failure(SharingError.unavailable(Self.reason(status))))
+            return
+        }
+        cloud.accept(metadata) { [weak self] result in
+            switch result {
+            case let .success(album):
+                self?.replace(album)
+                completion(.success(album.id))
+            case let .failure(error):
+                completion(.failure(error))
+            }
+        }
+    }
+
+    /// A push from iCloud, which may say something shared has changed.
+    func receivedPush(_ userInfo: [String: Any]) {
+        (backend as? CloudKitSharing)?.receivedPush(userInfo)
     }
 
     private func gone(_ album: UUID) {

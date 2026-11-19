@@ -15,6 +15,7 @@ final class StandInSharing: SharingBackend {
     var onReceive: ((SharedAlbum) -> Void)?
     var onGone: ((UUID) -> Void)?
     var onUpdate: ((SharedAlbum) -> Void)?
+    var onStatus: (() -> Void)?
     /// Whether Gran's album comes when sharing starts.
     var delivers = true
     /// Albums of yours as the stand-in "iCloud" holds them.

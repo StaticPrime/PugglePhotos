@@ -482,7 +482,7 @@ struct WelcomeView: View {
             switch state {
             case .ask:
                 Text("Welcome to PugglePhotos").font(.largeTitle.bold())
-                Text("A cozy home for your photo library and the memories in it. PugglePhotos shows the photos and videos already in your Photos library: make albums, add labels, captions and notes, and put photos back on the right day by dragging them there. Your photos never leave your Mac.")
+                Text("A cozy home for your photo library and the memories in it. PugglePhotos shows the photos and videos already in your Photos library: make albums, add labels, captions and notes, and put photos back on the right day by dragging them there. Your photos stay on your Mac, apart from albums you share.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 520)

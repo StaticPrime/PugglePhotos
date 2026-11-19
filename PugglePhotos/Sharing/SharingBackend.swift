@@ -41,6 +41,8 @@ protocol SharingBackend: AnyObject {
     var onGone: ((UUID) -> Void)? { get set }
     /// An album of yours, changed there: someone joined, its link.
     var onUpdate: ((SharedAlbum) -> Void)? { get set }
+    /// `status` changed: signed in or out of iCloud, say.
+    var onStatus: (() -> Void)? { get set }
 
     /// Starts looking for what's changed, and keeps on.
     func start()
@@ -66,6 +68,7 @@ final class UnavailableSharing: SharingBackend {
     var onReceive: ((SharedAlbum) -> Void)?
     var onGone: ((UUID) -> Void)?
     var onUpdate: ((SharedAlbum) -> Void)?
+    var onStatus: (() -> Void)?
 
     init(reason: String) { self.reason = reason }
 

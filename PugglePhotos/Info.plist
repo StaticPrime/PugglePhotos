@@ -2,7 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CKSharingSupported</key>
+	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>PugglePhotos shows the photos and videos in your Photos library, adds the ones you drag into it, keeps your albums and favorites in step, and changes dates when you ask it to. Your photos never leave your Mac.</string>
+	<string>PugglePhotos shows the photos and videos in your Photos library, adds the ones you drag into it, keeps your albums and favorites in step, and changes dates when you ask it to. Only the albums you share leave your Mac.</string>
 </dict>
 </plist>

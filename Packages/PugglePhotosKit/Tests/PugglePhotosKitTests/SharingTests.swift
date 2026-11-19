@@ -218,6 +218,62 @@ import Testing
         #expect(arranger.sorted(album.photoIDs, by: .dateTaken, ascending: true) == album.photoIDs.reversed())
     }
 
+    @Test func aSharedAlbumGoesThroughItsRecordsWhole() throws {
+        let (album, items, catalog) = workedAlbum()
+        let mine = SharedAlbum.sharing(album, items: items, catalog: catalog, cover: "library-1", owner: owner, previous: nil)
+        let records = Dictionary(uniqueKeysWithValues: mine.items.map { ($0.id, SharedAlbumRecords.itemInfo($0)) })
+        let sam = ShareParticipant(id: "sam", name: "Sam", status: .invited)
+        let link = URL(string: "https://example.com/share/3")
+        // iCloud doesn't always say the owner's name.
+        let theirs = try #require(SharedAlbumRecords.album(id: mine.id, info: SharedAlbumRecords.albumInfo(mine), items: records,
+                                                           owner: ShareParticipant(id: "owner", name: "", isOwner: true),
+                                                           participants: [sam], access: .anyoneWithLink, url: link))
+        var expected = mine
+        expected.items = mine.items.map { item in
+            var item = item
+            item.source = nil
+            return item
+        }
+        expected.isMine = false
+        expected.participants = [owner, sam]
+        expected.access = .anyoneWithLink
+        expected.url = link
+        #expect(theirs == expected, "everything but which photos in the owner's library they are")
+        #expect(theirs.owner.name == "Jamie Rivera" && theirs.book == mine.book && theirs.coverID == theirs.photoID(of: theirs.items[1]))
+    }
+
+    @Test func anAlbumComingInPartsShowsWhatsCome() throws {
+        let (album, items, catalog) = workedAlbum()
+        let mine = SharedAlbum.sharing(album, items: items, catalog: catalog, cover: "library-1", owner: owner, previous: nil)
+        var records = Dictionary(uniqueKeysWithValues: mine.items.map { ($0.id, SharedAlbumRecords.itemInfo($0)) })
+        // The cover's record hasn't come, and one has come that the album's record doesn't name yet.
+        records[mine.items[1].id] = nil
+        records[UUID()] = SharedAlbumRecords.itemInfo(SharedItem(kind: .photo, date: Date(), pixelWidth: 1, pixelHeight: 1, layoutSeed: 1))
+        let theirs = try #require(SharedAlbumRecords.album(id: mine.id, info: SharedAlbumRecords.albumInfo(mine), items: records,
+                                                           owner: owner, participants: [owner], access: .invited, url: nil))
+        #expect(theirs.items.map(\.id) == mine.items.map(\.id).filter { $0 != mine.items[1].id })
+        #expect(theirs.cover == nil && theirs.coverID == theirs.photoID(of: theirs.items[0]), "the first photo stands in for a cover not come")
+        #expect(theirs.participants == [owner])
+        #expect(SharedAlbumRecords.album(id: mine.id, info: Data("nonsense".utf8), items: records, owner: owner, participants: [],
+                                         access: .invited, url: nil) == nil)
+    }
+
+    @Test func aPhotosRecordKeepsTheLibraryToItself() {
+        let item = SharedItem(kind: .video, date: Date(timeIntervalSinceReferenceDate: 800_000_000.125), pixelWidth: 1920, pixelHeight: 1080,
+                              duration: 9.5, fileName: "IMG_1.MOV", caption: "Splash", note: "Cold!", layoutSeed: 42, source: "library-9")
+        let info = SharedAlbumRecords.itemInfo(item)
+        #expect(!String(decoding: info, as: UTF8.self).contains("library-9"))
+        var elsewhere = item
+        elsewhere.source = "library-10"
+        #expect(SharedAlbumRecords.itemInfo(elsewhere) == info, "the same photo always gives the same record")
+        var captioned = item
+        captioned.caption = "Big splash"
+        #expect(SharedAlbumRecords.itemInfo(captioned) != info)
+        let album = UUID()
+        #expect(SharedAlbumRecords.album(inZone: SharedAlbumRecords.zoneName(of: album)) == album)
+        #expect(SharedAlbumRecords.album(inZone: "com.apple.coredata.cloudkit.zone") == nil && SharedAlbumRecords.album(inZone: "album-x") == nil)
+    }
+
     @Test func initials() {
         #expect(ShareParticipant(id: "1", name: "Jamie Rivera").initials == "JR")
         #expect(ShareParticipant(id: "2", name: "Gran").initials == "G")

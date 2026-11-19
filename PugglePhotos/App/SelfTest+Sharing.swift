@@ -30,6 +30,7 @@ extension SelfTest {
 
         // MARK: Shared with you
         step {
+            check(!CloudKitSharing.isEntitled, "a copy not signed for iCloud is told so, and never reaches for it")
             libraryCount = library.snapshot.count
             dayCounts = library.snapshot.countsByDay()
             window.go(to: .library)
