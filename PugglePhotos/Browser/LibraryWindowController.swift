@@ -17,6 +17,10 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     let map = MapViewController()
     /// The photos the viewer goes through when it was opened from the map: those in view there.
     var mapViewerPhotos: [PhotoID]?
+    /// Names places and finds them, for Get Info; the app delegate sets it.
+    var placeLookup: PlaceLookup?
+    /// The Info windows open, by the photo each shows.
+    private(set) var infoWindows: [PhotoID: InfoWindowController] = [:]
     private(set) lazy var book: BookViewController = {
         let book = BookViewController(library: library)
         book.onOpenPhoto = { [weak self] id in self?.openViewer(id) }
@@ -541,6 +545,28 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         if !state.selection.contains(id) { setSelection([id]) }
         refresh(keepPosition: true)
         window?.makeFirstResponder(viewer.view)
+    }
+
+    /// Opens an Info window for each photo (up to ten), or brings forward the one already open, laid out down the
+    /// library window's right side.
+    func showInfo(for ids: [PhotoID]) {
+        guard let placeLookup, let frame = window?.frame else { return }
+        var placed = 0
+        for id in ids.prefix(10) where library.snapshot.item(id) != nil {
+            if let open = infoWindows[id] {
+                open.showWindow(nil)
+                continue
+            }
+            let info = InfoWindowController(id: id, library: library, places: placeLookup)
+            info.onClose = { [weak self] in self?.infoWindows[id] = nil }
+            infoWindows[id] = info
+            if let panel = info.window {
+                let step = CGFloat(placed * 24)
+                panel.setFrameTopLeftPoint(NSPoint(x: frame.maxX - panel.frame.width - 24 - step, y: frame.maxY - 60 - step))
+            }
+            info.showWindow(nil)
+            placed += 1
+        }
     }
 
     func closeViewer(refreshing: Bool = true) {

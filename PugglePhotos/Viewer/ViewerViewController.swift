@@ -8,6 +8,8 @@ protocol ViewerDelegate: AnyObject {
     var viewerSequence: [PhotoID] { get }
     func viewerDidShow(_ id: PhotoID)
     func viewerClose()
+    /// The right-click menu for the photo showing.
+    func viewerMenu(for id: PhotoID) -> NSMenu?
 }
 
 /// One photo or video, as big as the window allows, on a dark background, over a filmstrip of the photos around
@@ -220,6 +222,11 @@ final class ViewerRootView: NSView {
 
     override func keyDown(with event: NSEvent) {
         if owner?.key(event) != true { super.keyDown(with: event) }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let owner, let id = owner.currentID else { return nil }
+        return owner.delegate?.viewerMenu(for: id)
     }
 }
 

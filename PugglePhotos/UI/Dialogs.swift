@@ -407,6 +407,7 @@ struct ShortcutsView: View {
             ("Search", "⌘F"),
             ("Show or hide the sidebar", "⌃⌘S"),
             ("Show or hide the info panel", "⌘I"),
+            ("Get Info in a window of its own", "⌥⌘I"),
             ("Memories", "⌥⌘0"),
             ("Library, Favorites, Videos, Recently Added", "⌥⌘1 … ⌥⌘4"),
             ("Journal", "⌥⌘6"),

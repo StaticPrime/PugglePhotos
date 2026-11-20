@@ -221,6 +221,11 @@ enum DebugLaunchOptions {
             controller.setSelection(ids)
             controller.reveal(ids)
             if defaults.bool(forKey: "PHViewer"), let first = ids.first { controller.openViewer(first) }
+            // `-PHGetInfo YES` opens an Info window on the first selected photo, kept showing while the app's behind.
+            if defaults.bool(forKey: "PHGetInfo"), let first = ids.first {
+                InfoWindowController.keepsShowingBehind = true
+                controller.showInfo(for: [first])
+            }
             // `-PHTurnOver YES` turns the first selected photo over in the grid; `-PHWriteNote YES` writes on its back.
             if defaults.bool(forKey: "PHTurnOver"), let first = ids.first {
                 DispatchQueue.main.async {
@@ -307,8 +312,9 @@ enum DebugLaunchOptions {
         let about = NSApp.windows.first { $0.windowController is AboutWindowController && $0.isVisible }
         let settings = NSApp.windows.first { $0.windowController is SettingsWindowController && $0.isVisible }
         let slideshow = SlideshowController.current.map(\.window)
+        let info = NSApp.windows.first { $0.windowController is InfoWindowController && $0.isVisible }
         if defaults.bool(forKey: "PHDebugLayout"), let show = SlideshowController.current { print("PHDebug:\n\(show.describeSlide())") }
-        let window = slideshow ?? about ?? settings ?? main.attachedSheet ?? main
+        let window = slideshow ?? about ?? settings ?? info ?? main.attachedSheet ?? main
         guard let view = window.contentView?.superview ?? window.contentView else { exit(1) }
         // The window server's picture of the window shows vibrant sidebars and every SwiftUI view as they really
         // look; drawing the views into a bitmap misses those, so it's only the fallback.

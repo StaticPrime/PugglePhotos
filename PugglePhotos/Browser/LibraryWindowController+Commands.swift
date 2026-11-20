@@ -55,6 +55,9 @@ extension LibraryWindowController: NSMenuItemValidation {
             return hasTargets
         case #selector(phOpen(_:)):
             return state.viewerID == nil && !state.selection.isEmpty
+        case #selector(phGetInfo(_:)):
+            // Photos in a book are laid out on its pages; Get Info is for the photos themselves.
+            return !isShowingBook && hasTargets
         case #selector(phRemoveFromAlbum(_:)):
             if isEditingText { return false }
             return currentAlbum != nil && hasTargets
@@ -183,6 +186,12 @@ extension LibraryWindowController: NSMenuItemValidation {
     }
 
     @objc func phChangeDate(_ sender: Any?) { showChangeDate(for: targetIDs) }
+
+    /// Opens an Info window for each chosen photo, or the one in the viewer.
+    @objc func phGetInfo(_ sender: Any?) {
+        guard !isShowingBook else { return }
+        showInfo(for: targetIDs)
+    }
 
     /// Writes on the back of the chosen photo, turning it over in the grid to do it.
     @objc func phWriteNote(_ sender: Any?) {

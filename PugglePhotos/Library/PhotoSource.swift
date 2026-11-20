@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import ImageIO
 import PugglePhotosKit
 
 /// Whether PugglePhotos may see the Photos library.
@@ -89,6 +90,8 @@ protocol PhotoSource: AnyObject {
     func setDates(_ changes: [Redate.Change], completion: @escaping @MainActor (Error?) -> Void)
     /// Marks photos as favorites, or not, all in one change to the library.
     func setFavorite(_ ids: [PhotoID], _ favorite: Bool, completion: @escaping @MainActor (Error?) -> Void)
+    /// Changes where photos were taken (or says they were taken nowhere), all in one change to the library.
+    func setPlaces(_ changes: [PlaceChange], completion: @escaping @MainActor (Error?) -> Void)
     /// Copies photo and video files into the library (the files stay where they are). `progress` hears how many
     /// files are done as it goes.
     func addFiles(_ files: [ImportFile], progress: @escaping @MainActor @Sendable (Int) -> Void,
@@ -110,6 +113,9 @@ protocol PhotoSource: AnyObject {
     /// How big each of these photos' and videos' files is as `exportOriginal` writes it, in bytes; those whose size
     /// isn't known are left out.
     func originalSizes(_ ids: [PhotoID]) async -> [PhotoID: Int64]
+    /// What a photo's or video's file says about how it was taken, with its size and format; nil if it can't be
+    /// read. May fetch the file from iCloud.
+    func metadata(_ id: PhotoID) async -> PhotoMetadata?
 }
 
 extension PhotoSource {
@@ -117,4 +123,23 @@ extension PhotoSource {
     func prefetchThumbnails(start: [PhotoID], stop: [PhotoID], pixels: CGSize) {}
     func stopPrefetching() {}
     func originalSizes(_ ids: [PhotoID]) async -> [PhotoID: Int64] { [:] }
+    func metadata(_ id: PhotoID) async -> PhotoMetadata? { nil }
+
+    /// What an image file says about how it was taken; nil if it isn't an image ImageIO reads.
+    @concurrent nonisolated static func imageMetadata(at url: URL, format: String? = nil) async -> PhotoMetadata? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] else { return nil }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize.map(Int64.init)
+        return PhotoMetadata(imageProperties: properties, fileSize: size, format: format ?? url.pathExtension.uppercased())
+    }
+}
+
+/// Where a photo was taken, changed: nil for nowhere.
+nonisolated struct PlaceChange: Hashable, Sendable {
+    let id: PhotoID
+    let from: GeoPoint?
+    let to: GeoPoint?
+
+    /// The changes that put them back.
+    static func reversed(_ changes: [PlaceChange]) -> [PlaceChange] { changes.map { PlaceChange(id: $0.id, from: $0.to, to: $0.from) } }
 }

@@ -9,6 +9,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var notifications: MemoryNotificationCenter!
     private(set) var loginItem: LoginItemService!
     private(set) var settings: SettingsModel!
+    /// Names places and finds them, for Get Info.
+    private(set) lazy var placeLookup: PlaceLookup = {
+        #if DEBUG
+        if DebugLaunchOptions.usesSampleLibrary { return SamplePlaceLookup() }
+        #endif
+        return MapPlaceLookup()
+    }()
     private(set) var windowController: LibraryWindowController?
     /// Whether macOS opened PugglePhotos at login, so it waits quietly in the menu bar instead of opening a window.
     private(set) var launchedAtLogin = false
@@ -146,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         leaveMenuBar()
         if windowController == nil {
             windowController = LibraryWindowController(library: library, memories: memories, sharing: sharing)
+            windowController?.placeLookup = placeLookup
             windowController?.window?.center()
         }
         windowController?.showWindow(nil)

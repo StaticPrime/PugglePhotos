@@ -217,6 +217,7 @@ enum MenuBuilder {
         let library = (NSApp.delegate as? AppDelegate)?.library
         return [
             item("Open", #selector(LibraryWindowController.phOpen(_:)), String(UnicodeScalar(NSDownArrowFunctionKey)!), [.command]),
+            item("Get Info", #selector(LibraryWindowController.phGetInfo(_:)), "i", [.command, .option], symbol: "info.circle"),
             .separator(),
             item("Favorite", #selector(LibraryWindowController.phToggleFavorite(_:)), ".", [], symbol: "heart"),
             item("Change Date and Time…", #selector(LibraryWindowController.phChangeDate(_:)), "d", [.command, .shift], symbol: "calendar"),

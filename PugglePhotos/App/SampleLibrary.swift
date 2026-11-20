@@ -153,6 +153,32 @@ final class SamplePhotoSource: PhotoSource {
         changed(completion)
     }
 
+    func setPlaces(_ changes: [PlaceChange], completion: @escaping @MainActor (Error?) -> Void) {
+        if refuseNextChange {
+            refuseNextChange = false
+            DispatchQueue.main.async { completion(LibraryError.notAllowed) }
+            return
+        }
+        for change in changes { items[change.id]?.location = change.to }
+        changed(completion)
+    }
+
+    /// Sample photos were taken on a made-up pocket camera, its settings varying a little from photo to photo;
+    /// screenshots and scans say nothing about a camera.
+    func metadata(_ id: PhotoID) async -> PhotoMetadata? {
+        guard let item = items[id] else { return nil }
+        let size = await originalSizes([id])[id]
+        let seed = scenes[id]?.seed ?? 0
+        if item.kind == .screenshot { return PhotoMetadata(fileSize: size, format: "PNG") }
+        if scenes[id]?.scene == .scan || addedFiles[id] != nil {
+            return PhotoMetadata(fileSize: size, format: addedFiles[id]?.pathExtension.uppercased() ?? "JPEG")
+        }
+        if item.kind.isVideo { return PhotoMetadata(make: "Puggle", model: "Pocket 3", fileSize: size, format: "MOV", frameRate: 30) }
+        return PhotoMetadata(make: "Puggle", model: "Pocket 3", lens: "Pocket 3 back camera 6.9 mm ƒ1.8", iso: [50, 64, 100, 200, 400][seed % 5],
+                             focalLength: 6.9, aperture: 1.8, exposureTime: 1.0 / Double([60, 120, 250, 500, 1000][seed % 5]),
+                             exposureBias: 0, fileSize: size, format: "HEIC")
+    }
+
     // MARK: Adding files
 
     /// Makes a photo or video for each file, taken when the file says and added just now, as the Photos library

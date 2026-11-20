@@ -481,6 +481,7 @@ extension LibraryWindowController {
     func photoMenu(for ids: [PhotoID]) -> NSMenu {
         let menu = NSMenu()
         menu.addItem(MenuBuilder.item("Open", #selector(phOpen(_:))))
+        menu.addItem(MenuBuilder.item("Get Info", #selector(phGetInfo(_:)), symbol: "info.circle"))
         let allFavorites = ids.allSatisfy { library.snapshot.item($0)?.isFavorite == true }
         menu.addItem(MenuBuilder.item(allFavorites ? "Unfavorite" : "Favorite", #selector(phToggleFavorite(_:)), symbol: allFavorites ? "heart.slash" : "heart"))
         menu.addItem(.separator())
@@ -495,6 +496,19 @@ extension LibraryWindowController {
         }
         menu.addItem(.separator())
         menu.addItem(MenuBuilder.item("New Album with Selection", #selector(phNewAlbumWithSelection(_:))))
+        return menu
+    }
+
+    /// The context menu for the photo open in the viewer.
+    func viewerMenu(for id: PhotoID) -> NSMenu? {
+        let menu = NSMenu()
+        menu.addItem(MenuBuilder.item("Get Info", #selector(phGetInfo(_:)), symbol: "info.circle"))
+        menu.addItem(.separator())
+        let favorite = library.snapshot.item(id)?.isFavorite == true
+        menu.addItem(MenuBuilder.item(favorite ? "Unfavorite" : "Favorite", #selector(phToggleFavorite(_:)), symbol: favorite ? "heart.slash" : "heart"))
+        menu.addItem(MenuBuilder.submenu("Add to Album", symbol: "rectangle.stack.badge.plus", MenuBuilder.addToAlbumItems(library)))
+        menu.addItem(MenuBuilder.submenu("Labels", symbol: "tag", MenuBuilder.labelItems(library, selection: [id])))
+        menu.addItem(MenuBuilder.item("Change Date and Time…", #selector(phChangeDate(_:)), symbol: "calendar"))
         return menu
     }
 

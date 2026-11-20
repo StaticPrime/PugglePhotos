@@ -90,6 +90,10 @@ final class SharedPicturesSource: PhotoSource {
         base.setFavorite(ids.filter { !SharedAlbum.isShared($0) }, favorite, completion: completion)
     }
 
+    func setPlaces(_ changes: [PlaceChange], completion: @escaping @MainActor (Error?) -> Void) {
+        base.setPlaces(changes.filter { !SharedAlbum.isShared($0.id) }, completion: completion)
+    }
+
     func addFiles(_ files: [ImportFile], progress: @escaping @MainActor @Sendable (Int) -> Void,
                   completion: @escaping @MainActor (AddedFiles) -> Void) {
         base.addFiles(files, progress: progress, completion: completion)
@@ -116,5 +120,12 @@ final class SharedPicturesSource: PhotoSource {
 
     func originalSizes(_ ids: [PhotoID]) async -> [PhotoID: Int64] {
         await base.originalSizes(ids.filter { !SharedAlbum.isShared($0) })
+    }
+
+    /// A photo shared with you says what its own file, kept on this Mac, says.
+    func metadata(_ id: PhotoID) async -> PhotoMetadata? {
+        guard SharedAlbum.isShared(id) else { return await base.metadata(id) }
+        guard let file = pictureURL(id) else { return nil }
+        return await Self.imageMetadata(at: file)
     }
 }

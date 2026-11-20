@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import CoreLocation
 import Photos
 import PugglePhotosKit
 
@@ -201,6 +202,63 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
         perform({
             for asset in targets { PHAssetChangeRequest(for: asset).isFavorite = favorite }
         }, completion: completion)
+    }
+
+    func setPlaces(_ changes: [PlaceChange], completion: @escaping @MainActor (Error?) -> Void) {
+        let targets = changes.compactMap { change in assets[change.id].map { PlaceTarget(asset: $0, place: change.to) } }
+        guard targets.count == changes.count else {
+            completion(LibraryError.missing)
+            return
+        }
+        perform({
+            for target in targets {
+                PHAssetChangeRequest(for: target.asset).location = target.place.map { CLLocation(latitude: $0.latitude, longitude: $0.longitude) }
+            }
+        }, completion: completion)
+    }
+
+    private nonisolated struct PlaceTarget: Sendable {
+        let asset: PHAsset
+        let place: GeoPoint?
+    }
+
+    /// What a photo's file says about how it was taken, read from a copy written out for it (fetched from iCloud if
+    /// need be), or a video's camera and frame rate; with the file's size and format.
+    func metadata(_ id: PhotoID) async -> PhotoMetadata? {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id.rawValue], options: nil).firstObject,
+              let resource = Self.original(of: asset) else { return nil }
+        let format = (resource.originalFilename as NSString).pathExtension.uppercased()
+        var size: Int64?
+        if #available(macOS 27, *) { size = resource.dataSize.map(Int64.init) }
+        if asset.mediaType == .video {
+            var metadata = await Self.videoMetadata(id.rawValue) ?? PhotoMetadata()
+            metadata.fileSize = size
+            metadata.format = format
+            return metadata
+        }
+        let file: URL? = await withCheckedContinuation { continuation in exportOriginal(id) { continuation.resume(returning: $0) } }
+        guard let file else { return PhotoMetadata(fileSize: size, format: format) }
+        defer { try? FileManager.default.removeItem(at: file) }
+        return await Self.imageMetadata(at: file, format: format) ?? PhotoMetadata(fileSize: size, format: format)
+    }
+
+    @concurrent private nonisolated static func videoMetadata(_ identifier: String) async -> PhotoMetadata? {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
+        let options = PHVideoRequestOptions()
+        options.isNetworkAccessAllowed = true
+        // The asset is handed over once, from PhotoKit's queue to this task, and only read after.
+        struct Handed: @unchecked Sendable { let video: AVAsset? }
+        let handed: Handed = await withCheckedContinuation { continuation in
+            PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { @Sendable video, _, _ in continuation.resume(returning: Handed(video: video)) }
+        }
+        guard let video = handed.video else { return nil }
+        let rate = try? await video.loadTracks(withMediaType: .video).first?.load(.nominalFrameRate)
+        let common = (try? await video.load(.commonMetadata)) ?? []
+        var make: String?
+        var model: String?
+        if let item = AVMetadataItem.metadataItems(from: common, filteredByIdentifier: .commonIdentifierMake).first { make = try? await item.load(.stringValue) }
+        if let item = AVMetadataItem.metadataItems(from: common, filteredByIdentifier: .commonIdentifierModel).first { model = try? await item.load(.stringValue) }
+        return PhotoMetadata(make: make, model: model, frameRate: rate.map(Double.init))
     }
 
     // MARK: Adding files

@@ -319,6 +319,43 @@ final class LibraryController {
         setFavorite(ids, !allFavorites)
     }
 
+    /// Changes where photos were taken, or says they were taken nowhere. Undo puts the old places back.
+    func changePlaces(_ changes: [PlaceChange], actionName: String = "Change Place", completion: ((Bool) -> Void)? = nil) {
+        let real = changes.filter { $0.from != $0.to && snapshot.contains($0.id) && !SharedAlbum.isShared($0.id) }
+        guard !real.isEmpty else {
+            completion?(true)
+            return
+        }
+        let outcome = ChangeOutcome()
+        undoManager.registerUndo(withTarget: self) { target in
+            MainActor.assumeIsolated {
+                guard !outcome.failed else { return }
+                target.changePlaces(PlaceChange.reversed(real), actionName: actionName)
+            }
+        }
+        undoManager.setActionName(actionName)
+        source.setPlaces(real) { [weak self] error in
+            guard let self else { return }
+            if let error {
+                outcome.failed = true
+                reportProblem?("The place couldn’t be changed.", error.localizedDescription)
+                completion?(false)
+                return
+            }
+            let changed = real.compactMap { change -> MediaItem? in
+                guard var item = snapshot.item(change.id) else { return nil }
+                item.location = change.to
+                return item
+            }
+            snapshot = snapshot.updating(changed)
+            post(.items)
+            completion?(true)
+        }
+    }
+
+    /// What a photo's or video's file says about how it was taken, with its size and format.
+    func metadata(_ id: PhotoID) async -> PhotoMetadata? { await source.metadata(id) }
+
     // MARK: Adding files
 
     /// Copies photo and video files into the Photos library, then reads it again, so the new photos are in the
