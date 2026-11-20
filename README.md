@@ -151,7 +151,7 @@ The app is sandboxed, with access to the Photos library. Debug builds are signed
 Tools/make-installer.sh
 ```
 
-This builds `build/PugglePhotos.pkg`, which installs PugglePhotos.app in /Applications for all users (macOS asks for an administrator's password). The app runs on every Mac with macOS 14 or later.
+This builds `build/PugglePhotos.pkg`, which installs PugglePhotos.app in /Applications for all users (macOS asks for an administrator's password). The app runs on every Mac with macOS 14 or later. Beside it goes `build/PugglePhotos.dSYM.zip`, the build's debug symbols (see Reading a crash report below).
 
 A local build is ad-hoc signed and the installer is unsigned. That's fine on the Mac that built it, but a copy that arrives by download or email is blocked the first time: the user has to click **Open Anyway** in System Settings ▸ Privacy & Security. To sign with a Developer ID and have the installer notarized, set the variables described at the top of `Tools/make-installer.sh` before running it. Releases built on GitHub are signed and notarized this way when the repository has the Developer ID secrets (see below).
 
@@ -165,7 +165,7 @@ Tools/release.sh minor      # a minor update: 1.2.3 → 1.3.0
 Tools/release.sh major      # a major update: 1.2.3 → 2.0.0
 ```
 
-The script raises the version and the build number in the Xcode project, commits "Release version 1.2.4", tags it `v1.2.4` and pushes both. The tag starts the Release workflow on GitHub, which runs the package tests, builds the installer with `Tools/make-installer.sh` and publishes it as a GitHub release. The installer keeps the same name in every release, so https://github.com/StaticPrime/PugglePhotos/releases/latest/download/PugglePhotos.pkg always downloads the newest one. `Tools/release.sh --dry-run` shows the next version without changing anything.
+The script raises the version and the build number in the Xcode project, commits "Release version 1.2.4", tags it `v1.2.4` and pushes both. The tag starts the Release workflow on GitHub, which runs the package tests, builds the installer with `Tools/make-installer.sh` and publishes it, with its debug symbols, as a GitHub release. The installer keeps the same name in every release, so https://github.com/StaticPrime/PugglePhotos/releases/latest/download/PugglePhotos.pkg always downloads the newest one. `Tools/release.sh --dry-run` shows the next version without changing anything.
 
 To sign and notarize releases, add these secrets under the repository's Settings ▸ Secrets and variables ▸ Actions. Without them, releases are published unsigned, with a warning on the run.
 
@@ -177,6 +177,16 @@ To sign and notarize releases, add these secrets under the repository's Settings
 | `NOTARY_KEY_ID` | That key's ID |
 | `NOTARY_ISSUER_ID` | The issuer ID shown above the keys in App Store Connect |
 | `DEVELOPER_ID_PROFILE_BASE64` | Optional: the Developer ID provisioning profile for iCloud, base64-encoded (see below). With it, released copies can share albums |
+
+### Reading a crash report
+
+Release builds are stripped, so a crash report from an installed copy shows the PugglePhotos lines of its stack only as addresses. Every release after 1.0.0 carries `PugglePhotos.dSYM.zip`, the debug symbols for that build. Unzip the one for the version in the report and look the addresses up, giving the load address from the PugglePhotos line under Binary Images:
+
+```sh
+atos -o PugglePhotos.app.dSYM/Contents/Resources/DWARF/PugglePhotos -arch arm64 -l 0x102048000 0x1020b5e4c 0x1020d2c2c
+```
+
+Use `-arch x86_64` for a report from an Intel Mac. Symbols fit only the build they came with: `dwarfdump --uuid PugglePhotos.app.dSYM` should list the UUID the report gives for PugglePhotos.
 
 ### Sharing through iCloud
 
@@ -247,7 +257,7 @@ Packages/PugglePhotosKit/    The catalog, dates, sorting, grouping and search (n
   Store/                     Saving the catalog, with daily backups
 Config/                      Signing for debug builds, and their entitlements for sharing from Xcode
 Tools/make-icons.swift       Regenerates the app icon PNGs
-Tools/make-installer.sh      Builds the PugglePhotos.pkg installer
+Tools/make-installer.sh      Builds the PugglePhotos.pkg installer and its debug symbols
 Tools/release.sh             Releases the next version (see Releasing a new version)
 ```
 

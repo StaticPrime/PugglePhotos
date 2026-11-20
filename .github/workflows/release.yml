@@ -1,6 +1,7 @@
 # Builds the installer for a version tag (vMAJOR.MINOR.FIX, pushed by Tools/release.sh) and publishes
 # it as a GitHub release. The installer keeps the same name in every release, so
 # https://github.com/<owner>/<repo>/releases/latest/download/<App>.pkg always downloads the newest one.
+# Beside it goes <App>.dSYM.zip, the app's debug symbols, for reading crash reports from that version.
 #
 # With these repository secrets, the app and the installer are signed with the Developer ID and the
 # installer is notarized by Apple, so it opens without any warning:
@@ -138,6 +139,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" "build/$APP.pkg" \
+            "build/$APP.dSYM.zip#$APP.dSYM.zip (debug symbols, for reading crash reports)" \
             --verify-tag --latest --generate-notes --title "$APP $VERSION"
 
       - name: Remove the signing keychain and key

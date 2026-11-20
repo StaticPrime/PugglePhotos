@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds build/PugglePhotos.pkg, an installer that puts PugglePhotos.app in /Applications for all users.
+# Builds build/PugglePhotos.pkg, an installer that puts PugglePhotos.app in /Applications for all users, and
+# build/PugglePhotos.dSYM.zip, the app's debug symbols, for reading crash reports from that build.
 #
 #   Tools/make-installer.sh
 #
@@ -27,6 +28,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 WORK="$PWD/build/Installer"
 OUTPUT="$PWD/build/PugglePhotos.pkg"
+SYMBOLS="$PWD/build/PugglePhotos.dSYM.zip"
 fail() { echo "make-installer: $*" >&2; exit 1; }
 
 NOTARIZE=false
@@ -44,7 +46,7 @@ if [ -n "${DEVELOPER_ID_PROFILE:-}" ] && [ -z "${DEVELOPER_ID_APPLICATION:-}" ];
     fail "DEVELOPER_ID_PROFILE needs DEVELOPER_ID_APPLICATION, to sign the app with"
 fi
 
-rm -rf "$WORK" "$OUTPUT"
+rm -rf "$WORK" "$OUTPUT" "$SYMBOLS"
 mkdir -p "$WORK/root" "$WORK/packages"
 
 # 1. A Release archive of the app, for Apple silicon and Intel Macs. The build log is only shown if it fails.
@@ -58,6 +60,16 @@ if ! xcodebuild -project PugglePhotos.xcodeproj -scheme PugglePhotos -configurat
 fi
 APP="$WORK/PugglePhotos.xcarchive/Products/Applications/PugglePhotos.app"
 codesign --verify --strict "$APP"
+
+# Its debug symbols, zipped beside the installer. Release builds are stripped, so a crash report from an installed
+# copy shows only addresses in PugglePhotos; these name them. They fit this build alone, matched by the UUIDs of
+# its binary (which signing again below leaves as they are).
+DSYM="$WORK/PugglePhotos.xcarchive/dSYMs/PugglePhotos.app.dSYM"
+uuids() { dwarfdump --uuid "$1" 2>/dev/null | awk '{ print $2, $3 }' | sort; }
+SYMBOL_UUIDS=$(uuids "$DSYM" || true)
+[ -n "$SYMBOL_UUIDS" ] && [ "$SYMBOL_UUIDS" = "$(uuids "$APP/Contents/MacOS/PugglePhotos" || true)" ] \
+    || fail "the archive has no debug symbols that match the app"
+ditto -c -k --norsrc --noqtn --keepParent "$DSYM" "$SYMBOLS"
 
 info() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Contents/Info.plist"; }
 IDENTIFIER=$(info CFBundleIdentifier)
@@ -207,3 +219,4 @@ elif [ -n "${DEVELOPER_ID_INSTALLER:-}" ]; then STATE="app ad-hoc signed, instal
 else STATE="ad-hoc signed, not notarized"
 fi
 echo "Built $OUTPUT (PugglePhotos $VERSION, $IDENTIFIER, $HOST_ARCHS, $STATE$ICLOUD)"
+echo "Its debug symbols, for reading crash reports from it: $SYMBOLS"
