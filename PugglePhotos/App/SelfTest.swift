@@ -286,6 +286,18 @@ enum SelfTest {
             check(window.albumsDrop([lake[11]], on: newAlbum!) && catalog.album(newAlbum!)!.items.contains(lake[11]),
                   "dropping photos on an album cover adds them")
         }
+        step {
+            // Share Album… shares a cover picked on All Albums, but only while the covers are showing.
+            let share = menuItem("File", "Share Album…")
+            window.albums.collectionView.selectionIndexPaths = [IndexPath(item: 0, section: 0)]
+            check(share.map { window.validateMenuItem($0) } == true && window.albums.selectedAlbum == window.albums.summaries.first?.id,
+                  "Share Album… shares the cover picked on All Albums")
+            window.go(to: .library, remember: false)
+            check(share.map { window.validateMenuItem($0) } == false && window.albums.selectedAlbum == nil,
+                  "Share Album… leaves a cover picked on All Albums alone once the covers are gone")
+            window.go(to: .allAlbums, remember: false)
+            window.albums.collectionView.selectionIndexPaths = []
+        }
         // Changes made to the albums in the Photos library show here.
         var scansAlbum: Album?
         step {
