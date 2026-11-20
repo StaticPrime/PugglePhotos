@@ -93,6 +93,25 @@ enum SelfTest {
         return NSApp.sendAction(action, to: target, from: item)
     }
 
+    /// Asks the library window about every menu bar item it answers for, as macOS does for a menu as it opens, and
+    /// for every menu at once whenever it likes (a couple of seconds after launch, for one). Returns how many.
+    @discardableResult
+    static func validateEveryMenuItem(_ window: LibraryWindowController) -> Int {
+        var count = 0
+        func validate(_ menu: NSMenu) {
+            if menu.delegate === DynamicMenus.shared { DynamicMenus.shared.menuNeedsUpdate(menu) }
+            for item in menu.items {
+                if item.target == nil, let action = item.action, window.responds(to: action) {
+                    _ = window.validateMenuItem(item)
+                    count += 1
+                }
+                if let submenu = item.submenu { validate(submenu) }
+            }
+        }
+        if let menu = NSApp.mainMenu { validate(menu) }
+        return count
+    }
+
     private static func run(_ app: AppDelegate) {
         guard let window = app.windowController, let nsWindow = window.window else {
             print("SELFTEST FAIL: no library window")
@@ -111,6 +130,13 @@ enum SelfTest {
 
         // MARK: Loading
         step { wait { library.hasLoaded } }
+        step {
+            // Before All Albums has ever been shown, as at launch: no menu item may trap.
+            let count = validateEveryMenuItem(window)
+            check(count >= 40, "every menu item can be checked before the album covers have been shown", "\(count) items")
+            check(menuItem("File", "Share Album…").map { window.validateMenuItem($0) } == false,
+                  "Share Album… is off with no album showing or picked")
+        }
         step {
             check(snapshot.count >= 120, "the sample library loads", "\(snapshot.count) items")
             check(catalog.albums.count == 9 && catalog.labels.count == 5, "the sample albums and labels load",

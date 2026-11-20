@@ -106,8 +106,10 @@ final class AlbumsViewController: NSViewController, NSCollectionViewDataSource, 
         return delegate?.albumsMenu(for: summaries[indexPath.item].id)
     }
 
+    /// The album whose cover is picked, if any. Menus ask even before the covers have first been shown, when there's
+    /// no collection view yet.
     var selectedAlbum: UUID? {
-        guard let indexPath = collectionView.selectionIndexPaths.first, indexPath.item < summaries.count else { return nil }
+        guard isViewLoaded, let indexPath = collectionView.selectionIndexPaths.first, indexPath.item < summaries.count else { return nil }
         return summaries[indexPath.item].id
     }
 
