@@ -537,6 +537,21 @@ enum SelfTest {
             check(DebugLaunchOptions.sampleStore?.fileURL.path.contains("PugglePhotos Sample Catalog") == true,
                   "the self-test saves to a scratch catalog, never the real one")
         }
+
+        // MARK: New Album from the list
+        step {
+            // The library as a list under label headings, by kind. New Album redraws the list as the album arrives,
+            // then goes straight to it, with no photos and in an order of its own: the list must count the new rows
+            // before the new order lays it out.
+            window.go(to: .library)
+            window.setViewMode(.list)
+            window.setGrouping(.label)
+            window.setSort(.kind, ascending: false)
+            window.newAlbum(with: [])
+            check(window.list.tableView.numberOfRows == 0 && window.currentAlbum?.items.isEmpty == true,
+                  "New Album from a list under headings shows the new album", "\(window.list.tableView.numberOfRows) rows")
+        }
+
         runSteps()
     }
 }

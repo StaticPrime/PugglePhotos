@@ -100,8 +100,10 @@ final class PhotoListViewController: NSViewController, NSTableViewDataSource, NS
         requests.values.forEach { $0.cancel() }
         requests = [:]
         isUpdatingSelection = true
-        tableView.sortDescriptors = sort == .custom || sort == .dateAdded ? [] : [NSSortDescriptor(key: sort.rawValue, ascending: ascending)]
+        // The table hears how many rows there are now before anything has it lay them out again (a new sort does), or
+        // it asks about rows that are gone.
         tableView.reloadData()
+        tableView.sortDescriptors = sort == .custom || sort == .dateAdded ? [] : [NSSortDescriptor(key: sort.rawValue, ascending: ascending)]
         select(selection, notify: false)
         isUpdatingSelection = false
     }
