@@ -1019,10 +1019,12 @@ final class BookView: NSView, NSTextViewDelegate {
     func letGoOfTurn(at progress: CGFloat) { endDragTurn(forward: true, progress: progress) }
     #endif
 
-    /// A drag let go: finish the turn past a third of the way, otherwise lay the page back.
+    /// A drag let go: finish the turn past a third of the way, otherwise lay the page back. The page is laid back too
+    /// if the pages it was turning to have gone meanwhile (the album changed in Photos, say), so it isn't left held.
     private func endDragTurn(forward: Bool, progress: CGFloat) {
         guard leaf != nil else { return }
-        if progress > 0.33 {
+        let target = forward ? state + 1 : state - 1
+        if progress > 0.33, let delegate, (0..<delegate.layout.stateCount).contains(target) {
             turn(forward: forward, from: progress)
         } else {
             // Back to where it was: a turn the other way, from what's left.

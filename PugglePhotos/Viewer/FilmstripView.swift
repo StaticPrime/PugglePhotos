@@ -135,7 +135,8 @@ final class FilmstripView: NSView {
         let visible = scrollView.contentView.bounds.insetBy(dx: -step * 2, dy: 0)
         let first = max(0, Int(((visible.minX - inset) / step).rounded(.down)))
         let last = min(ids.count - 1, Int(((visible.maxX - inset) / step).rounded(.down)))
-        let wanted = first <= last ? first...last : 0...(-1)
+        // None when the view is past either end of the row, as when it's pulled well past it.
+        let wanted = first..<max(first, last + 1)
         for (index, cell) in cells where !wanted.contains(index) { putAway(cell, index) }
         let pixels = Self.side * (window?.backingScaleFactor ?? 2)
         for index in wanted where cells[index] == nil {
