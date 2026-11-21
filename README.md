@@ -213,7 +213,7 @@ Add an Apple ID in that team under Xcode ▸ Settings ▸ Accounts, then build: 
 
 ## Tests
 
-The catalog of albums, labels, captions, notes and the journal, the date arithmetic behind moving photos in time, sorting, grouping, search and saving live in a Swift package with unit tests, including memories, notifications, the slideshow's timing and motion, the tune and the book layout (every frame on its page in every style):
+The catalog of albums, labels, captions, notes and the journal, the date arithmetic behind moving photos in time, sorting, grouping, search and saving live in a Swift package with unit tests, including memories, notifications, the slideshow's timing and motion, the tune, the book layout (every frame on its page in every style) and the changes that bring an album in the Photos library in line with its twin here (never taking out a photo PugglePhotos hasn't read):
 
 ```sh
 cd Packages/PugglePhotosKit && swift test

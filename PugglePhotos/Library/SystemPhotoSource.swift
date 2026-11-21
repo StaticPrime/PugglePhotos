@@ -10,6 +10,9 @@ import PugglePhotosKit
 final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserver {
     private let manager = PHCachingImageManager()
     private var assets: [PhotoID: PHAsset] = [:]
+    /// The Photos identifiers of every photo the library was last read to have. Changes to an album leave any other
+    /// photo in it alone: one put in since, or any at all before the library has been read.
+    private var known: Set<String> = []
     private var observing = false
     var onChange: (() -> Void)?
 
@@ -40,6 +43,7 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
         Task {
             let loaded = await Self.read()
             assets = loaded.assets
+            known = Set(loaded.assets.values.map(\.localIdentifier))
             completion(loaded.contents)
         }
     }
@@ -353,41 +357,30 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
 
     func updateAlbum(_ id: String, title: String, items: [PhotoID], completion: @escaping @MainActor (Error?) -> Void) {
         let wanted = items.compactMap { item in assets[item].map { (item, $0) } }
+        let known = known
         Task {
-            let error = await Self.makeAlbum(id, match: title, items: wanted)
+            let error = await Self.makeAlbum(id, match: title, items: wanted, known: known)
             completion(error)
         }
     }
 
     /// Reads the album as it is now, then changes only what differs: the title, photos to take out, photos to put
-    /// in, and the order. All in one change block.
-    @concurrent private nonisolated static func makeAlbum(_ id: String, match title: String, items: [(PhotoID, PHAsset)]) async -> Error? {
+    /// in, and the order. All in one change block. Only photos in `known` are ever taken out.
+    @concurrent private nonisolated static func makeAlbum(_ id: String, match title: String, items: [(PhotoID, PHAsset)],
+                                                          known: Set<String>) async -> Error? {
         guard let collection = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil).firstObject else {
             return LibraryError.missing
         }
         let current = PHAsset.fetchAssets(in: collection, options: nil)
         var currentIDs: [String] = []
         current.enumerateObjects { asset, _, _ in currentIDs.append(asset.localIdentifier) }
-        let wantedIDs = items.map(\.1.localIdentifier)
-        let wantedSet = Set(wantedIDs)
-        let currentSet = Set(currentIDs)
-        let removing = currentIDs.enumerated().filter { !wantedSet.contains($0.element) }.map(\.offset)
-        let adding = items.filter { !currentSet.contains($0.1.localIdentifier) }.map(\.1)
-        // The order the album will have after removing and adding, then the moves that turn it into the wanted one.
-        var working = currentIDs.filter { wantedSet.contains($0) } + adding.map(\.localIdentifier)
-        var moves: [(from: Int, to: Int)] = []
-        if collection.canPerform(.rearrangeContent) {
-            for (target, wantedID) in wantedIDs.enumerated() {
-                guard let from = working.firstIndex(of: wantedID), from != target else { continue }
-                moves.append((from, target))
-                working.remove(at: from)
-                working.insert(wantedID, at: target)
-            }
-        }
+        let edit = AlbumEditPlan(current: currentIDs, wanted: items.map(\.1.localIdentifier), known: known,
+                                 canRearrange: collection.canPerform(.rearrangeContent))
         let renaming = (collection.localizedTitle ?? "") != title && collection.canPerform(.rename)
-        guard renaming || !removing.isEmpty || !adding.isEmpty || !moves.isEmpty else { return nil }
-        let plan = AlbumPlan(collection: collection, current: current, title: renaming ? title : nil,
-                             removing: IndexSet(removing), adding: adding, moves: moves)
+        guard renaming || !edit.isEmpty else { return nil }
+        let assets = Dictionary(items.map { ($0.1.localIdentifier, $0.1) }) { first, _ in first }
+        let plan = AlbumPlan(collection: collection, current: current, title: renaming ? title : nil, removing: edit.removing,
+                             adding: edit.adding.compactMap { assets[$0] }, moves: edit.moves.map { ($0.from, $0.to) })
         do {
             try await PHPhotoLibrary.shared().performChanges {
                 guard let request = PHAssetCollectionChangeRequest(for: plan.collection, assets: plan.current) else { return }
