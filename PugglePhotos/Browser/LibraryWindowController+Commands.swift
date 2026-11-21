@@ -11,8 +11,9 @@ extension LibraryWindowController: NSMenuItemValidation {
         return state.selection
     }
 
-    /// True while the person is typing somewhere, so single-key shortcuts leave the keys alone.
-    private var isEditingText: Bool { window?.firstResponder is NSTextView }
+    /// True while the person is typing, here or in whichever of PugglePhotos' windows has the keys (Get Info, a
+    /// popover, a sheet), so single-key shortcuts leave the keys alone.
+    private var isEditingText: Bool { window?.firstResponder is NSTextView || NSApp.keyWindow?.firstResponder is NSTextView }
 
     /// Commands that change photos, albums, books or what's written about them, none of which an album shared with
     /// you, or a photo from one, can have.
