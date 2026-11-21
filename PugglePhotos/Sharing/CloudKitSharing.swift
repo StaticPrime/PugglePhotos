@@ -773,28 +773,53 @@ extension CloudKitSharing: NSSharingServicePickerDelegate, NSCloudSharingService
         if service == nil { picker = nil }
     }
 
-    func sharingService(_ sharingService: NSSharingService, didSave share: CKShare) {
-        guard let album = invitingAlbum, let shared = mine[album] else { return }
-        shares[album] = share
-        onUpdate?(updated(shared))
-    }
+    // Nothing promises these three come on the main thread, and Swift stops the app if a main-actor method is called
+    // on another. Whichever thread they come on, what they do is done on the main actor.
 
-    func sharingService(_ sharingService: NSSharingService, didStopSharing share: CKShare) {
-        guard let album = invitingAlbum else { return }
-        stopSharing(album) { [weak self] error in
-            if error == nil { self?.onGone?(album) }
+    nonisolated func sharingService(_ sharingService: NSSharingService, didSave share: CKShare) {
+        let saved = ShareHandoff(share: share)
+        Self.onMain { [weak self] in
+            guard let self, let album = invitingAlbum, let shared = mine[album] else { return }
+            shares[album] = saved.share
+            onUpdate?(updated(shared))
         }
     }
 
-    func sharingService(_ sharingService: NSSharingService, didCompleteForItems items: [Any], error: (any Error)?) {
-        picker = nil
-        if let album = invitingAlbum { refreshShare(of: album) }
+    nonisolated func sharingService(_ sharingService: NSSharingService, didStopSharing share: CKShare) {
+        Self.onMain { [weak self] in
+            guard let self, let album = invitingAlbum else { return }
+            stopSharing(album) { [weak self] error in
+                if error == nil { self?.onGone?(album) }
+            }
+        }
+    }
+
+    nonisolated func sharingService(_ sharingService: NSSharingService, didCompleteForItems items: [Any], error: (any Error)?) {
+        Self.onMain { [weak self] in
+            guard let self else { return }
+            picker = nil
+            if let album = invitingAlbum { refreshShare(of: album) }
+        }
+    }
+
+    /// Does work on the main actor: at once on the main thread, else as soon as the main thread is free.
+    private nonisolated static func onMain(_ work: @escaping @Sendable @MainActor () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { work() }
+        } else {
+            DispatchQueue.main.async { MainActor.assumeIsolated { work() } }
+        }
     }
 
     func sharingService(_ sharingService: NSSharingService, didShareItems items: [Any]) {
         picker = nil
         if let album = invitingAlbum { refreshShare(of: album) }
     }
+}
+
+/// A share handed from whichever thread AppKit tells of it on to the main actor, the only place it's used.
+private struct ShareHandoff: @unchecked Sendable {
+    let share: CKShare
 }
 
 private extension Array {
