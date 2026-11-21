@@ -339,6 +339,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     var isShowingBook: Bool { shownChild === book && state.viewerID == nil }
     /// Whether the photo grid is what's showing.
     var shownGrid: Bool { shownChild === grid }
+    /// Whether the list is what's showing. The view can be Book while the grid shows (a book is only for an album),
+    /// and the list may not have been made yet.
+    var shownList: Bool { shownChild === list }
     /// Set when the library is about to be shown afresh, so it opens on the newest photos.
     private var opensAtEnd = true
     /// Counts the places chosen to scroll to, so opening on the newest photos gives way to one chosen since.
@@ -582,13 +585,15 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         setSelection([id])
-        if state.viewMode == .gallery {
+        if shownGrid {
             grid.select([id])
             grid.scroll(to: id, animated: false)
             window?.makeFirstResponder(grid.collectionView)
-        } else {
+        } else if shownList {
             list.select([id])
             window?.makeFirstResponder(list.tableView)
+        } else if isShowingBook {
+            window?.makeFirstResponder(book.bookView)
         }
     }
 
@@ -596,7 +601,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     func reveal(_ ids: [PhotoID]) {
         let present = ids.filter { content.allIDs.contains($0) }
         guard !present.isEmpty else { return }
-        if state.viewMode == .gallery, shownChild === grid {
+        if shownGrid {
             grid.select(present)
             if let first = present.first { grid.scroll(to: first) }
         } else if shownChild === list {

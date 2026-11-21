@@ -726,6 +726,7 @@ extension SelfTest {
             check(window.state.viewerID == placement.id, "double-clicking a photo in the book opens it")
             window.closeViewer()
             check(window.isShowingBook && view.state == 2, "closing it goes back to the same pages")
+            check(window.window?.firstResponder === view, "with the keys going to the book")
         }
         // Videos on the page.
         var video: PhotoID?

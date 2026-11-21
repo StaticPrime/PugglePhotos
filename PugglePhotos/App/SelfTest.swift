@@ -161,6 +161,25 @@ enum SelfTest {
             let loaded = window.grid.collectionView.visibleItems().filter { ($0 as? PhotoCell)?.hasPicture == true }
             check(!loaded.isEmpty, "thumbnails load", "\(loaded.count) of \(window.grid.collectionView.visibleItems().count)")
         }
+        step {
+            // Book chosen for an album stays chosen on the library, which shows in the gallery (a book is only for an
+            // album). Before the list has ever been shown, going to a day, or opening a photo and coming back, stays
+            // in the gallery.
+            if let album = catalog.albums.first?.id {
+                window.go(to: .album(album), remember: false)
+                window.setViewMode(.book)
+            }
+            window.go(to: .library, remember: false)
+            window.phGoToToday(nil)
+            check(window.state.viewMode == .book && window.shownGrid, "Go ▸ Today with Book chosen goes to the day in the gallery")
+            if let first = window.content.allIDs.first {
+                window.openViewer(first)
+                window.closeViewer()
+                check(window.shownGrid && nsWindow.firstResponder === window.grid.collectionView,
+                      "a photo opened with Book chosen closes back to the gallery")
+            }
+            window.setViewMode(.gallery)
+        }
 
         // MARK: Selecting and favorites
         let lake = ids("lake19")
