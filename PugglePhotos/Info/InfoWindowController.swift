@@ -308,7 +308,7 @@ struct InfoView: View {
             Divider()
             HStack {
                 let settings = item.kind.isVideo
-                    ? [Formatting.duration(item.duration)] + (metadata?.frameRate.map { ["\(Int($0.rounded())) fps"] } ?? [])
+                    ? [Formatting.duration(item.duration)] + (metadata?.frameRateText.map { [$0] } ?? [])
                     : (metadata?.settings.isEmpty == false ? metadata!.settings : ["–", "–", "–", "–", "–"])
                 ForEach(Array(settings.enumerated()), id: \.offset) { index, setting in
                     if index > 0 { Spacer() }
@@ -430,9 +430,11 @@ private struct InfoMap: View {
     }
 
     private func centre(animated: Bool) {
-        guard let place else { return }
-        let region = MapCameraPosition.region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: place.latitude, longitude: place.longitude),
-                                                                 latitudinalMeters: 3000, longitudinalMeters: 3000))
+        // A few kilometres around the place. Near a pole that would span the world many times over, which MapKit
+        // won't have, so the map stops short of the poles; a place that isn't one on Earth isn't shown at all.
+        guard let place, CLLocationCoordinate2DIsValid(CLLocationCoordinate2D(latitude: place.latitude, longitude: place.longitude)) else { return }
+        let centre = CLLocationCoordinate2D(latitude: min(max(place.latitude, -85), 85), longitude: place.longitude)
+        let region = MapCameraPosition.region(MKCoordinateRegion(center: centre, latitudinalMeters: 3000, longitudinalMeters: 3000))
         if animated, !Motion.isReduced { withAnimation { position = region } } else { position = region }
     }
 }

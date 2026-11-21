@@ -46,7 +46,8 @@ final class MapViewController: NSViewController, MKMapViewDelegate {
         var photos: [MapPhoto] = []
         var places: [PhotoID: GeoPoint] = [:]
         for id in ids {
-            guard let item = library.snapshot.item(id), let place = item.location else { continue }
+            // A place that isn't one on Earth isn't shown.
+            guard let item = library.snapshot.item(id), let place = item.location, MapPoint(place).isOnMap else { continue }
             photos.append(MapPhoto(id: id, point: MapPoint(place), isFavorite: item.isFavorite))
             places[id] = place
         }

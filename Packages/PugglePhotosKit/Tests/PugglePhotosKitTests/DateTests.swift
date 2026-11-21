@@ -171,6 +171,9 @@ func date(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 12, _ minute: Int
         #expect(Formatting.duration(5) == "0:05")
         #expect(Formatting.duration(75.4) == "1:15")
         #expect(Formatting.duration(3723) == "1:02:03")
+        // A video whose length isn't a number, or is past all reason, shows none rather than stopping the app.
+        #expect(Formatting.duration(.nan) == "0:00" && Formatting.duration(.infinity) == "0:00" && Formatting.duration(-4) == "0:00")
+        #expect(Formatting.duration(1e300) == "99999:59:59")
     }
 
     @Test func ranges() {

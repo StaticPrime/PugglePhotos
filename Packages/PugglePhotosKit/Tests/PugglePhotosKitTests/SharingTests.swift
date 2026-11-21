@@ -242,6 +242,21 @@ import Testing
         #expect(theirs.owner.name == "Jamie Rivera" && theirs.book == mine.book && theirs.coverID == theirs.photoID(of: theirs.items[1]))
     }
 
+    @Test func aPhotoNamedTwiceInAnAlbumsRecordComesOnce() throws {
+        let (album, items, catalog) = workedAlbum()
+        let mine = SharedAlbum.sharing(album, items: items, catalog: catalog, cover: "library-1", owner: owner, previous: nil)
+        let records = Dictionary(uniqueKeysWithValues: mine.items.map { ($0.id, SharedAlbumRecords.itemInfo($0)) })
+        var doubled = mine
+        doubled.items += mine.items
+        let theirs = try #require(SharedAlbumRecords.album(id: mine.id, info: SharedAlbumRecords.albumInfo(doubled), items: records,
+                                                           owner: owner, participants: [owner], access: .invited, url: nil))
+        #expect(theirs.items.map(\.id) == mine.items.map(\.id))
+        // However a photo comes twice, the album still says what's written about each.
+        var twice = theirs
+        twice.items += theirs.items
+        #expect(twice.captions == theirs.captions && twice.notes == theirs.notes)
+    }
+
     @Test func anAlbumComingInPartsShowsWhatsCome() throws {
         let (album, items, catalog) = workedAlbum()
         let mine = SharedAlbum.sharing(album, items: items, catalog: catalog, cover: "library-1", owner: owner, previous: nil)

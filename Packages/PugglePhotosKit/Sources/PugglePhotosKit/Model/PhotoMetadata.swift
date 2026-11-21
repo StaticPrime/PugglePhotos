@@ -43,7 +43,8 @@ public struct PhotoMetadata: Hashable, Sendable {
         let exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any] ?? [:]
         let tiff = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any] ?? [:]
         let aux = properties[kCGImagePropertyExifAuxDictionary as String] as? [String: Any] ?? [:]
-        func number(_ key: CFString) -> Double? { (exif[key as String] as? NSNumber)?.doubleValue }
+        // A setting written as a fraction over nothing reads as no setting.
+        func number(_ key: CFString) -> Double? { (exif[key as String] as? NSNumber).map(\.doubleValue).flatMap { $0.isFinite ? $0 : nil } }
         self.init(make: Self.words(tiff[kCGImagePropertyTIFFMake as String]), model: Self.words(tiff[kCGImagePropertyTIFFModel as String]),
                   lens: Self.words(exif[kCGImagePropertyExifLensModel as String]) ?? Self.words(aux[kCGImagePropertyExifAuxLensModel as String]),
                   iso: (exif[kCGImagePropertyExifISOSpeedRatings as String] as? [NSNumber])?.first?.intValue,
@@ -82,10 +83,10 @@ public struct PhotoMetadata: Hashable, Sendable {
     /// Millions of pixels: "12 MP", "0.4 MP".
     public static func megapixels(width: Int, height: Int) -> String {
         let millions = Double(width) * Double(height) / 1_000_000
-        return (millions >= 10 ? String(Int(millions.rounded())) : decimal((millions * 10).rounded() / 10)) + " MP"
+        return (millions >= 10 ? decimal(millions.rounded()) : decimal((millions * 10).rounded() / 10)) + " MP"
     }
 
-    static func millimetres(_ length: Double) -> String { (length < 10 ? decimal((length * 10).rounded() / 10) : String(Int(length.rounded()))) + " mm" }
+    static func millimetres(_ length: Double) -> String { (length < 10 ? decimal((length * 10).rounded() / 10) : decimal(length.rounded())) + " mm" }
 
     static func stops(_ bias: Double) -> String {
         let rounded = (bias * 10).rounded() / 10
@@ -97,12 +98,17 @@ public struct PhotoMetadata: Hashable, Sendable {
     static func shutter(_ seconds: Double) -> String {
         guard seconds > 0 else { return "0 s" }
         if seconds >= 1 { return decimal((seconds * 10).rounded() / 10) + " s" }
-        return "1/\(Int((1 / seconds).rounded())) s"
+        return "1/" + decimal((1 / seconds).rounded()) + " s"
     }
 
-    /// "1.8", and "8" rather than "8.0".
+    /// "1.8", and "8" rather than "8.0". A number too big to be a whole one is still written, never stops the app.
     static func decimal(_ value: Double) -> String {
-        value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+        value == value.rounded() && abs(value) < 1e15 ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    /// A video's frames a second, "30 fps", if it says a rate that's a rate.
+    public var frameRateText: String? {
+        frameRate.flatMap { $0.isFinite && $0 > 0 ? Self.decimal($0.rounded()) + " fps" : nil }
     }
 }
 

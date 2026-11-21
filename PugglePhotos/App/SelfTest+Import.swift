@@ -92,6 +92,13 @@ extension SelfTest {
         let source = library.baseSource as! SamplePhotoSource
         guard let nsWindow = window.window else { return }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("PugglePhotos Drop Test \(UUID().uuidString)", isDirectory: true)
+        step {
+            // The time zone a file's EXIF says it was taken in, and nonsense written there.
+            check(FileImport.timeZone(offset: "+05:30")?.secondsFromGMT() == 19_800 && FileImport.timeZone(offset: "-08:00")?.secondsFromGMT() == -28_800,
+                  "a dropped file's time zone is read from its EXIF")
+            check(FileImport.timeZone(offset: "+02:999999999999999999") == nil && FileImport.timeZone(offset: "+15:00") == nil,
+                  "and a time zone that isn't one is no time zone")
+        }
         let screenshot = folder.appendingPathComponent("Screenshot of the Lake.png")
         let taken = folder.appendingPathComponent("IMG_2104.JPG")
         let movie = folder.appendingPathComponent("Pug Zoomies.mov")

@@ -117,7 +117,8 @@ public struct Formatting: Sendable {
 
     /// 75 seconds → "1:15"; an hour or more → "1:02:03".
     public static func duration(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds.rounded())
+        // A length that isn't a number, or is past all reason, shows as none rather than stopping the app.
+        let total = seconds.isFinite ? Int(min(max(seconds, 0), 359_999_999).rounded()) : 0
         let hours = total / 3600, minutes = (total % 3600) / 60, secs = total % 60
         return hours > 0 ? String(format: "%d:%02d:%02d", hours, minutes, secs) : String(format: "%d:%02d", minutes, secs)
     }

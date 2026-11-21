@@ -24,7 +24,8 @@ extension CivilDay {
     /// A day from its "2025-06-14" form.
     public init?(_ string: String) {
         let parts = string.split(separator: "-").compactMap { Int($0) }
-        guard parts.count == 3, (1...12).contains(parts[1]), (1...CivilDay.daysIn(year: parts[0], month: parts[1])).contains(parts[2])
+        guard parts.count == 3, (1...9999).contains(parts[0]), (1...12).contains(parts[1]),
+              (1...CivilDay.daysIn(year: parts[0], month: parts[1])).contains(parts[2])
         else { return nil }
         self.init(year: parts[0], month: parts[1], day: parts[2])
     }

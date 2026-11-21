@@ -162,11 +162,11 @@ public struct SharedAlbum: Identifiable, Hashable, Codable, Sendable {
     }
 
     public var captions: [PhotoID: String] {
-        Dictionary(uniqueKeysWithValues: items.filter { !$0.caption.isEmpty }.map { (photoID(of: $0), $0.caption) })
+        Dictionary(items.filter { !$0.caption.isEmpty }.map { (photoID(of: $0), $0.caption) }) { first, _ in first }
     }
 
     public var notes: [PhotoID: String] {
-        Dictionary(uniqueKeysWithValues: items.filter { !$0.note.isEmpty }.map { (photoID(of: $0), $0.note) })
+        Dictionary(items.filter { !$0.note.isEmpty }.map { (photoID(of: $0), $0.note) }) { first, _ in first }
     }
 
     /// Its photos as the book lays them out, each with the seed it has in its owner's book.

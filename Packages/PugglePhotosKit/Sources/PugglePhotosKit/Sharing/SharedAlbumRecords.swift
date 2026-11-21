@@ -56,7 +56,9 @@ public enum SharedAlbumRecords {
                              access: ShareAccess, url: URL?) -> SharedAlbum? {
         guard let info = try? JSONDecoder().decode(AlbumInfo.self, from: info) else { return nil }
         let decoder = JSONDecoder()
-        let shared = info.order.compactMap { id in
+        // Each photo once, even from an album record that names one twice.
+        var seen: Set<UUID> = []
+        let shared = info.order.filter { seen.insert($0).inserted }.compactMap { id in
             items[id].flatMap { try? decoder.decode(SharedItem.self, from: $0) }.flatMap { $0.id == id ? $0 : nil }
         }
         var owner = owner

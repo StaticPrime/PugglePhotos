@@ -36,6 +36,14 @@ import Testing
         #expect(PhotoMap.cellSize(visibleWidth: 0.005, viewWidth: 1000, spacing: 72) == cell / 2, "a whole step halves them")
     }
 
+    @Test func aPlaceThatsNowhereIsLeftOffTheMap() {
+        let nowhere = [MapPhoto(id: "nan", point: MapPoint(GeoPoint(latitude: .nan, longitude: 0)), isFavorite: false),
+                       MapPhoto(id: "far", point: MapPoint(GeoPoint(latitude: 0, longitude: 1e300)), isFavorite: true)]
+        #expect(nowhere.allSatisfy { !$0.point.isOnMap } && photos("lake", at: lake, count: 1).allSatisfy(\.point.isOnMap))
+        let clusters = PhotoMap.clusters(photos("lake", at: lake, count: 2) + nowhere, cell: 1.0 / 4096)
+        #expect(clusters.flatMap(\.photos) == ["lake-0", "lake-1"])
+    }
+
     @Test func photosTakenTogetherAreShownAsOne() {
         let all = photos("lake", at: lake, count: 5) + photos("beach", at: beach, count: 3)
         let clusters = PhotoMap.clusters(all, cell: PhotoMap.cellSize(visibleWidth: 0.02, viewWidth: 1000, spacing: 72))

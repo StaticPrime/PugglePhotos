@@ -12,6 +12,9 @@ public struct MapPoint: Hashable, Sendable {
         self.y = y
     }
 
+    /// Whether it's on the map at all: every real place is. A place that says it's somewhere impossible isn't.
+    public var isOnMap: Bool { (0...1).contains(x) && (0...1).contains(y) }
+
     /// Where a place on the globe lies on the map. The far north and south, which the map doesn't reach, lie on its
     /// edges.
     public init(_ place: GeoPoint) {
@@ -122,7 +125,7 @@ public enum PhotoMap {
             Square(column: Int((point.x / cell).rounded(.down)), row: Int((point.y / cell).rounded(.down)))
         }
         var bySquare: [Square: [Int]] = [:]
-        for (index, photo) in photos.enumerated() where region?.contains(photo.point) ?? true {
+        for (index, photo) in photos.enumerated() where photo.point.isOnMap && region?.contains(photo.point) ?? true {
             bySquare[square(photo.point), default: []].append(index)
         }
         // The fullest first, then by place, so the same photos always gather the same way.

@@ -129,4 +129,10 @@ import Testing
         let plan = MemoryNotifications.plan(finder: fixture.finder, from: CivilDay(year: 2026, month: 6, day: 12), days: 1, hour: 9, minute: 0)
         #expect(plan.first?.body == "10 photos from Thursday, June 12, 2025, and what you wrote that day. Click to watch them as a slideshow.")
     }
+
+    @Test func aDayFromItsWrittenForm() {
+        #expect(CivilDay("2025-06-14") == CivilDay(year: 2025, month: 6, day: 14))
+        // A damaged catalog's day, with a year past all calendars, is no day at all rather than a stopped app.
+        #expect(CivilDay("99999999999999999-01-01") == nil && CivilDay("2025-02-30") == nil && CivilDay("0-01-01") == nil)
+    }
 }

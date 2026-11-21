@@ -46,4 +46,20 @@ import Testing
         #expect(PlaceName.coordinates(GeoPoint(latitude: 45.52312, longitude: -122.67652)) == "45.5231° N, 122.6765° W")
         #expect(PlaceName.coordinates(GeoPoint(latitude: -33.86, longitude: 151.21)) == "33.8600° S, 151.2100° E")
     }
+
+    @Test func numbersThatArentNumbersStopNothing() {
+        // A setting written as a fraction over nothing.
+        let properties: [String: Any] = [
+            kCGImagePropertyExifDictionary as String: [kCGImagePropertyExifFocalLength as String: NSNumber(value: Double.nan),
+                                                       kCGImagePropertyExifFNumber as String: NSNumber(value: Double.infinity),
+                                                       kCGImagePropertyExifExposureTime as String: NSNumber(value: -Double.infinity),
+                                                       kCGImagePropertyExifExposureBiasValue as String: NSNumber(value: Double.nan)],
+        ]
+        #expect(PhotoMetadata(imageProperties: properties).settings.isEmpty, "read as no settings")
+        // Settings past all reason are still written.
+        let wild = PhotoMetadata(focalLength: 1e300, aperture: .infinity, exposureTime: 1e-30, exposureBias: -.infinity, frameRate: .nan)
+        #expect(wild.settings.count == 4 && wild.frameRateText == nil)
+        #expect(PhotoMetadata.megapixels(width: .max, height: .max).hasSuffix(" MP"))
+        #expect(PhotoMetadata(frameRate: 29.97).frameRateText == "30 fps")
+    }
 }

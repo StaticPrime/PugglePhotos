@@ -155,8 +155,9 @@ nonisolated enum FileImport {
 
     static func timeZone(offset text: String) -> TimeZone? {
         let parts = text.trimmingCharacters(in: CharacterSet(charactersIn: "+-")).split(separator: ":").compactMap { Int($0) }
-        guard let hours = parts.first, hours <= 14 else { return nil }
-        let seconds = hours * 3600 + (parts.count > 1 ? parts[1] * 60 : 0)
+        let minutes = parts.count > 1 ? parts[1] : 0
+        guard let hours = parts.first, (0...14).contains(hours), (0..<60).contains(minutes) else { return nil }
+        let seconds = hours * 3600 + minutes * 60
         return TimeZone(secondsFromGMT: text.hasPrefix("-") ? -seconds : seconds)
     }
 
