@@ -24,6 +24,8 @@ final class SamplePhotoSource: PhotoSource {
     private(set) var changeCount = 0
     /// Makes the next change fail, as if the person said no.
     var refuseNextChange = false
+    /// `-PHSampleLoadDelay 3` holds the first load back that many seconds, as a big library takes a while to load.
+    private var loadDelay = UserDefaults.standard.double(forKey: "PHSampleLoadDelay")
 
     let catalog: Catalog
 
@@ -47,7 +49,9 @@ final class SamplePhotoSource: PhotoSource {
 
     func load(_ completion: @escaping @MainActor (LibraryContents) -> Void) {
         let contents = LibraryContents(items: Array(items.values), recentlyAdded: recent, albums: albums)
-        DispatchQueue.main.async { completion(contents) }
+        let delay = loadDelay
+        loadDelay = 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { completion(contents) }
     }
 
     func loadFileNames(_ ids: [PhotoID], completion: @escaping @MainActor ([PhotoID: String]) -> Void) {

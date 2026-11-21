@@ -45,11 +45,13 @@ enum DebugLaunchOptions {
         return SamplePhotoSource(today: sampleToday, count: count, access: access)
     }
 
-    /// View settings for sample-library runs, emptied at launch so every run starts the same way.
+    /// View settings for sample-library runs, emptied at launch so every run starts the same way. `-PHSavedViewMode list`
+    /// (or `book`) starts as if the last run had been left showing that.
     static let sampleDefaults: UserDefaults = {
         let name = "com.pugglesoft.PugglePhotos.sample"
         let defaults = UserDefaults(suiteName: name) ?? .standard
         defaults.removePersistentDomain(forName: name)
+        if let mode = UserDefaults.standard.string(forKey: "PHSavedViewMode") { defaults.set(mode, forKey: "ViewMode") }
         return defaults
     }()
 

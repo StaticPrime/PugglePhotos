@@ -9,6 +9,10 @@ enum SelfTest {
     static func runIfRequested(_ app: AppDelegate) {
         guard UserDefaults.standard.bool(forKey: "PHSelfTest") else { return }
         SelfTestMode.isRunning = true
+        if let sweep = UserDefaults.standard.string(forKey: "PHSweep") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { runSweep(sweep, app: app) }
+            return
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { run(app) }
     }
 
