@@ -21,7 +21,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
-				PugglePhotos.entitlements,
 			);
 			target = 6D0000000000000000000007 /* PugglePhotos */;
 		};
