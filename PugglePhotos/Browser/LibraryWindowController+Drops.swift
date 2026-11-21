@@ -179,7 +179,7 @@ extension LibraryWindowController {
             reportUnreadable(unreadable)
             // Undone while it was being added: what was added comes out again.
             if step.isUndone {
-                library.deleteAdded(added)
+                library.deletePhotos(added)
                 return
             }
             placeDropped(step)
@@ -262,7 +262,7 @@ extension LibraryWindowController {
         case .newAlbum: if let album = step.album { library.deleteAlbum(album) }
         }
         undo.enableUndoRegistration()
-        library.deleteAdded(added)
+        library.deletePhotos(added)
     }
 
     // MARK: Showing what was dropped

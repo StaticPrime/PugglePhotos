@@ -487,8 +487,8 @@ final class PhotoCollectionView: NSCollectionView {
         switch event.keyCode {
         case 36, 76, 49: // Return, Enter, Space
             owner?.openSelection()
-        case 51, 117: // Delete, Forward Delete
-            owner?.deleteSelection()
+        case 51, 117: // Delete, Forward Delete; with ⌘, Photo ▸ Delete… takes it, or nothing does
+            if event.modifierFlags.contains(.command) { super.keyDown(with: event) } else { owner?.deleteSelection() }
         case 53 where owner?.turnedOver != nil: // Esc turns a photo back
             owner?.turnOver(nil)
         default:

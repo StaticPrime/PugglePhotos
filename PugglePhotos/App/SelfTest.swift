@@ -547,6 +547,7 @@ enum SelfTest {
         sharingSteps(app, window: window)
         mapSteps(app, window: window)
         infoSteps(app, window: window)
+        copySteps(app, window: window)
 
         // MARK: Saving
         step { wait(upTo: 3) { (try? DebugLaunchOptions.sampleStore?.load()) == catalog } }

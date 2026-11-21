@@ -23,7 +23,9 @@ extension SelfTest {
         /// Commands that change photos, which a photo of your own has and one shared with you doesn't.
         let changes = [#selector(LibraryWindowController.phToggleFavorite(_:)), #selector(LibraryWindowController.phChangeDate(_:)),
                        #selector(LibraryWindowController.phAddToAlbum(_:)), #selector(LibraryWindowController.phToggleLabel(_:)),
-                       #selector(LibraryWindowController.phWriteNote(_:)), #selector(LibraryWindowController.phNewAlbumWithSelection(_:))]
+                       #selector(LibraryWindowController.phWriteNote(_:)), #selector(LibraryWindowController.phNewAlbumWithSelection(_:)),
+                       #selector(LibraryWindowController.phDuplicate(_:)), #selector(LibraryWindowController.phDelete(_:)),
+                       #selector(LibraryWindowController.copy(_:))]
         var libraryCount = 0
         var dayCounts: [CivilDay: Int] = [:]
         var garden: SharedAlbum? { sharing.sharedWithMe(StandInSharing.gardenID) }

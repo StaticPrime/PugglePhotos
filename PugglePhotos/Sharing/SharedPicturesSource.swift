@@ -99,6 +99,11 @@ final class SharedPicturesSource: PhotoSource {
         base.addFiles(files, progress: progress, completion: completion)
     }
 
+    func duplicate(_ copies: [PhotoCopy], progress: @escaping @MainActor @Sendable (Int) -> Void,
+                   completion: @escaping @MainActor (CopiedPhotos) -> Void) {
+        base.duplicate(copies.filter { !SharedAlbum.isShared($0.original) }, progress: progress, completion: completion)
+    }
+
     func deleteItems(_ ids: [PhotoID], completion: @escaping @MainActor (Error?) -> Void) {
         base.deleteItems(ids.filter { !SharedAlbum.isShared($0) }, completion: completion)
     }

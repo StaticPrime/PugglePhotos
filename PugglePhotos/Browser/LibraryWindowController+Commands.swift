@@ -22,7 +22,8 @@ extension LibraryWindowController: NSMenuItemValidation {
         #selector(phAddToAlbum(_:)), #selector(phRemoveFromAlbum(_:)), #selector(phMakeCover(_:)), #selector(phWriteNote(_:)),
         #selector(phTiltLeft(_:)), #selector(phTiltRight(_:)), #selector(phStraighten(_:)), #selector(phOriginalSize(_:)),
         #selector(phLeaveOutOfBook(_:)), #selector(phPutBackInBook(_:)), #selector(phResetBookLayout(_:)), #selector(phToggleBookWriting(_:)),
-        #selector(phAddBookPage(_:)), #selector(phRemoveBookPage(_:)), #selector(phBookStyle(_:)),
+        #selector(phAddBookPage(_:)), #selector(phRemoveBookPage(_:)), #selector(phBookStyle(_:)), #selector(phDuplicate(_:)),
+        #selector(phDelete(_:)),
     ]
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -62,6 +63,14 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(phRemoveFromAlbum(_:)):
             if isEditingText { return false }
             return currentAlbum != nil && hasTargets
+        case #selector(phDuplicate(_:)), #selector(phDelete(_:)):
+            // While typing, ⌘⌫ deletes words, not photos.
+            if isEditingText { return false }
+            return !libraryTargets.isEmpty
+        case #selector(LibraryWindowController.copy(_:)):
+            return !libraryTargets.isEmpty
+        case #selector(LibraryWindowController.paste(_:)):
+            return canPaste
         case #selector(phMakeCover(_:)):
             return currentAlbum != nil && targetIDs.count == 1
         case #selector(phBack(_:)):

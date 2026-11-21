@@ -41,6 +41,21 @@ nonisolated struct AddedFiles: Sendable {
     var refused: [Refusal] = []
 }
 
+/// A copy to make of a photo or video: which one, what its file is called, and what the copy's is to be called.
+nonisolated struct PhotoCopy: Sendable {
+    let original: PhotoID
+    let originalName: String
+    let name: String
+}
+
+/// What copying photos and videos came to: each copy made, with the one it's a copy of, in the order asked, and the
+/// name its file was given; and the ones that couldn't be copied, by their own names, with why.
+nonisolated struct CopiedPhotos: Sendable {
+    var copies: [CopiedPhoto] = []
+    var names: [PhotoID: String] = [:]
+    var refused: [AddedFiles.Refusal] = []
+}
+
 /// An immutable image that can cross threads.
 nonisolated struct SendableImage: @unchecked Sendable {
     let cgImage: CGImage
@@ -49,12 +64,15 @@ nonisolated struct SendableImage: @unchecked Sendable {
 nonisolated enum LibraryError: LocalizedError {
     case notAllowed
     case missing
+    /// The person said no when macOS asked.
+    case cancelled
     case failed(String)
 
     var errorDescription: String? {
         switch self {
         case .notAllowed: "PugglePhotos doesn’t have permission to change your Photos library."
         case .missing: "Some of the photos are no longer in your Photos library."
+        case .cancelled: "You chose not to let PugglePhotos make the change."
         case let .failed(reason): reason
         }
     }
@@ -96,8 +114,12 @@ protocol PhotoSource: AnyObject {
     /// files are done as it goes.
     func addFiles(_ files: [ImportFile], progress: @escaping @MainActor @Sendable (Int) -> Void,
                   completion: @escaping @MainActor (AddedFiles) -> Void)
-    /// Deletes photos from the library, all in one change (macOS asks the person first; they go to Recently
-    /// Deleted). Only for taking out photos PugglePhotos added, when that's undone.
+    /// Copies photos and videos into the library, each its own file under the name given, taken at the same moment
+    /// in the same place, and a favorite if it is. `progress` hears how many are done as it goes.
+    func duplicate(_ copies: [PhotoCopy], progress: @escaping @MainActor @Sendable (Int) -> Void,
+                   completion: @escaping @MainActor (CopiedPhotos) -> Void)
+    /// Deletes photos and videos from the library, all in one change. macOS asks the person first (saying no fails
+    /// with `LibraryError.cancelled`); they go to Recently Deleted, which the Photos library empties after 30 days.
     func deleteItems(_ ids: [PhotoID], completion: @escaping @MainActor (Error?) -> Void)
 
     /// Makes an album in the library holding these photos, and answers with its identifier.

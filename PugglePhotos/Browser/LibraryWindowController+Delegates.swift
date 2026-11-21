@@ -496,6 +496,9 @@ extension LibraryWindowController {
         }
         menu.addItem(.separator())
         menu.addItem(MenuBuilder.item("New Album with Selection", #selector(phNewAlbumWithSelection(_:))))
+        menu.addItem(.separator())
+        menu.addItem(MenuBuilder.item("Duplicate", #selector(phDuplicate(_:)), symbol: "plus.square.on.square"))
+        menu.addItem(MenuBuilder.item("Delete…", #selector(phDelete(_:)), symbol: "trash"))
         return menu
     }
 
@@ -509,6 +512,9 @@ extension LibraryWindowController {
         menu.addItem(MenuBuilder.submenu("Add to Album", symbol: "rectangle.stack.badge.plus", MenuBuilder.addToAlbumItems(library)))
         menu.addItem(MenuBuilder.submenu("Labels", symbol: "tag", MenuBuilder.labelItems(library, selection: [id])))
         menu.addItem(MenuBuilder.item("Change Date and Time…", #selector(phChangeDate(_:)), symbol: "calendar"))
+        menu.addItem(.separator())
+        menu.addItem(MenuBuilder.item("Duplicate", #selector(phDuplicate(_:)), symbol: "plus.square.on.square"))
+        menu.addItem(MenuBuilder.item("Delete…", #selector(phDelete(_:)), symbol: "trash"))
         return menu
     }
 

@@ -5,8 +5,8 @@ import Photos
 import PugglePhotosKit
 
 /// The Photos library on this Mac, through PhotoKit. PugglePhotos reads it, and changes it only when the person
-/// asks: when photos were taken, whether they're favorites, its albums, and photos and videos dragged in (which
-/// Undo deletes again).
+/// asks: when photos were taken, whether they're favorites, its albums, photos and videos dragged in and copies
+/// made (which Undo deletes again), and photos deleted.
 final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserver {
     private let manager = PHCachingImageManager()
     private var assets: [PhotoID: PHAsset] = [:]
@@ -319,6 +319,187 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
         return made.value.map { PhotoID($0) }
     }
 
+    // MARK: Copying photos and videos
+
+    func duplicate(_ copies: [PhotoCopy], progress: @escaping @MainActor @Sendable (Int) -> Void,
+                   completion: @escaping @MainActor (CopiedPhotos) -> Void) {
+        Task {
+            let copied = await Self.makeCopies(copies, progress: progress)
+            completion(copied)
+        }
+    }
+
+    /// One photo or video at a time, each as one change to the library, saying how many are done as it goes.
+    @concurrent private nonisolated static func makeCopies(_ copies: [PhotoCopy], progress: @escaping @MainActor @Sendable (Int) -> Void) async -> CopiedPhotos {
+        var copied = CopiedPhotos()
+        for (done, request) in copies.enumerated() {
+            do {
+                let (id, name) = try await makeCopy(request)
+                copied.copies.append(CopiedPhoto(original: request.original, copy: id))
+                copied.names[id] = name
+            } catch {
+                copied.refused.append(AddedFiles.Refusal(name: request.originalName, reason: error.localizedDescription))
+            }
+            await progress(done + 1)
+        }
+        return copied
+    }
+
+    /// A new asset made from the original's own files (downloaded from iCloud if need be), each written out to a
+    /// folder of its own first. It tries the ways `copyPlans` lists in turn, until the library takes one. Answers
+    /// with the new asset's identifier and the name its picture or movie was given.
+    private nonisolated static func makeCopy(_ request: PhotoCopy) async throws -> (PhotoID, String) {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [request.original.rawValue], options: nil).firstObject else {
+            throw LibraryError.missing
+        }
+        let resources = PHAssetResource.assetResources(for: asset)
+        let likeness = Likeness(asset)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Copies", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let stem = (request.name as NSString).deletingPathExtension
+        var written: [Int: URL] = [:]
+        var failure: Error = LibraryError.failed("The Photos library didn’t make the copy.")
+        for plan in copyPlans(resources, isVideo: asset.mediaType == .video) {
+            guard PHAssetCreationRequest.supportsAssetResourceTypes(plan.map { NSNumber(value: $0.type.rawValue) }) else { continue }
+            do {
+                var parts: [CopyPart] = []
+                for (index, type) in plan {
+                    let resource = resources[index]
+                    let ownName = resource.originalFilename
+                    let ownExtension = (ownName as NSString).pathExtension
+                    let url: URL
+                    if let file = written[index] {
+                        url = file
+                    } else {
+                        let safeName = ownName.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+                        url = folder.appendingPathComponent("\(index)-\(safeName)")
+                        try await write(resource, to: url)
+                        written[index] = url
+                    }
+                    // The picture or movie itself, and a live photo's movie or a RAW photo's other half, are named
+                    // like the copy; what a photo's edits are made of keeps its own name.
+                    let name: String = switch type {
+                    case .photo, .video: resource.type == type ? request.name : (ownExtension.isEmpty ? stem : "\(stem).\(ownExtension)")
+                    case .pairedVideo, .alternatePhoto: ownExtension.isEmpty ? stem : "\(stem).\(ownExtension)"
+                    default: ownName
+                    }
+                    // Without an extension to go by, the library is told what kind of file it is.
+                    parts.append(CopyPart(url: url, type: type.rawValue, name: name,
+                                          kind: ownExtension.isEmpty ? resource.uniformTypeIdentifier : nil))
+                }
+                let id = try await create(parts, like: likeness)
+                return (id, parts.first { [PHAssetResourceType.photo.rawValue, PHAssetResourceType.video.rawValue].contains($0.type) }?.name ?? request.name)
+            } catch {
+                failure = error
+            }
+        }
+        throw failure
+    }
+
+    /// The ways to copy an asset, best first: from every file it has (so its edits stay edits, a live photo stays
+    /// live, and a RAW photo keeps its other half); from the picture or movie as it looks now, with a live photo's
+    /// movie; and from that picture alone. Each lists the resources to use, by index, and what each is to be.
+    private nonisolated static func copyPlans(_ resources: [PHAssetResource], isVideo: Bool) -> [[(index: Int, type: PHAssetResourceType)]] {
+        func first(_ types: [PHAssetResourceType]) -> Int? {
+            types.lazy.compactMap { type in resources.firstIndex { $0.type == type } }.first
+        }
+        // A proxy stands in for a photo still being processed; it's never added to an asset by an app.
+        var plans = [resources.indices.filter { resources[$0].type != .photoProxy }.map { (index: $0, type: resources[$0].type) }]
+        if isVideo {
+            if let movie = first([.fullSizeVideo, .video]) { plans.append([(movie, .video)]) }
+        } else if let picture = first([.fullSizePhoto, .photo]) {
+            if let movie = first([.fullSizePairedVideo, .pairedVideo]) { plans.append([(picture, .photo), (movie, .pairedVideo)]) }
+            plans.append([(picture, .photo)])
+        }
+        // A way the same as one before it would only fail the same way.
+        var seen: Set<[Int]> = []
+        return plans.filter { plan in !plan.isEmpty && seen.insert(plan.flatMap { [$0.index, $0.type.rawValue] }).inserted }
+    }
+
+    private nonisolated static func write(_ resource: PHAssetResource, to url: URL) async throws {
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            PHAssetResourceManager.default().writeData(for: resource, toFile: url, options: options) { @Sendable error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+    }
+
+    /// One change to the library making the copy from its files, taken when and where the original was, a favorite
+    /// if it is; from macOS 27, with its caption, keywords and rating too, and the same half of a RAW pair shown.
+    private nonisolated static func create(_ parts: [CopyPart], like original: Likeness) async throws -> PhotoID {
+        let made = LockedValue<String?>(nil)
+        try await PHPhotoLibrary.shared().performChanges {
+            let request = PHAssetCreationRequest.forAsset()
+            for part in parts {
+                let options = PHAssetResourceCreationOptions()
+                options.originalFilename = part.name
+                options.shouldMoveFile = false
+                if let kind = part.kind { options.uniformTypeIdentifier = kind }
+                guard let type = PHAssetResourceType(rawValue: part.type) else { continue }
+                request.addResource(with: type, fileURL: part.url, options: options)
+            }
+            if let date = original.date { request.creationDate = date }
+            request.location = original.location
+            request.isFavorite = original.favorite
+            if #available(macOS 27, *) {
+                if let caption = original.caption, !caption.isEmpty { request.caption = caption }
+                for keyword in original.keywords { request.addKeyword(keyword) }
+                if let rating = original.rating.flatMap(PHAsset.Rating.init(rawValue:)) { request.rating = rating }
+                if original.showsRAW, parts.contains(where: { $0.type == PHAssetResourceType.alternatePhoto.rawValue }) {
+                    request.originalResourceChoice = .raw
+                }
+            }
+            made.value = request.placeholderForCreatedAsset?.localIdentifier
+        }
+        guard let id = made.value else { throw LibraryError.notAllowed }
+        return PhotoID(id)
+    }
+
+    /// A file of the original's to make the copy from: where it was written, the kind of resource it's to be (a
+    /// `PHAssetResourceType`), its name, and, when its name doesn't say, what kind of file it is.
+    private nonisolated struct CopyPart: Sendable {
+        let url: URL
+        let type: Int
+        let name: String
+        let kind: String?
+    }
+
+    /// What a copy takes from its original besides its files.
+    private nonisolated struct Likeness: @unchecked Sendable {
+        let date: Date?
+        let location: CLLocation?
+        let favorite: Bool
+        let caption: String?
+        let keywords: [String]
+        let rating: Int?
+        /// Whether a RAW and JPEG pair shows its RAW half.
+        let showsRAW: Bool
+
+        init(_ asset: PHAsset) {
+            date = asset.creationDate
+            location = asset.location
+            favorite = asset.isFavorite
+            if #available(macOS 27, *) {
+                let metadata = asset.extendedMetadata
+                caption = metadata.caption
+                keywords = metadata.keywords
+                rating = asset.rating == .unset ? nil : asset.rating.rawValue
+                showsRAW = asset.originalResourceChoice == .raw
+            } else {
+                caption = nil
+                keywords = []
+                rating = nil
+                showsRAW = false
+            }
+        }
+    }
+
+    // MARK: Deleting photos and videos
+
     func deleteItems(_ ids: [PhotoID], completion: @escaping @MainActor (Error?) -> Void) {
         let found = PHAsset.fetchAssets(withLocalIdentifiers: ids.map(\.rawValue), options: nil)
         guard found.count > 0 else {
@@ -328,7 +509,11 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
         let doomed = FetchedAssets(result: found)
         perform({
             PHAssetChangeRequest.deleteAssets(doomed.result)
-        }, completion: completion)
+        }, completion: { [weak self] error in
+            // Gone, so nothing asks for them again before the library is next read.
+            if error == nil { for id in ids { self?.assets[id] = nil } }
+            completion(error)
+        })
     }
 
     private nonisolated struct FetchedAssets: @unchecked Sendable {
@@ -468,13 +653,19 @@ final class SystemPhotoSource: NSObject, PhotoSource, PHPhotoLibraryChangeObserv
     /// `@Sendable`, so it runs anywhere.
     private func perform(_ changes: @escaping @Sendable () -> Void, completion: @escaping @MainActor (Error?) -> Void) {
         PHPhotoLibrary.shared().performChanges(changes) { @Sendable success, error in
-            Task { @MainActor in
-                if success {
-                    completion(nil)
-                } else {
-                    completion(error.map { LibraryError.failed($0.localizedDescription) } ?? LibraryError.notAllowed)
-                }
-            }
+            let failure = success ? nil : Self.libraryError(error)
+            Task { @MainActor in completion(failure) }
         }
+    }
+
+    /// What a change the library didn't make comes to: the person saying no when macOS asked (as it does before
+    /// deleting), or whatever the library says went wrong.
+    private nonisolated static func libraryError(_ error: Error?) -> LibraryError {
+        guard let error else { return .notAllowed }
+        let found = error as NSError
+        if found.code == PHPhotosError.Code.userCancelled.rawValue, [PHPhotosError.errorDomain, NSCocoaErrorDomain].contains(found.domain) {
+            return .cancelled
+        }
+        return .failed(error.localizedDescription)
     }
 }

@@ -267,7 +267,12 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             viewer.show(viewerID)
             return
         }
-        state.viewerID = nil
+        if state.viewerID != nil {
+            // The photo it showed has gone from the library (deleted here or elsewhere): a video stops playing.
+            state.viewerID = nil
+            mapViewerPhotos = nil
+            viewer.stop()
+        }
         if state.source == .memories {
             showMemories()
             setSelection([])

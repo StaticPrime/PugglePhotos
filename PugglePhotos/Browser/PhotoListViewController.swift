@@ -257,7 +257,9 @@ final class PhotoTableView: NSTableView {
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case 36, 76, 49: owner?.openSelection()
-        case 51, 117: owner?.deleteSelection()
+        case 51, 117:
+            // With ⌘, Photo ▸ Delete… takes it, or nothing does.
+            if event.modifierFlags.contains(.command) { super.keyDown(with: event) } else { owner?.deleteSelection() }
         default: super.keyDown(with: event)
         }
     }

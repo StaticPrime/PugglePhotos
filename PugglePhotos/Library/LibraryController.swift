@@ -139,6 +139,8 @@ final class LibraryController {
                 items[index].fileName = fileNames[items[index].id]
             }
             snapshot = LibrarySnapshot(items: items, extras: sharedAlbums.flatMap(\.mediaItems))
+            // A photo deleted here and brought back out of Recently Deleted is a photo like any other again.
+            if !deleted.isEmpty { deleted = deleted.filter { !snapshot.inLibrary($0) } }
             recentlyAdded = contents.recentlyAdded
             reconcileAlbums(contents.albums)
             isLoading = false
@@ -161,16 +163,32 @@ final class LibraryController {
     private func loadMissingFileNames() {
         let missing = snapshot.items.filter { $0.fileName == nil }.map(\.id)
         guard !missing.isEmpty else { return }
+        source.loadFileNames(missing) { [weak self] names in self?.take(names) }
+    }
+
+    /// Gives photos the file names just read.
+    private func take(_ names: [PhotoID: String]) {
+        guard !names.isEmpty else { return }
+        fileNames.merge(names) { _, new in new }
+        let changed = names.compactMap { id, name -> MediaItem? in
+            guard var item = snapshot.item(id) else { return nil }
+            item.fileName = name
+            return item
+        }
+        snapshot = snapshot.updating(changed)
+        post(.items)
+    }
+
+    /// Runs `body` once every photo's file name is known, reading any not read yet.
+    private func withFileNames(_ body: @escaping () -> Void) {
+        let missing = snapshot.items.filter { $0.fileName == nil }.map(\.id)
+        guard !missing.isEmpty else {
+            body()
+            return
+        }
         source.loadFileNames(missing) { [weak self] names in
-            guard let self, !names.isEmpty else { return }
-            fileNames.merge(names) { _, new in new }
-            let changed = names.compactMap { id, name -> MediaItem? in
-                guard var item = snapshot.item(id) else { return nil }
-                item.fileName = name
-                return item
-            }
-            snapshot = snapshot.updating(changed)
-            post(.items)
+            self?.take(names)
+            body()
         }
     }
 
@@ -218,8 +236,12 @@ final class LibraryController {
         let old = catalog
         undoManager.registerUndo(withTarget: self) { target in
             // Albums' titles and photos belong to the Photos library and have their own undo, so restoring the
-            // catalog leaves them as they are now.
-            MainActor.assumeIsolated { target.replaceCatalog(with: old.keepingAlbumContents(from: target.catalog), actionName: actionName) }
+            // catalog leaves them as they are now. Photos deleted since stay forgotten.
+            MainActor.assumeIsolated {
+                var restored = old.keepingAlbumContents(from: target.catalog)
+                restored.forget(target.deleted)
+                target.replaceCatalog(with: restored, actionName: actionName)
+            }
         }
         undoManager.setActionName(actionName)
         setCatalog(new)
@@ -249,7 +271,7 @@ final class LibraryController {
 
     /// Changes when photos were taken. Undo puts the old dates back.
     func changeDates(_ changes: [Redate.Change], actionName: String = "Change Date", completion: ((Bool) -> Void)? = nil) {
-        let real = changes.filter { $0.from != $0.to }
+        let real = changes.filter { $0.from != $0.to && !deleted.contains($0.id) }
         guard !real.isEmpty else {
             completion?(true)
             return
@@ -286,7 +308,7 @@ final class LibraryController {
 
     /// Favorites photos, or stops. Undo puts each one back as it was.
     func setFavorite(_ ids: [PhotoID], _ favorite: Bool) {
-        let changing = ids.filter { snapshot.item($0).map { $0.isFavorite != favorite } ?? false }
+        let changing = ids.filter { !deleted.contains($0) && snapshot.item($0).map { $0.isFavorite != favorite } ?? false }
         guard !changing.isEmpty else { return }
         let outcome = ChangeOutcome()
         undoManager.registerUndo(withTarget: self) { target in
@@ -321,7 +343,7 @@ final class LibraryController {
 
     /// Changes where photos were taken, or says they were taken nowhere. Undo puts the old places back.
     func changePlaces(_ changes: [PlaceChange], actionName: String = "Change Place", completion: ((Bool) -> Void)? = nil) {
-        let real = changes.filter { $0.from != $0.to && snapshot.contains($0.id) && !SharedAlbum.isShared($0.id) }
+        let real = changes.filter { $0.from != $0.to && snapshot.contains($0.id) && !SharedAlbum.isShared($0.id) && !deleted.contains($0.id) }
         guard !real.isEmpty else {
             completion?(true)
             return
@@ -388,23 +410,106 @@ final class LibraryController {
         reportProblem?(title, names + "The Photos library didn’t take them: " + first.reason)
     }
 
-    /// Takes photos added from files out of the Photos library again, when adding them is undone. macOS asks first,
-    /// and they go to Recently Deleted.
-    func deleteAdded(_ ids: [PhotoID], completion: ((Bool) -> Void)? = nil) {
-        guard !ids.isEmpty else {
+    // MARK: Copying and deleting photos
+
+    /// File names given to copies still being made, so two lots made at once never give two the same name.
+    @ObservationIgnored private var namesBeingGiven: Set<String> = []
+    /// Photos deleted since PugglePhotos opened. What's written about them is forgotten, and anything undone
+    /// afterwards leaves them forgotten.
+    @ObservationIgnored private(set) var deleted: Set<PhotoID> = []
+
+    /// Copies photos and videos into the Photos library: each its own file again, named after it with a number
+    /// ("Beach.jpg" makes "Beach(1).jpg", then "Beach(2).jpg"), taken at the same moment in the same place, a favorite
+    /// if it is, and with the same caption, note and labels here. Then reads the library again, so the copies are in
+    /// the snapshot when `completion` hears them. Ones that can't be copied are reported. Not an undo step by itself:
+    /// the window makes each one.
+    func duplicate(_ ids: [PhotoID], progress: @escaping @MainActor @Sendable (Int) -> Void = { _ in },
+                   completion: @escaping ([CopiedPhoto]) -> Void) {
+        var seen = Set<PhotoID>()
+        let originals = ids.filter { snapshot.inLibrary($0) && !deleted.contains($0) && seen.insert($0).inserted }
+        guard !originals.isEmpty else {
+            completion([])
+            return
+        }
+        // Every name in the library has to be known to give each copy one not taken.
+        withFileNames { [weak self] in
+            guard let self else { return }
+            let names = originals.map { id in
+                snapshot.item(id)?.fileName ?? fileNames[id] ?? (snapshot.item(id)?.kind.isVideo == true ? "Video" : "Photo")
+            }
+            let taken = snapshot.items.compactMap(\.fileName) + namesBeingGiven
+            let copyNames = CopyNames.names(for: names, taken: taken)
+            let keys = Set(copyNames.map(CopyNames.key))
+            namesBeingGiven.formUnion(keys)
+            let copies = originals.indices.map { PhotoCopy(original: originals[$0], originalName: names[$0], name: copyNames[$0]) }
+            source.duplicate(copies, progress: progress) { [weak self] copied in
+                guard let self else { return }
+                fileNames.merge(copied.names) { _, new in new }
+                if !copied.refused.isEmpty { reportUncopied(copied.refused) }
+                guard !copied.copies.isEmpty else {
+                    namesBeingGiven.subtract(keys)
+                    completion([])
+                    return
+                }
+                // The names stay taken until the copies are in the snapshot with them.
+                reload { [weak self] in
+                    guard let self else { return }
+                    namesBeingGiven.subtract(keys)
+                    var updated = catalog
+                    updated.copyDetails(copied.copies)
+                    if updated != catalog {
+                        setCatalog(updated)
+                        scheduleSave()
+                    }
+                    completion(copied.copies)
+                }
+            }
+        }
+    }
+
+    private func reportUncopied(_ refused: [AddedFiles.Refusal]) {
+        guard let first = refused.first else { return }
+        let title = refused.count == 1 ? "“\(first.name)” couldn’t be copied." : "\(formatting.number(refused.count)) photos couldn’t be copied."
+        var names = ""
+        if refused.count > 1 {
+            names = refused.prefix(4).map { "“\($0.name)”" }.joined(separator: ", ") + (refused.count > 4 ? " and others" : "") + ". "
+        }
+        reportProblem?(title, names + "The Photos library didn’t make the copy: " + first.reason)
+    }
+
+    /// Deletes photos and videos from the Photos library, and forgets everything written about them here. macOS
+    /// asks first, and they go to Recently Deleted there. `completion` hears whether they went; if the person says no
+    /// to macOS, nothing is said.
+    func deletePhotos(_ ids: [PhotoID], completion: ((Bool) -> Void)? = nil) {
+        let doomed = ids.filter { !SharedAlbum.isShared($0) }
+        guard !doomed.isEmpty else {
             completion?(true)
             return
         }
-        source.deleteItems(ids) { [weak self] error in
+        source.deleteItems(doomed) { [weak self] error in
             guard let self else { return }
             if let error {
-                reportProblem?(ids.count == 1 ? "The photo wasn’t taken out of your Photos library." : "The photos weren’t taken out of your Photos library.",
-                               error.localizedDescription)
+                if case LibraryError.cancelled = error {} else {
+                    reportProblem?(doomed.count == 1 ? "It couldn’t be deleted from your Photos library." : "They couldn’t be deleted from your Photos library.",
+                                   error.localizedDescription)
+                }
                 completion?(false)
                 return
             }
+            forget(Set(doomed))
             reload { completion?(true) }
         }
+    }
+
+    /// Forgets photos gone from the library: what's written about them, and where they were in albums and books.
+    /// Not a step of its own to undo.
+    private func forget(_ ids: Set<PhotoID>) {
+        deleted.formUnion(ids)
+        var updated = catalog
+        updated.forget(ids)
+        guard updated != catalog else { return }
+        setCatalog(updated)
+        scheduleSave()
     }
 
     /// The photos already in the library that look like these files (the same name and size, taken at the same
@@ -456,6 +561,11 @@ final class LibraryController {
         changeAlbum(album, actionName: "Rename Album") { $0.renameAlbum(album, to: title) }
     }
 
+    /// Puts copies in an album, each right after the photo it's a copy of (or at the end, if that isn't in it).
+    func addCopies(_ copies: [CopiedPhoto], toAlbum album: UUID) {
+        changeAlbum(album, actionName: "Add to Album") { $0.add(copies, besideOriginalsIn: album) }
+    }
+
     /// Puts photos at a place in the album's own order.
     func moveInAlbum(_ ids: [PhotoID], album: UUID, toIndex index: Int) {
         changeAlbum(album, actionName: ids.count == 1 ? "Move Photo" : "Move Photos") { $0.move(ids, inAlbum: album, toIndex: index) }
@@ -475,6 +585,7 @@ final class LibraryController {
     /// Gives an album this title and these photos, registers the way back, and sends the change to its twin.
     private func setAlbumContents(_ id: UUID, title: String, items: [PhotoID], actionName: String) {
         guard var album = catalog.album(id) else { return }
+        let items = deleted.isEmpty ? items : items.filter { !deleted.contains($0) }
         let (oldTitle, oldItems) = (album.title, album.items)
         undoManager.registerUndo(withTarget: self) { target in
             MainActor.assumeIsolated { target.setAlbumContents(id, title: oldTitle, items: oldItems, actionName: actionName) }
@@ -494,6 +605,8 @@ final class LibraryController {
     private func insertAlbum(_ album: Album, actionName: String) {
         var album = album
         album.photosAlbumID = nil
+        album.items.removeAll { deleted.contains($0) }
+        if let cover = album.cover, deleted.contains(cover) { album.cover = nil }
         undoManager.registerUndo(withTarget: self) { [album] target in
             MainActor.assumeIsolated { target.removeAlbum(album.id, actionName: actionName) }
         }

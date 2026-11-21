@@ -17,6 +17,9 @@ final class SamplePhotoSource: PhotoSource {
     /// Files dropped in, which the photos made from them are drawn and played from (they're only read, never kept).
     private(set) var addedFiles: [PhotoID: URL] = [:]
     private var addedNumber = 0
+    /// The names copies' files were given.
+    private(set) var copyNames: [PhotoID: String] = [:]
+    private var copyNumber = 0
     private let today: Date
     var onChange: (() -> Void)?
     var access: LibraryAccess
@@ -24,6 +27,8 @@ final class SamplePhotoSource: PhotoSource {
     private(set) var changeCount = 0
     /// Makes the next change fail, as if the person said no.
     var refuseNextChange = false
+    /// Makes the next deletion fail as the Photos library's does when the person says no to macOS's question.
+    var declineNextDelete = false
     /// `-PHSampleLoadDelay 3` holds the first load back that many seconds, as a big library takes a while to load.
     private var loadDelay = UserDefaults.standard.double(forKey: "PHSampleLoadDelay")
 
@@ -57,6 +62,10 @@ final class SamplePhotoSource: PhotoSource {
     func loadFileNames(_ ids: [PhotoID], completion: @escaping @MainActor ([PhotoID: String]) -> Void) {
         var names: [PhotoID: String] = [:]
         for id in ids {
+            if let name = copyNames[id] {
+                names[id] = name
+                continue
+            }
             if let file = addedFiles[id] { names[id] = file.lastPathComponent }
             guard let item = items[id], let scene = scenes[id] else { continue }
             let number = abs(scene.seed) % 9000 + 1000
@@ -212,10 +221,49 @@ final class SamplePhotoSource: PhotoSource {
         }
     }
 
-    func deleteItems(_ ids: [PhotoID], completion: @escaping @MainActor (Error?) -> Void) {
+    /// Makes each copy as the Photos library would: the same picture (or the same file dropped in), taken when and
+    /// where the original was, a favorite if it is, added just now, under its new name.
+    func duplicate(_ copies: [PhotoCopy], progress: @escaping @MainActor @Sendable (Int) -> Void,
+                   completion: @escaping @MainActor (CopiedPhotos) -> Void) {
         if refuseNextChange {
             refuseNextChange = false
-            DispatchQueue.main.async { completion(LibraryError.notAllowed) }
+            let refused = copies.map { AddedFiles.Refusal(name: $0.originalName, reason: LibraryError.notAllowed.localizedDescription) }
+            DispatchQueue.main.async { completion(CopiedPhotos(refused: refused)) }
+            return
+        }
+        var copied = CopiedPhotos()
+        for request in copies {
+            guard var item = items[request.original] else {
+                copied.refused.append(AddedFiles.Refusal(name: request.originalName, reason: LibraryError.missing.localizedDescription))
+                continue
+            }
+            copyNumber += 1
+            addedNumber += 1
+            let id = PhotoID("sample-copy-\(copyNumber)")
+            item.id = id
+            item.addedDate = today.addingTimeInterval(TimeInterval(addedNumber))
+            item.fileName = nil
+            items[id] = item
+            scenes[id] = scenes[request.original]
+            addedFiles[id] = addedFiles[request.original]
+            videoFiles[id] = videoFiles[request.original]
+            copyNames[id] = request.name
+            recent.append(id)
+            copied.copies.append(CopiedPhoto(original: request.original, copy: id))
+            copied.names[id] = request.name
+        }
+        changed { _ in
+            progress(copies.count)
+            completion(copied)
+        }
+    }
+
+    func deleteItems(_ ids: [PhotoID], completion: @escaping @MainActor (Error?) -> Void) {
+        if refuseNextChange || declineNextDelete {
+            let error = declineNextDelete ? LibraryError.cancelled : LibraryError.notAllowed
+            refuseNextChange = false
+            declineNextDelete = false
+            DispatchQueue.main.async { completion(error) }
             return
         }
         let doomed = Set(ids)
@@ -223,6 +271,7 @@ final class SamplePhotoSource: PhotoSource {
             items[id] = nil
             addedFiles[id] = nil
             scenes[id] = nil
+            copyNames[id] = nil
         }
         recent.removeAll { doomed.contains($0) }
         for index in albums.indices { albums[index].items.removeAll { doomed.contains($0) } }
