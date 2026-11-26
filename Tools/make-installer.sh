@@ -68,6 +68,9 @@ INSTALLER_SERVICE="$APP/Contents/XPCServices/UpdateInstaller.xpc"
 if codesign -d --entitlements - --xml "$INSTALLER_SERVICE" 2>/dev/null | grep -q "com.apple.security.app-sandbox"; then
     fail "the update installer service is sandboxed, so it couldn't install updates"
 fi
+# It must also run in the app's security session: in one of its own, macOS can't show the password dialog.
+[ "$(/usr/libexec/PlistBuddy -c "Print :XPCService:JoinExistingSession" "$INSTALLER_SERVICE/Contents/Info.plist" 2>/dev/null)" = "true" ] \
+    || fail "the update installer service doesn't join the app's session, so macOS couldn't ask for the password"
 
 # Its debug symbols, zipped beside the installer. Release builds are stripped, so a crash report from an installed
 # copy shows only addresses in PugglePhotos; these name them. They fit this build alone, matched by the UUIDs of

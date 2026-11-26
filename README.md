@@ -139,7 +139,7 @@ Help ▸ Keyboard Shortcuts (⌘/) lists every keyboard shortcut.
 - The journal holds one entry for each day.
 - Memories and highlights are named from dates, albums, labels and a few holidays, since PugglePhotos doesn't look up place names. Slideshows play on the screen the library window is on.
 - macOS asks once whether PugglePhotos may show notifications.
-- Installing an update takes an administrator's password, so someone who can't give one keeps the version they have (the banner keeps offering the new one). Version 1.0.3 and earlier don't update themselves: the first version that does has to be installed by hand.
+- Installing an update takes an administrator's password, so someone who can't give one keeps the version they have (the banner keeps offering the new one). Version 1.0.4 and earlier don't update themselves: the first version that does has to be installed by hand.
 - Updates go where the installer puts PugglePhotos, the Applications folder. A copy moved somewhere else stays as it is, and the new version opens from Applications.
 
 ## Requirements
