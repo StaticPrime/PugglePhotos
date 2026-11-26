@@ -239,14 +239,4 @@ final class RecordingNotificationCenter: MemoryNotificationCenter {
 
     func showSharedAlbum(_ notice: SharedAlbumNotice, image: URL?) { sharedNotices.append(notice) }
 }
-
-/// Stands in for the login item in debug runs on the sample library.
-final class RecordingLoginItem: LoginItemService {
-    var isEnabled = false
-    var needsApproval = false
-    private(set) var openedSettings = false
-
-    func setEnabled(_ enabled: Bool) throws { isEnabled = enabled }
-    func openLoginItemsSettings() { openedSettings = true }
-}
 #endif

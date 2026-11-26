@@ -10,10 +10,16 @@ enum DebugLaunchOptions {
     static var defaults: UserDefaults { .standard }
 
     /// Screenshots, the self-test and the benchmark always use the sample library, so automated runs never touch
-    /// the real Photos library or catalog.
+    /// the real Photos library or catalog. So does trying updates (`-UpdateDemo`, `-UpdateFeedURL`, `-UpdateDryRun`,
+    /// `-UpdateAppStoreBundleID`).
     static var usesSampleLibrary: Bool {
         defaults.bool(forKey: "PHSampleLibrary") || defaults.bool(forKey: "PHSelfTest") || defaults.bool(forKey: "PHBenchmark")
-            || defaults.string(forKey: "PHSnapshot") != nil
+            || defaults.string(forKey: "PHSnapshot") != nil || triesUpdates
+    }
+
+    private static var triesUpdates: Bool {
+        defaults.string(forKey: "UpdateDemo") != nil || defaults.string(forKey: "UpdateFeedURL") != nil
+            || defaults.bool(forKey: "UpdateDryRun") || defaults.string(forKey: "UpdateAppStoreBundleID") != nil
     }
 
     /// The day the sample library treats as today: `-PHToday 2026-11-17`, else the real today.
@@ -315,8 +321,10 @@ enum DebugLaunchOptions {
         let settings = NSApp.windows.first { $0.windowController is SettingsWindowController && $0.isVisible }
         let slideshow = SlideshowController.current.map(\.window)
         let info = NSApp.windows.first { $0.windowController is InfoWindowController && $0.isVisible }
+        // The splash screen or an update's progress, from `-UpdateDemo`.
+        let update = NSApp.windows.first { $0.windowController is UpdateWindowController && $0.isVisible }
         if defaults.bool(forKey: "PHDebugLayout"), let show = SlideshowController.current { print("PHDebug:\n\(show.describeSlide())") }
-        let window = slideshow ?? about ?? settings ?? info ?? main.attachedSheet ?? main
+        let window = update ?? slideshow ?? about ?? settings ?? info ?? main.attachedSheet ?? main
         guard let view = window.contentView?.superview ?? window.contentView else { exit(1) }
         // The window server's picture of the window shows vibrant sidebars and every SwiftUI view as they really
         // look; drawing the views into a bitmap misses those, so it's only the fallback.

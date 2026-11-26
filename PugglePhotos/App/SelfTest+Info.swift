@@ -98,14 +98,15 @@ extension SelfTest {
             guard let photo, let info else { return }
             check(library.snapshot.item(photo)?.location == clicked, "a place clicked on the map is set")
             info.setPlace(nil)
-            wait(upTo: 3) { library.snapshot.item(photo)?.location == nil }
+            wait(upTo: 3) { library.snapshot.item(photo)?.location == nil && !library.arranger.ids(for: .map).contains(photo) && info.placeName == nil }
         }
         step {
             guard let photo, let info else { return }
             check(library.snapshot.item(photo)?.location == nil && !library.arranger.ids(for: .map).contains(photo) && info.placeName == nil,
                   "Remove Place takes it off the map")
             library.undoManager.undo()
-            wait(upTo: 3) { library.snapshot.item(photo)?.location == clicked }
+            // The map's list catches up a moment after the photo itself.
+            wait(upTo: 3) { library.snapshot.item(photo)?.location == clicked && library.arranger.ids(for: .map).contains(photo) }
         }
         step {
             guard let photo, let info else { return }

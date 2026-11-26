@@ -324,6 +324,24 @@ final class SharingController {
         }
     }
 
+    /// Joins an album shared with you from its link alone, as `accept(_:completion:)` does with what macOS hands over
+    /// when the link is clicked. A copy of PugglePhotos that updates itself as it opens hands the new version the link.
+    func accept(link: URL, completion: @escaping (Result<UUID, Error>) -> Void) {
+        guard let cloud = backend as? CloudKitSharing else {
+            completion(.failure(SharingError.unavailable(Self.reason(status))))
+            return
+        }
+        cloud.accept(link: link) { [weak self] result in
+            switch result {
+            case let .success(album):
+                self?.replace(album)
+                completion(.success(album.id))
+            case let .failure(error):
+                completion(.failure(error))
+            }
+        }
+    }
+
     /// A push from iCloud, which may say something shared has changed.
     func receivedPush(_ userInfo: [String: Any]) {
         (backend as? CloudKitSharing)?.receivedPush(userInfo)

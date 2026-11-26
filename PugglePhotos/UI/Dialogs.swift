@@ -235,34 +235,13 @@ struct LabelEditorView: View {
 
 // MARK: Settings
 
-/// What Settings shows about opening at login, which lives with macOS rather than in PugglePhotos' settings.
+/// What Settings shows that isn't kept in PugglePhotos' settings: the song picked for slideshows.
 @Observable
 final class SettingsModel {
-    @ObservationIgnored let loginItem: LoginItemService
-    private(set) var opensAtLogin = false
-    private(set) var needsApproval = false
-    private(set) var problem: String?
     var songName: String? = SlideshowMusic.songName
 
-    init(loginItem: LoginItemService) {
-        self.loginItem = loginItem
-        refresh()
-    }
-
     func refresh() {
-        opensAtLogin = loginItem.isEnabled
-        needsApproval = loginItem.needsApproval
         songName = SlideshowMusic.songName
-    }
-
-    func setOpensAtLogin(_ enabled: Bool) {
-        do {
-            try loginItem.setEnabled(enabled)
-            problem = nil
-        } catch {
-            problem = error.localizedDescription
-        }
-        refresh()
     }
 
     func chooseSong() {
@@ -297,18 +276,6 @@ struct SettingsView: View {
                 Toggle("Tell me about photos from this day in earlier years", isOn: $notifies)
                 DatePicker("At", selection: time, displayedComponents: .hourAndMinute)
                     .disabled(!notifies)
-                Toggle("Open PugglePhotos when I log in", isOn: Binding(get: { model.opensAtLogin }, set: { model.setOpensAtLogin($0) }))
-                if model.needsApproval {
-                    HStack {
-                        Text("Allow PugglePhotos in System Settings ▸ General ▸ Login Items.").foregroundStyle(.secondary)
-                        Button("Open Login Items") { model.loginItem.openLoginItemsSettings() }
-                    }
-                } else if let problem = model.problem {
-                    Text(problem).foregroundStyle(.red)
-                } else {
-                    Text("It opens quietly, as a paw in the menu bar, and keeps your memory notifications on time.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
             }
             Section("Slideshows") {
                 Picker("Music", selection: $music) {
@@ -357,36 +324,56 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            UpdateSettingsSection()
         }
         .formStyle(.grouped)
         .frame(width: 520)
-        .fixedSize(horizontal: false, vertical: true)
         .onAppear { model.refresh() }
     }
 }
 
 final class SettingsWindowController: NSWindowController {
     private static var shared: SettingsWindowController?
+    private let model: SettingsModel
 
     static func show(_ model: SettingsModel) {
         let controller = shared ?? SettingsWindowController(model: model)
         shared = controller
         model.refresh()
-        if controller.window?.isVisible != true { controller.window?.center() }
+        if controller.window?.isVisible != true {
+            controller.fitScreen()
+            controller.window?.center()
+        }
         controller.showWindow(nil)
     }
 
     private init(model: SettingsModel) {
+        self.model = model
         let host = NSHostingController(rootView: SettingsView(model: model))
+        // The window gives the settings their height (see fitScreen), and they scroll when there's more of them.
+        host.sizingOptions = []
         let window = NSWindow(contentViewController: host)
         window.title = "PugglePhotos Settings"
         window.styleMask = [.titled, .closable]
         window.isRestorable = false
-        window.setContentSize(host.view.fittingSize)
         super.init(window: window)
+        fitScreen()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// As tall as all the settings, or as the screen has room for: they're taller than a 1080-point screen leaves room
+    /// for, so there they scroll.
+    private func fitScreen() {
+        guard let window else { return }
+        let whole = NSHostingView(rootView: SettingsView(model: model).fixedSize(horizontal: false, vertical: true)).fittingSize
+        guard let screen = window.screen ?? NSScreen.main else {
+            window.setContentSize(whole)
+            return
+        }
+        let room = window.contentRect(forFrameRect: screen.visibleFrame).height - 40
+        window.setContentSize(NSSize(width: whole.width, height: min(whole.height, max(room, 300))))
+    }
 }
 
 // MARK: Keyboard shortcuts

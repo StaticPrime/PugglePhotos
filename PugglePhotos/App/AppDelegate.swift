@@ -1,13 +1,13 @@
 import AppKit
 import CloudKit
 import PugglePhotosKit
+import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var library: LibraryController!
     private(set) var memories: MemoriesController!
     private(set) var sharing: SharingController!
     private(set) var notifications: MemoryNotificationCenter!
-    private(set) var loginItem: LoginItemService!
     private(set) var settings: SettingsModel!
     /// Names places and finds them, for Get Info.
     private(set) lazy var placeLookup: PlaceLookup = {
@@ -17,9 +17,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return MapPlaceLookup()
     }()
     private(set) var windowController: LibraryWindowController?
-    /// Whether macOS opened PugglePhotos at login, so it waits quietly in the menu bar instead of opening a window.
-    private(set) var launchedAtLogin = false
-    private var statusItem: NSStatusItem?
     private var observer: NSObjectProtocol?
     private var initialCatalog: Catalog?
     /// A memory to play once the library has loaded (from a notification clicked before PugglePhotos was open).
@@ -30,22 +27,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MemoryPreferences.registerDefaults()
         BookPreferences.registerDefaults()
         UserDefaults.standard.register(defaults: ["NSFullScreenMenuItemEverywhere": false])
-        launchedAtLogin = LaunchReason.isLoginLaunch()
-        #if DEBUG
-        if UserDefaults.standard.bool(forKey: "PHLaunchedAtLogin") { launchedAtLogin = true }
-        #endif
         library = makeLibrary()
         let notifications = makeNotificationCenter()
         self.notifications = notifications
         memories = MemoriesController(library: library, notifications: notifications, defaults: Self.memoryDefaults, clock: Self.memoryClock)
-        notifications.onOpen = { [weak self] id in self?.openMemory(id) }
+        // A notification clicked while PugglePhotos is still opening (the click that opened it, say) is acted on once
+        // it has, or by the new version if it updates itself first.
+        notifications.onOpen = { [weak self] id in
+            UpdateController.shared.whenLaunched(handoff: LaunchHandoff.memory(id).encoded) { self?.openMemory(id) }
+        }
         let sharedStore = Self.sharedAlbumsStore
         sharing = SharingController(library: library, backend: makeSharingBackend(store: sharedStore), store: sharedStore,
                                     notifications: notifications, defaults: Self.memoryDefaults)
-        notifications.onOpenSharedAlbum = { [weak self] id in self?.openSharedAlbum(id) }
-        loginItem = makeLoginItem()
-        settings = SettingsModel(loginItem: loginItem)
+        notifications.onOpenSharedAlbum = { [weak self] id in
+            UpdateController.shared.whenLaunched(handoff: LaunchHandoff.sharedAlbum(id).encoded) { self?.openSharedAlbum(id) }
+        }
+        settings = SettingsModel()
         NSApp.mainMenu = MenuBuilder.makeMainMenu()
+        // The splash screen and the update check, before the library window opens.
+        let updates = UpdateController.shared
+        updates.onHandoff = { [weak self] in LaunchHandoff($0)?.perform(self) }
+        updates.beforeRestart = { [weak self] in self?.saveForNextLaunch() }
+        updates.start()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -57,11 +60,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sharing.start()
         // Files other apps wrote out for drops last time are in the library by now, or were never wanted.
         FileDrop.clearDroppedFiles()
-        if launchedAtLogin {
-            waitInMenuBar()
-        } else {
-            showLibraryWindow(nil)
-        }
+        // The window waits for the splash screen and the update check, so a new version is installed before the
+        // library shows. The library is read meanwhile, so it's ready sooner. (Its reading isn't held back too: the
+        // catalog must be read before PugglePhotos quits, which saves it, and an update quits PugglePhotos as it opens.)
+        UpdateController.shared.whenLaunched { [weak self] in self?.showLibraryWindow(nil) }
+        stopOpeningAtLogin()
         observer = NotificationCenter.default.addObserver(forName: .libraryDidChange, object: library, queue: .main) { [weak self] note in
             let change = note.userInfo?["change"] as? LibraryController.Change
             MainActor.assumeIsolated {
@@ -119,11 +122,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return SystemNotificationCenter()
     }
 
-    private func makeLoginItem() -> LoginItemService {
+    /// PugglePhotos never opens by itself when you log in. Earlier versions could, from Settings, so a Mac where that
+    /// was turned on has PugglePhotos taken back out of the apps that open at login. (Runs on the sample library leave
+    /// the Mac's login items alone.)
+    private func stopOpeningAtLogin() {
         #if DEBUG
-        if DebugLaunchOptions.usesSampleLibrary { return RecordingLoginItem() }
+        if DebugLaunchOptions.usesSampleLibrary { return }
         #endif
-        return SystemLoginItem()
+        Task.detached(priority: .utility) {
+            let service = SMAppService.mainApp
+            guard service.status == .enabled || service.status == .requiresApproval else { return }
+            try? await service.unregister()
+        }
     }
 
     private static var memoryDefaults: UserDefaults {
@@ -150,7 +160,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Windows
 
     @objc func showLibraryWindow(_ sender: Any?) {
-        leaveMenuBar()
         if windowController == nil {
             windowController = LibraryWindowController(library: library, memories: memories, sharing: sharing)
             windowController?.placeLookup = placeLookup
@@ -162,13 +171,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { showLibraryWindow(nil) }
+        if !flag { UpdateController.shared.whenLaunched { [weak self] in self?.showLibraryWindow(nil) } }
         return true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// Never while macOS's installer is changing the app.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        UpdateController.shared.isInstalling ? .terminateCancel : .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        saveForNextLaunch()
+    }
+
+    /// Saves what's kept between launches: as PugglePhotos quits, and just before it opens a new version of itself.
+    private func saveForNextLaunch() {
         windowController?.rememberLayout()
         library.saveNow()
     }
@@ -181,22 +200,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Shared albums
 
-    /// Joins an album someone shared with you, from the link they sent, and opens it.
+    /// Joins an album someone shared with you, from the link they sent, and opens it. A link clicked while PugglePhotos
+    /// isn't open waits until it has, or goes to the new version if it updates itself first.
     func application(_ application: NSApplication, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
-        sharing.accept(metadata) { [weak self] result in
-            switch result {
-            case let .success(id):
-                self?.openSharedAlbum(id)
-            case let .failure(error):
-                self?.showLibraryWindow(nil)
-                let alert = NSAlert()
-                alert.messageText = "The shared album couldn’t be opened."
-                alert.informativeText = error.localizedDescription
-                if let window = self?.windowController?.window {
-                    alert.beginSheetModal(for: window)
-                } else {
-                    alert.runModal()
-                }
+        UpdateController.shared.whenLaunched(handoff: metadata.share.url.map { LaunchHandoff.invitation($0).encoded }) { [weak self] in
+            self?.sharing.accept(metadata) { self?.joined($0) }
+        }
+    }
+
+    /// Joins an album someone shared with you from its link alone: one handed on by the copy that updated itself.
+    func joinSharedAlbum(link: URL) {
+        sharing.accept(link: link) { [weak self] in self?.joined($0) }
+    }
+
+    /// Opens the shared album just joined, or says why it couldn't be.
+    private func joined(_ result: Result<UUID, Error>) {
+        switch result {
+        case let .success(id):
+            openSharedAlbum(id)
+        case let .failure(error):
+            showLibraryWindow(nil)
+            let alert = NSAlert()
+            alert.messageText = "The shared album couldn’t be opened."
+            alert.informativeText = error.localizedDescription
+            if let window = windowController?.window {
+                alert.beginSheetModal(for: window)
+            } else {
+                alert.runModal()
             }
         }
     }
@@ -214,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Memories
 
-    /// Plays a memory, from a clicked notification or the menu bar: the window comes up behind the slideshow.
+    /// Plays a memory, from a clicked notification: the window comes up behind the slideshow.
     func openMemory(_ id: String) {
         showLibraryWindow(nil)
         guard library.hasLoaded else {
@@ -232,60 +262,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         memories.refresh()
         openMemory(id)
     }
-
-    // MARK: Waiting in the menu bar
-
-    /// After a login launch: no window and no Dock icon, just a paw in the menu bar, while memory notifications
-    /// are kept up to date.
-    func waitInMenuBar() {
-        NSApp.setActivationPolicy(.accessory)
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: "PugglePhotos")
-        item.button?.toolTip = "PugglePhotos"
-        let menu = NSMenu()
-        menu.delegate = self
-        item.menu = menu
-        statusItem = item
-    }
-
-    private func leaveMenuBar() {
-        guard NSApp.activationPolicy() != .regular || statusItem != nil else { return }
-        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
-        statusItem = nil
-        NSApp.setActivationPolicy(.regular)
-    }
-
-    var isWaitingInMenuBar: Bool { statusItem != nil }
-
-    @objc private func openFromMenuBar(_ sender: Any?) { showLibraryWindow(nil) }
-
-    @objc private func playFromMenuBar(_ sender: NSMenuItem) {
-        if let id = sender.representedObject as? String { openMemory(id) }
-    }
 }
 
-extension AppDelegate: NSMenuDelegate {
-    /// The menu bar paw's menu: open PugglePhotos, today's memories, quit.
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        let open = NSMenuItem(title: "Open PugglePhotos", action: #selector(openFromMenuBar(_:)), keyEquivalent: "")
-        open.target = self
-        menu.addItem(open)
-        let today = memories.page.onThisDay
-        if !today.isEmpty {
-            menu.addItem(.separator())
-            let heading = NSMenuItem(title: "On This Day", action: nil, keyEquivalent: "")
-            heading.isEnabled = false
-            menu.addItem(heading)
-            for memory in today {
-                let item = NSMenuItem(title: memory.title, action: #selector(playFromMenuBar(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = memory.id
-                item.image = NSImage(systemSymbolName: "play.circle", accessibilityDescription: nil)
-                menu.addItem(item)
-            }
+/// Something PugglePhotos was asked to open as it started, kept for the new version when it restarts to finish
+/// updating first.
+enum LaunchHandoff: Codable {
+    /// A link to an album someone shared.
+    case invitation(URL)
+    /// A memory, from its notification.
+    case memory(String)
+    /// An album shared with you, from its notification.
+    case sharedAlbum(UUID)
+
+    var encoded: String { (try? JSONEncoder().encode(self)).map { String(decoding: $0, as: UTF8.self) } ?? "" }
+
+    init?(_ encoded: String) {
+        guard let handoff = try? JSONDecoder().decode(LaunchHandoff.self, from: Data(encoded.utf8)) else { return nil }
+        self = handoff
+    }
+
+    func perform(_ app: AppDelegate?) {
+        guard let app else { return }
+        switch self {
+        case let .invitation(link): app.joinSharedAlbum(link: link)
+        case let .memory(id): app.openMemory(id)
+        case let .sharedAlbum(id): app.openSharedAlbum(id)
         }
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit PugglePhotos", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 }

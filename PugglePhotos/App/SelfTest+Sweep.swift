@@ -17,7 +17,7 @@ import PugglePhotosKit
 ///
 /// Where it starts: `-PHSampleLoadDelay 3` holds the sample library back, so the sweep starts while it's loading;
 /// `-PHSavedViewMode list` (or `book`) starts as if the last run had been left showing that; `-PHAccess ask` or
-/// `denied` starts on the welcome screen; `-PHLaunchedAtLogin YES` starts in the menu bar, with no window.
+/// `denied` starts on the welcome screen.
 extension SelfTest {
     /// A place the sweep goes to, and goes back to after each thing it does there.
     struct SweepPlace {
@@ -273,14 +273,12 @@ extension SelfTest {
     // MARK: What there is to do
 
     /// Everything to do where the window is now: the menu bar, then the toolbar, the sidebar's menus, the middle's
-    /// clicks and menus, and keys. Without a window, the menu bar and the menu bar paw's menu.
+    /// clicks and menus, and keys. Without a window, the menu bar.
     private static func sweepCommands(_ app: AppDelegate) -> [SweepCommand] {
         var commands = sweepMenuCommands(app)
         if let window = app.windowController, window.window?.isVisible == true {
             commands += sweepToolbarCommands(window) + sweepSidebarCommands(window) + sweepMiddleCommands(window)
                 + sweepKeyCommands(window)
-        } else {
-            commands += sweepPawCommands(app)
         }
         return commands
     }
@@ -455,20 +453,6 @@ extension SelfTest {
                 if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return true }
                 nsWindow.sendEvent(event)
                 return true
-            }
-        }
-    }
-
-    /// The menu bar paw's menu, after a login launch: everything but Quit.
-    private static func sweepPawCommands(_ app: AppDelegate) -> [SweepCommand] {
-        let menu = NSMenu()
-        app.menuNeedsUpdate(menu)
-        return menu.items.filter { $0.action != nil && $0.action != #selector(NSApplication.terminate(_:)) }.map(\.title).map { title in
-            SweepCommand(name: "menu bar paw ▸ \(title)") {
-                let menu = NSMenu()
-                app.menuNeedsUpdate(menu)
-                guard let item = menu.items.first(where: { $0.title == title }) else { return false }
-                return sweepChoose(item, window: nil)
             }
         }
     }

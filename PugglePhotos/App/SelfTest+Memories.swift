@@ -3,7 +3,7 @@ import AppKit
 import PugglePhotosKit
 
 extension SelfTest {
-    /// Memories, their notifications, slideshows, opening at login and waiting in the menu bar.
+    /// Memories, their notifications and slideshows.
     static func memoryAndSlideshowSteps(_ app: AppDelegate, window: LibraryWindowController) {
         let library = app.library!
         let memories = app.memories!
@@ -118,18 +118,6 @@ extension SelfTest {
             check(window.window?.title == highlight.title, "the window is named for the memory")
             window.setSelection(Array(highlight.items.prefix(3)))
             check(window.slideshowForCurrentPlace()?.items == Array(highlight.items.prefix(3)), "with photos selected, the slideshow plays them")
-        }
-
-        // MARK: Opening at login
-        step {
-            app.settings.setOpensAtLogin(true)
-            check((app.loginItem as! RecordingLoginItem).isEnabled && app.settings.opensAtLogin, "PugglePhotos can open at login")
-            app.settings.setOpensAtLogin(false)
-            check(!(app.loginItem as! RecordingLoginItem).isEnabled, "and stop")
-            app.waitInMenuBar()
-            check(app.isWaitingInMenuBar && NSApp.activationPolicy() == .accessory, "after a login launch it waits in the menu bar")
-            app.showLibraryWindow(nil)
-            check(!app.isWaitingInMenuBar && NSApp.activationPolicy() == .regular, "opening the window brings back the Dock icon")
         }
         step {
             var data: Data?

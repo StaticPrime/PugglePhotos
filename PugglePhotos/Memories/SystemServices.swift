@@ -1,5 +1,4 @@
 import AppKit
-import ServiceManagement
 import UserNotifications
 import PugglePhotosKit
 
@@ -18,15 +17,6 @@ protocol MemoryNotificationCenter: AnyObject {
     func showSharedAlbum(_ notice: SharedAlbumNotice, image: URL?)
     /// Called with the shared album a clicked notification is about.
     var onOpenSharedAlbum: ((UUID) -> Void)? { get set }
-}
-
-/// Opens PugglePhotos when the person logs in, or stops.
-protocol LoginItemService: AnyObject {
-    var isEnabled: Bool { get }
-    /// The person needs to allow it in System Settings ▸ General ▸ Login Items.
-    var needsApproval: Bool { get }
-    func setEnabled(_ enabled: Bool) throws
-    func openLoginItemsSettings()
 }
 
 /// The system's notification center.
@@ -118,29 +108,5 @@ final class SystemNotificationCenter: NSObject, MemoryNotificationCenter, UNUser
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
-    }
-}
-
-/// The app itself as a login item.
-final class SystemLoginItem: LoginItemService {
-    var isEnabled: Bool { SMAppService.mainApp.status == .enabled }
-    var needsApproval: Bool { SMAppService.mainApp.status == .requiresApproval }
-
-    func setEnabled(_ enabled: Bool) throws {
-        if enabled {
-            try SMAppService.mainApp.register()
-        } else {
-            try SMAppService.mainApp.unregister()
-        }
-    }
-
-    func openLoginItemsSettings() { SMAppService.openSystemSettingsLoginItems() }
-}
-
-/// Whether this launch is macOS opening PugglePhotos at login, read from the event that launched it.
-enum LaunchReason {
-    static func isLoginLaunch() -> Bool {
-        guard let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == kAEOpenApplication else { return false }
-        return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
     }
 }

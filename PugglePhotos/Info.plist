@@ -4,6 +4,8 @@
 <dict>
 	<key>CKSharingSupported</key>
 	<true/>
+	<key>PuggleUpdateURL</key>
+	<string>https://github.com/StaticPrime/PugglePhotos/releases/latest/download/update.json</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>PugglePhotos shows the photos and videos in your Photos library, adds the ones you drag into it, keeps your albums and favorites in step, and changes dates when you ask it to. Only the albums you share leave your Mac.</string>
 </dict>

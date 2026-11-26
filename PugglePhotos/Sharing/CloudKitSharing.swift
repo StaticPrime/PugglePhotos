@@ -303,6 +303,18 @@ final class CloudKitSharing: NSObject, SharingBackend {
         }
     }
 
+    /// Joins an album someone shared with you from its link alone, asking iCloud first for what macOS would have handed
+    /// over had the link been clicked.
+    func accept(link: URL, completion: @escaping @MainActor (Result<SharedAlbum, Error>) -> Void) {
+        Task {
+            do {
+                accept(try await container.shareMetadata(for: link), completion: completion)
+            } catch {
+                completion(.failure(Self.problem(error)))
+            }
+        }
+    }
+
     /// Leaves an album shared with you: taking its share from your shared database takes you out of it.
     func leave(_ album: UUID, completion: @escaping @MainActor (Error?) -> Void) {
         Task {

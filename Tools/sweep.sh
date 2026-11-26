@@ -5,7 +5,7 @@
 #   Tools/sweep.sh                      the tour, then every command done first, in every start state
 #   Tools/sweep.sh tour                 the tour alone: everything there is to do, in every place
 #   Tools/sweep.sh first [STATE ...]    each command done first thing after a fresh launch, in the start states named
-#                                       (library, loading, ask, denied, list, book, login; all of them if none are)
+#                                       (library, loading, ask, denied, list, book; all of them if none are)
 #
 # A run that crashes, hangs or quits early is listed with the last thing it did. Logs of those runs, and of the tour,
 # are kept in build/sweep. Exits 1 if any run didn't finish. Every command done first takes a launch of its own, so
@@ -14,7 +14,7 @@
 cd "$(dirname "$0")/.." || exit 2
 OUT=build/sweep
 APP=build/DerivedData/Build/Products/Debug/PugglePhotos.app/Contents/MacOS/PugglePhotos
-ALL_STATES="library loading ask denied list book login"
+ALL_STATES="library loading ask denied list book"
 
 # The launch arguments that start PugglePhotos in each state.
 flags_for() {
@@ -25,7 +25,6 @@ flags_for() {
     denied) echo "-PHAccess denied" ;;       # the welcome screen, access to Photos refused
     list) echo "-PHSavedViewMode list" ;;    # last left showing the list
     book) echo "-PHSavedViewMode book" ;;    # last left showing an album as a book
-    login) echo "-PHLaunchedAtLogin YES" ;;  # opened at login: in the menu bar, with no window
     *) return 1 ;;
   esac
 }

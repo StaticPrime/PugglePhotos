@@ -8,12 +8,41 @@
 
 /* Begin PBXBuildFile section */
 		6D0000000000000000000013 /* PugglePhotosKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6D0000000000000000000012 /* PugglePhotosKit */; };
+		6D0000000000000000000022 /* PuggleUpdate in Frameworks */ = {isa = PBXBuildFile; productRef = 6D0000000000000000000021 /* PuggleUpdate */; };
+		6D0000000000000000000024 /* PuggleUpdate in Frameworks */ = {isa = PBXBuildFile; productRef = 6D0000000000000000000023 /* PuggleUpdate */; };
+		6D0000000000000000000026 /* UpdateInstaller.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = 6D0000000000000000000017 /* UpdateInstaller.xpc */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		6D0000000000000000000027 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6D0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6D000000000000000000001A;
+			remoteInfo = UpdateInstaller;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		6D0000000000000000000025 /* Embed XPC Services */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
+			dstSubfolderSpec = 16;
+			files = (
+				6D0000000000000000000026 /* UpdateInstaller.xpc in Embed XPC Services */,
+			);
+			name = "Embed XPC Services";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		6D0000000000000000000004 /* PugglePhotos.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PugglePhotos.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6D0000000000000000000015 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		6D0000000000000000000016 /* iCloud.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = iCloud.entitlements; sourceTree = "<group>"; };
+		6D0000000000000000000017 /* UpdateInstaller.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = UpdateInstaller.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
+		6D0000000000000000000029 /* UpdateInstaller.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = UpdateInstaller.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -23,6 +52,13 @@
 				Info.plist,
 			);
 			target = 6D0000000000000000000007 /* PugglePhotos */;
+		};
+		6D0000000000000000000019 /* Exceptions for "UpdateInstaller" folder in "UpdateInstaller" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 6D000000000000000000001A /* UpdateInstaller */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -35,6 +71,14 @@
 			path = PugglePhotos;
 			sourceTree = "<group>";
 		};
+		6D0000000000000000000018 /* UpdateInstaller */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				6D0000000000000000000019 /* Exceptions for "UpdateInstaller" folder in "UpdateInstaller" target */,
+			);
+			path = UpdateInstaller;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -43,6 +87,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				6D0000000000000000000013 /* PugglePhotosKit in Frameworks */,
+				6D0000000000000000000024 /* PuggleUpdate in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D000000000000000000001C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6D0000000000000000000022 /* PuggleUpdate in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -53,6 +106,7 @@
 			isa = PBXGroup;
 			children = (
 				6D0000000000000000000005 /* PugglePhotos */,
+				6D0000000000000000000018 /* UpdateInstaller */,
 				6D0000000000000000000014 /* Config */,
 				6D0000000000000000000003 /* Products */,
 			);
@@ -62,6 +116,7 @@
 			isa = PBXGroup;
 			children = (
 				6D0000000000000000000004 /* PugglePhotos.app */,
+				6D0000000000000000000017 /* UpdateInstaller.xpc */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -71,6 +126,7 @@
 			children = (
 				6D0000000000000000000015 /* Debug.xcconfig */,
 				6D0000000000000000000016 /* iCloud.entitlements */,
+				6D0000000000000000000029 /* UpdateInstaller.xcconfig */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -85,10 +141,12 @@
 				6D0000000000000000000008 /* Sources */,
 				6D0000000000000000000009 /* Frameworks */,
 				6D000000000000000000000A /* Resources */,
+				6D0000000000000000000025 /* Embed XPC Services */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				6D0000000000000000000028 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				6D0000000000000000000005 /* PugglePhotos */,
@@ -96,10 +154,34 @@
 			name = PugglePhotos;
 			packageProductDependencies = (
 				6D0000000000000000000012 /* PugglePhotosKit */,
+				6D0000000000000000000023 /* PuggleUpdate */,
 			);
 			productName = PugglePhotos;
 			productReference = 6D0000000000000000000004 /* PugglePhotos.app */;
 			productType = "com.apple.product-type.application";
+		};
+		6D000000000000000000001A /* UpdateInstaller */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6D000000000000000000001E /* Build configuration list for PBXNativeTarget "UpdateInstaller" */;
+			buildPhases = (
+				6D000000000000000000001B /* Sources */,
+				6D000000000000000000001C /* Frameworks */,
+				6D000000000000000000001D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				6D0000000000000000000018 /* UpdateInstaller */,
+			);
+			name = UpdateInstaller;
+			packageProductDependencies = (
+				6D0000000000000000000021 /* PuggleUpdate */,
+			);
+			productName = UpdateInstaller;
+			productReference = 6D0000000000000000000017 /* UpdateInstaller.xpc */;
+			productType = "com.apple.product-type.xpc-service";
 		};
 /* End PBXNativeTarget section */
 
@@ -112,6 +194,9 @@
 				LastUpgradeCheck = 2720;
 				TargetAttributes = {
 					6D0000000000000000000007 = {
+						CreatedOnToolsVersion = 27.2;
+					};
+					6D000000000000000000001A = {
 						CreatedOnToolsVersion = 27.2;
 					};
 				};
@@ -134,12 +219,20 @@
 			projectRoot = "";
 			targets = (
 				6D0000000000000000000007 /* PugglePhotos */,
+				6D000000000000000000001A /* UpdateInstaller */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		6D000000000000000000000A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D000000000000000000001D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -156,7 +249,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6D000000000000000000001B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		6D0000000000000000000028 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6D000000000000000000001A /* UpdateInstaller */;
+			targetProxy = 6D0000000000000000000027 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		6D000000000000000000000D /* Debug */ = {
@@ -264,6 +372,42 @@
 			};
 			name = Release;
 		};
+		6D000000000000000000001F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6D0000000000000000000029 /* UpdateInstaller.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 5;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = UpdateInstaller/Info.plist;
+				MARKETING_VERSION = 1.0.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pugglesoft.PugglePhotos.UpdateInstaller;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		6D0000000000000000000020 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 5;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = UpdateInstaller/Info.plist;
+				MARKETING_VERSION = 1.0.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pugglesoft.PugglePhotos.UpdateInstaller;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -285,6 +429,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		6D000000000000000000001E /* Build configuration list for PBXNativeTarget "UpdateInstaller" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6D000000000000000000001F /* Debug */,
+				6D0000000000000000000020 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -298,6 +451,14 @@
 		6D0000000000000000000012 /* PugglePhotosKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PugglePhotosKit;
+		};
+		6D0000000000000000000021 /* PuggleUpdate */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PuggleUpdate;
+		};
+		6D0000000000000000000023 /* PuggleUpdate */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PuggleUpdate;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

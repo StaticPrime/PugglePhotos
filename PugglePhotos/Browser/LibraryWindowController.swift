@@ -38,6 +38,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     private let container = NSViewController()
     /// The middle, which takes photos and videos dropped from other apps.
     let dropZone = DropZoneView()
+    /// Across the top of the middle, under the toolbar, while there's a newer version of PugglePhotos to offer.
+    let updateBanner = UpdateBannerBar(banner: UpdateController.shared.banner)
     /// What the subtitle says while files dropped in are being added.
     var addingStatus: String? {
         didSet { updateTitle() }
@@ -126,6 +128,13 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         grid.thumbnailSide = state.thumbnailSide
 
         container.view = dropZone
+        // The update banner sits at the top of the middle, and whatever the middle shows goes below it.
+        dropZone.addContent(updateBanner)
+        NSLayoutConstraint.activate([
+            updateBanner.leadingAnchor.constraint(equalTo: dropZone.leadingAnchor),
+            updateBanner.trailingAnchor.constraint(equalTo: dropZone.trailingAnchor),
+            updateBanner.topAnchor.constraint(equalTo: dropZone.safeAreaLayoutGuide.topAnchor),
+        ])
         dropZone.target = { [weak self] point in
             guard let self, let target = fileDropTarget(at: point) else { return nil }
             return (target, dropTitle(target))
@@ -164,7 +173,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         NSLayoutConstraint.activate([
             view.leadingAnchor.constraint(equalTo: container.view.leadingAnchor),
             view.trailingAnchor.constraint(equalTo: container.view.trailingAnchor),
-            view.topAnchor.constraint(equalTo: container.view.safeAreaLayoutGuide.topAnchor),
+            view.topAnchor.constraint(equalTo: updateBanner.bottomAnchor),
             view.bottomAnchor.constraint(equalTo: container.view.bottomAnchor),
         ])
         shownChild = child

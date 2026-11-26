@@ -9,6 +9,10 @@ enum SelfTest {
     static func runIfRequested(_ app: AppDelegate) {
         guard UserDefaults.standard.bool(forKey: "PHSelfTest") else { return }
         SelfTestMode.isRunning = true
+        // Started from a script, PugglePhotos usually isn't the active app and its window is behind others, so macOS
+        // would let it nap: animations (the map zooming) and the window server's picture of the window fall behind,
+        // and steps waiting on them time out. The run is held awake instead, whichever app is in front.
+        activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .latencyCritical], reason: "The self-test is driving the window")
         if let sweep = UserDefaults.standard.string(forKey: "PHSweep") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { runSweep(sweep, app: app) }
             return
@@ -17,6 +21,12 @@ enum SelfTest {
     }
 
     private static var failures = 0
+    private static var activity: NSObjectProtocol?
+    /// Settings the steps change, as this Mac had them before the run (nil: never set), put back when it ends. The
+    /// debug build shares its settings with the installed app, so a run must leave them as it found them.
+    private static var savedPreferences: [String: Any?] = [:]
+    private static let changedPreferences = [Preferences.askBeforeChangingDatesKey, Preferences.showsCalendarKey, Preferences.flipsOnClickKey,
+                                             MemoryPreferences.timeKey, MemoryPreferences.notifyKey, BookPreferences.alwaysPlayKey]
     private static var steps: [() -> Void] = []
     private static var holding: (condition: () -> Bool, deadline: Date)?
 
@@ -48,10 +58,9 @@ enum SelfTest {
 
     private static func runSteps(from index: Int = 0) {
         guard index < steps.count else {
-            UserDefaults.standard.removeObject(forKey: Preferences.askBeforeChangingDatesKey)
-            UserDefaults.standard.removeObject(forKey: MemoryPreferences.timeKey)
-            UserDefaults.standard.removeObject(forKey: MemoryPreferences.notifyKey)
-            UserDefaults.standard.removeObject(forKey: BookPreferences.alwaysPlayKey)
+            for (key, value) in savedPreferences {
+                if let value { UserDefaults.standard.set(value, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
+            }
             print(failures == 0 ? "SELFTEST DONE: all passed" : "SELFTEST DONE: \(failures) failed")
             fflush(stdout)
             exit(failures == 0 ? 0 : 1)
@@ -125,7 +134,11 @@ enum SelfTest {
         let source = library.baseSource as! SamplePhotoSource
         let undo = library.undoManager
         nsWindow.makeKeyAndOrderFront(nil)
+        for key in changedPreferences { savedPreferences[key] = UserDefaults.standard.object(forKey: key) }
         UserDefaults.standard.set(false, forKey: Preferences.askBeforeChangingDatesKey)
+        // The steps drop photos on the sidebar's calendar and ask beside it, so it must be showing, whatever this
+        // Mac's own setting says (a popover can't show beside a hidden view).
+        UserDefaults.standard.set(true, forKey: Preferences.showsCalendarKey)
         var snapshot: LibrarySnapshot { library.snapshot }
         var catalog: Catalog { library.catalog }
         func date(_ id: PhotoID) -> Date { snapshot.item(id)?.date ?? .distantPast }
